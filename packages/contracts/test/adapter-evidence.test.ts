@@ -361,6 +361,24 @@ describe("adapter and fixture evidence contracts", () => {
     );
   });
 
+  it("correlates fixture assets, limits, and source-frame resolution", () => {
+    const oversizedInput = fixtures();
+    oversizedInput.cases[0]!.options.limits.inputBytes = 1;
+    expect(() => fixtureManifestSchema.parse(oversizedInput)).toThrow();
+
+    const oversizedOutput = fixtures();
+    oversizedOutput.cases[0]!.options.limits.triangleCount = 3;
+    expect(() => fixtureManifestSchema.parse(oversizedOutput)).toThrow();
+
+    const wrongUnit = clone(fixtures());
+    wrongUnit.cases[0]!.expectation.sourceUnit = "inch";
+    expect(() => fixtureManifestSchema.parse(wrongUnit)).toThrow();
+
+    const wrongAxis = clone(fixtures());
+    wrongAxis.cases[0]!.expectation.sourceAxis = "right-handed-y-up";
+    expect(() => fixtureManifestSchema.parse(wrongAxis)).toThrow();
+  });
+
   it("keeps native STEP and compressed 3MF behind explicit evidence", () => {
     const nativeStep = clone(registry());
     nativeStep.adapters[0]!.formats = [
@@ -375,6 +393,12 @@ describe("adapter and fixture evidence contracts", () => {
     expect(evaluateRelease(nativeStepInput).inputReasons).toContain(
       "missing-native-step-gate",
     );
+    const alternateNativeStep = input();
+    alternateNativeStep.registry.adapters[0]!.capabilities.nativeStep =
+      "release-evidence-required";
+    expect(evaluateRelease(alternateNativeStep).inputReasons).toContain(
+      "missing-native-step-gate",
+    );
 
     const compressed = input();
     compressed.registry.adapters[0]!.formats.push({
@@ -386,7 +410,13 @@ describe("adapter and fixture evidence contracts", () => {
     compressed.registry.adapters[0]!.capabilities.archiveCompression =
       "bounded-compressed-evidence-required";
     expect(evaluateRelease(compressed).inputReasons).toContain(
-      "missing-compressed-3mf-gate",
+      "missing-bounded-archive-compression-gate",
+    );
+    const alternateCompressed = input();
+    alternateCompressed.registry.adapters[0]!.capabilities.archiveCompression =
+      "bounded-compressed-evidence-required";
+    expect(evaluateRelease(alternateCompressed).inputReasons).toContain(
+      "missing-bounded-archive-compression-gate",
     );
 
     compressed.registry.adapters[0]!.capabilities.archiveCompression =
@@ -396,12 +426,12 @@ describe("adapter and fixture evidence contracts", () => {
       id: "compressed-3mf",
       required: true,
       kind: "capability-evidence",
-      capability: "bounded-compressed-3mf",
+      capability: "bounded-archive-compression",
     } as never);
     compressed.evidence.observations.push({
       gateId: "compressed-3mf",
       kind: "capability-evidence",
-      capability: "bounded-compressed-3mf",
+      capability: "bounded-archive-compression",
       passed: true,
       evidenceDigest: digest("e"),
     } as never);
@@ -436,6 +466,7 @@ describe("release evaluation", () => {
     expect(first.gateResults.map(({ gateId }) => gateId)).toEqual(
       [...first.gateResults.map(({ gateId }) => gateId)].sort(),
     );
+    expect(releaseEvaluationSchema.parse(first)).toEqual(first);
   });
 
   it("fails closed on stale documents, missing gates, and forged outcomes", () => {
@@ -542,13 +573,48 @@ describe("release evaluation", () => {
     expect(result.gateResults).toContainEqual(
       expect.objectContaining({
         gateId: "replay",
-        reasons: ["nondeterministic-replay"],
+        reasons: expect.arrayContaining(["nondeterministic-replay"]),
       }),
     );
     expect(result.gateResults).toContainEqual(
       expect.objectContaining({
         gateId: "performance",
         reasons: ["benchmark-threshold-failed"],
+      }),
+    );
+  });
+
+  it("binds deterministic replay to a known fixture output", () => {
+    const unknown = input();
+    const unknownGate = unknown.policy.gates.find(({ id }) => id === "replay");
+    const unknownObservation = unknown.evidence.observations.find(
+      ({ gateId }) => gateId === "replay",
+    );
+    if (
+      unknownGate?.kind !== "deterministic-replay" ||
+      unknownObservation?.kind !== "deterministic-replay"
+    )
+      throw new Error("replay");
+    unknownGate.caseId = "case.unknown";
+    unknownObservation.caseId = "case.unknown";
+    expect(evaluateRelease(unknown).gateResults).toContainEqual(
+      expect.objectContaining({
+        gateId: "replay",
+        reasons: ["unknown-replay-case"],
+      }),
+    );
+
+    const forged = input();
+    const forgedObservation = forged.evidence.observations.find(
+      ({ gateId }) => gateId === "replay",
+    );
+    if (forgedObservation?.kind !== "deterministic-replay")
+      throw new Error("replay");
+    forgedObservation.runDigests = [digest("b"), digest("b"), digest("b")];
+    expect(evaluateRelease(forged).gateResults).toContainEqual(
+      expect.objectContaining({
+        gateId: "replay",
+        reasons: ["replay-output-mismatch"],
       }),
     );
   });
@@ -572,6 +638,17 @@ describe("release evaluation", () => {
 
     tier.classification = "release";
     benchmark.samples = [99, 100, 101];
+    expect(evaluateRelease(candidate).gateResults).toContainEqual(
+      expect.objectContaining({
+        gateId: "performance",
+        reasons: ["benchmark-threshold-failed"],
+      }),
+    );
+
+    tier.metrics[0]!.aggregation = "median";
+    tier.metrics[0]!.threshold = Number.MAX_SAFE_INTEGER - 1;
+    tier.repetitions.measured = 2;
+    benchmark.samples = [Number.MAX_SAFE_INTEGER - 1, Number.MAX_SAFE_INTEGER];
     expect(evaluateRelease(candidate).gateResults).toContainEqual(
       expect.objectContaining({
         gateId: "performance",
@@ -612,6 +689,9 @@ describe("release evaluation", () => {
       unsafeRegistry.registryVersion = value;
       expect(() => importerRegistrySchema.parse(unsafeRegistry)).toThrow();
     }
+    const unsafeFixture = fixtures();
+    unsafeFixture.cases[0]!.sourceName = "part\n\u202eforged.stl";
+    expect(() => fixtureManifestSchema.parse(unsafeFixture)).toThrow();
 
     const maliciousKey = "extra\n\u202eforged";
     const result = evaluateRelease({ ...input(), [maliciousKey]: true });
@@ -626,6 +706,21 @@ describe("release evaluation", () => {
         status: "fail",
         inputReasons: ["unsafe\u2028reason"],
         gateResults: [],
+      }),
+    ).toThrow();
+    expect(() =>
+      releaseEvaluationSchema.parse({
+        contractVersion: 1,
+        status: "pass",
+        inputReasons: [],
+        gateResults: [
+          {
+            gateId: "required-gate",
+            required: true,
+            passed: false,
+            reasons: ["missing-observation"],
+          },
+        ],
       }),
     ).toThrow();
   });

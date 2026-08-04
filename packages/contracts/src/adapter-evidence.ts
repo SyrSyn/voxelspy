@@ -315,7 +315,7 @@ export const fixtureCaseSchema = z.strictObject({
   adapter: adapterReferenceSchema,
   targetModelId: modelIdSchema,
   formatId: entityIdSchema,
-  sourceName: z.string().min(1).max(1_024),
+  sourceName: safeString(1_024),
   options: importOptionsSchema,
   expectation: fixtureOutcomeSchema,
 });
@@ -353,6 +353,50 @@ export const fixtureManifestSchema = z
           path: ["cases", index, "assetId"],
           message: "Fixture case must reference an asset with the same format",
         });
+      if (asset && asset.bytes > fixture.options.limits.inputBytes)
+        context.addIssue({
+          code: "custom",
+          path: ["cases", index, "options", "limits", "inputBytes"],
+          message: "Fixture input exceeds its declared byte limit",
+        });
+      if (fixture.expectation.kind === "success") {
+        if (
+          fixture.expectation.triangles > fixture.options.limits.triangleCount
+        )
+          context.addIssue({
+            code: "custom",
+            path: ["cases", index, "expectation", "triangles"],
+            message: "Fixture output exceeds its declared triangle limit",
+          });
+        const requestedUnit =
+          fixture.options.userUnit ?? fixture.options.declaredUnit;
+        const requestedAxis =
+          fixture.options.userAxis ?? fixture.options.declaredAxis;
+        if (
+          requestedUnit
+            ? fixture.expectation.sourceUnit !== requestedUnit
+            : fixture.expectation.detectedSourceUnit === "unknown" ||
+              fixture.expectation.sourceUnit !==
+                fixture.expectation.detectedSourceUnit
+        )
+          context.addIssue({
+            code: "custom",
+            path: ["cases", index, "expectation", "sourceUnit"],
+            message: "Fixture source unit does not match its resolution policy",
+          });
+        if (
+          requestedAxis
+            ? fixture.expectation.sourceAxis !== requestedAxis
+            : fixture.expectation.detectedSourceAxis === "unknown" ||
+              fixture.expectation.sourceAxis !==
+                fixture.expectation.detectedSourceAxis
+        )
+          context.addIssue({
+            code: "custom",
+            path: ["cases", index, "expectation", "sourceAxis"],
+            message: "Fixture source axis does not match its resolution policy",
+          });
+      }
     });
   });
 export type FixtureManifest = z.infer<typeof fixtureManifestSchema>;
@@ -452,7 +496,7 @@ export const releaseGateSchema = z.discriminatedUnion("kind", [
     ...gateBase,
     kind: z.literal("capability-evidence"),
     capability: z.enum([
-      "bounded-compressed-3mf",
+      "bounded-archive-compression",
       "native-step",
       "external-resource-resolution",
     ]),
@@ -515,6 +559,19 @@ export const releasePolicySchema = z
         path: ["gates"],
         message: "Release gate IDs must be unique",
       });
+    const referencedItems = policy.gates.reduce((total, gate) => {
+      if (gate.kind === "fixture-cases") return total + gate.caseIds.length;
+      if (gate.kind === "fixture-licenses") return total + gate.assetIds.length;
+      if (gate.kind === "dependency-licenses")
+        return total + gate.componentIds.length;
+      return total + 1;
+    }, 0);
+    if (!Number.isSafeInteger(referencedItems) || referencedItems > 100_000)
+      context.addIssue({
+        code: "custom",
+        path: ["gates"],
+        message: "Release policy exceeds its aggregate reference limit",
+      });
   });
 export type ReleasePolicy = z.infer<typeof releasePolicySchema>;
 
@@ -541,7 +598,7 @@ export const releaseObservationSchema = z.discriminatedUnion("kind", [
     ...observationBase,
     kind: z.literal("capability-evidence"),
     capability: z.enum([
-      "bounded-compressed-3mf",
+      "bounded-archive-compression",
       "native-step",
       "external-resource-resolution",
     ]),
@@ -612,6 +669,25 @@ export const releaseEvidenceSchema = z
         path: ["observations"],
         message: "Evidence may contain at most one observation per gate",
       });
+    const observedItems = evidence.observations.reduce((total, observation) => {
+      if (observation.kind === "fixture-cases")
+        return total + observation.cases.length;
+      if (observation.kind === "deterministic-replay")
+        return total + observation.runDigests.length;
+      if (observation.kind === "fixture-licenses")
+        return total + observation.reviewedAssetIds.length;
+      if (observation.kind === "dependency-licenses")
+        return total + observation.reviewedComponentIds.length;
+      if (observation.kind === "benchmark")
+        return total + observation.samples.length;
+      return total + 1;
+    }, 0);
+    if (!Number.isSafeInteger(observedItems) || observedItems > 100_000)
+      context.addIssue({
+        code: "custom",
+        path: ["observations"],
+        message: "Release evidence exceeds its aggregate observation limit",
+      });
   });
 export type ReleaseEvidence = z.infer<typeof releaseEvidenceSchema>;
 
@@ -632,20 +708,74 @@ export type ReleaseEvaluationInput = z.infer<
   typeof releaseEvaluationInputSchema
 >;
 
-export const releaseGateResultSchema = z.strictObject({
-  gateId: entityIdSchema,
-  required: z.boolean(),
-  passed: z.boolean(),
-  reasons: z.array(safeString(200)).max(64),
-});
+export const releaseGateResultSchema = z
+  .strictObject({
+    gateId: entityIdSchema,
+    required: z.boolean(),
+    passed: z.boolean(),
+    reasons: z.array(safeString(200)).max(64),
+  })
+  .superRefine((result, context) => {
+    const canonicalReasons = [...new Set(result.reasons)].sort();
+    if (
+      canonicalReasons.length !== result.reasons.length ||
+      canonicalReasons.some((reason, index) => reason !== result.reasons[index])
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["reasons"],
+        message: "Gate reasons must be unique and sorted",
+      });
+    if (result.passed !== (result.reasons.length === 0))
+      context.addIssue({
+        code: "custom",
+        path: ["passed"],
+        message: "Gate pass state must match its reasons",
+      });
+  });
 export type ReleaseGateResult = z.infer<typeof releaseGateResultSchema>;
 
-export const releaseEvaluationSchema = z.strictObject({
-  contractVersion: z.literal(1),
-  status: z.enum(["pass", "fail"]),
-  inputReasons: z.array(safeString(500)).max(1_000),
-  gateResults: z.array(releaseGateResultSchema).max(1_000),
-});
+export const releaseEvaluationSchema = z
+  .strictObject({
+    contractVersion: z.literal(1),
+    status: z.enum(["pass", "fail"]),
+    inputReasons: z.array(safeString(500)).max(1_000),
+    gateResults: z.array(releaseGateResultSchema).max(1_000),
+  })
+  .superRefine((evaluation, context) => {
+    const canonicalReasons = [...new Set(evaluation.inputReasons)].sort();
+    if (
+      canonicalReasons.length !== evaluation.inputReasons.length ||
+      canonicalReasons.some(
+        (reason, index) => reason !== evaluation.inputReasons[index],
+      )
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["inputReasons"],
+        message: "Input reasons must be unique and sorted",
+      });
+    const gateIds = evaluation.gateResults.map(({ gateId }) => String(gateId));
+    const canonicalGateIds = [...new Set(gateIds)].sort();
+    if (
+      canonicalGateIds.length !== gateIds.length ||
+      canonicalGateIds.some((gateId, index) => gateId !== gateIds[index])
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["gateResults"],
+        message: "Gate results must have unique, sorted IDs",
+      });
+    const shouldPass =
+      evaluation.inputReasons.length === 0 &&
+      !evaluation.gateResults.some((gate) => gate.required && !gate.passed);
+    if (evaluation.status !== (shouldPass ? "pass" : "fail"))
+      context.addIssue({
+        code: "custom",
+        path: ["status"],
+        message: "Release status must match input and required-gate results",
+      });
+  });
 export type ReleaseEvaluation = z.infer<typeof releaseEvaluationSchema>;
 
 function referenceEqual(
@@ -691,20 +821,36 @@ function stableEqual(left: unknown, right: unknown): boolean {
   return false;
 }
 
-function aggregate(
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function aggregatePasses(
   samples: readonly number[],
-  method: z.infer<typeof benchmarkMetricPolicySchema>["aggregation"],
-): number {
+  metric: z.infer<typeof benchmarkMetricPolicySchema>,
+): boolean {
   const ordered = [...samples].sort((left, right) => left - right);
-  if (method === "max") return ordered.at(-1) ?? Number.NaN;
-  if (method === "nearest-rank-p95")
-    return (
-      ordered[Math.max(0, Math.ceil(ordered.length * 0.95) - 1)] ?? Number.NaN
-    );
-  const middle = Math.floor(ordered.length / 2);
-  return ordered.length % 2 === 0
-    ? ((ordered[middle - 1] ?? 0) + (ordered[middle] ?? 0)) / 2
-    : (ordered[middle] ?? Number.NaN);
+  if (ordered.length === 0) return false;
+  let value: number;
+  if (metric.aggregation === "max") value = ordered.at(-1)!;
+  else if (metric.aggregation === "nearest-rank-p95")
+    value = ordered[Math.max(0, Math.ceil(ordered.length * 0.95) - 1)]!;
+  else {
+    const middle = Math.floor(ordered.length / 2);
+    if (ordered.length % 2 === 1) value = ordered[middle]!;
+    else {
+      const lower = ordered[middle - 1]!;
+      const upper = ordered[middle]!;
+      const left = lower - metric.threshold;
+      const right = metric.threshold - upper;
+      return metric.comparator === "less-than-or-equal"
+        ? left <= right
+        : left >= right;
+    }
+  }
+  return metric.comparator === "less-than-or-equal"
+    ? value <= metric.threshold
+    : value >= metric.threshold;
 }
 
 function capabilityPermitted(
@@ -716,7 +862,7 @@ function capabilityPermitted(
 ): boolean {
   if (capability === "native-step")
     return adapter.capabilities.nativeStep === "release-evidence-required";
-  if (capability === "bounded-compressed-3mf")
+  if (capability === "bounded-archive-compression")
     return (
       adapter.capabilities.archiveCompression ===
       "bounded-compressed-evidence-required"
@@ -728,11 +874,33 @@ function uniqueStrings(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
 }
 
+interface ReleaseEvaluationIndexes {
+  readonly fixturesById: ReadonlyMap<
+    string,
+    ReleaseEvaluationInput["fixtures"]["cases"][number]
+  >;
+  readonly assetsById: ReadonlyMap<
+    string,
+    ReleaseEvaluationInput["fixtures"]["assets"][number]
+  >;
+  readonly componentsById: ReadonlyMap<
+    string,
+    ReleaseEvaluationInput["dependencies"]["components"][number]
+  >;
+  readonly tiersById: ReadonlyMap<
+    string,
+    ReleaseEvaluationInput["benchmarks"]["tiers"][number]
+  >;
+  readonly environmentIds: ReadonlySet<string>;
+  readonly adapterFormatIds: ReadonlySet<string>;
+}
+
 function evaluateGate(
   gate: ReleaseGate,
   observation: ReleaseObservation | undefined,
   input: ReleaseEvaluationInput,
   adapter: ImporterAdapterDescriptor | undefined,
+  indexes: ReleaseEvaluationIndexes,
 ): ReleaseGateResult {
   const reasons: string[] = [];
   if (!observation) reasons.push("missing-observation");
@@ -741,22 +909,22 @@ function evaluateGate(
   else if (gate.kind === "fixture-cases" && observation.kind === gate.kind) {
     const expectedIds = gate.caseIds.map(String);
     const observedIds = observation.cases.map(({ caseId }) => String(caseId));
+    const observedIdSet = new Set(observedIds);
+    const observationsByCaseId = new Map(
+      observation.cases.map((item) => [String(item.caseId), item]),
+    );
     if (!uniqueStrings(expectedIds) || !uniqueStrings(observedIds))
       reasons.push("duplicate-fixture-case");
     if (
       expectedIds.length !== observedIds.length ||
-      expectedIds.some((id) => !observedIds.includes(id))
+      expectedIds.some((id) => !observedIdSet.has(id))
     )
       reasons.push("fixture-case-set-mismatch");
     for (const expectedId of expectedIds) {
-      const fixture = input.fixtures.cases.find(
-        ({ id }) => String(id) === expectedId,
-      );
-      const actual = observation.cases.find(
-        ({ caseId }) => String(caseId) === expectedId,
-      );
+      const fixture = indexes.fixturesById.get(expectedId);
+      const actual = observationsByCaseId.get(expectedId);
       const asset = fixture
-        ? input.fixtures.assets.find(({ id }) => id === fixture.assetId)
+        ? indexes.assetsById.get(String(fixture.assetId))
         : undefined;
       if (!fixture || !actual || !asset) reasons.push("unknown-fixture-case");
       else {
@@ -766,11 +934,7 @@ function evaluateGate(
           reasons.push("fixture-outcome-mismatch");
         if (!adapterEqual(fixture.adapter, input.policy.subject.adapter))
           reasons.push("fixture-adapter-mismatch");
-        if (
-          !adapter?.formats.some(
-            ({ formatId }) => formatId === fixture.formatId,
-          )
-        )
+        if (!indexes.adapterFormatIds.has(String(fixture.formatId)))
           reasons.push("fixture-format-not-registered");
       }
     }
@@ -784,6 +948,15 @@ function evaluateGate(
       reasons.push("insufficient-replay-runs");
     if (new Set(observation.runDigests.map(({ value }) => value)).size !== 1)
       reasons.push("nondeterministic-replay");
+    const fixture = indexes.fixturesById.get(String(gate.caseId));
+    if (!fixture) reasons.push("unknown-replay-case");
+    else if (fixture.expectation.kind !== "success")
+      reasons.push("replay-case-has-no-output");
+    else {
+      const expectedDigest = fixture.expectation.outputDigest.value;
+      if (observation.runDigests.some(({ value }) => value !== expectedDigest))
+        reasons.push("replay-output-mismatch");
+    }
   } else if (
     gate.kind === "capability-evidence" &&
     observation.kind === gate.kind
@@ -799,17 +972,16 @@ function evaluateGate(
   ) {
     const expectedIds = gate.assetIds.map(String);
     const reviewedIds = observation.reviewedAssetIds.map(String);
+    const reviewedIdSet = new Set(reviewedIds);
     if (!uniqueStrings(expectedIds) || !uniqueStrings(reviewedIds))
       reasons.push("duplicate-license-asset");
     if (
       expectedIds.length !== reviewedIds.length ||
-      expectedIds.some((id) => !reviewedIds.includes(id))
+      expectedIds.some((id) => !reviewedIdSet.has(id))
     )
       reasons.push("license-asset-set-mismatch");
     for (const id of expectedIds) {
-      const asset = input.fixtures.assets.find(
-        ({ id: assetId }) => assetId === id,
-      );
+      const asset = indexes.assetsById.get(id);
       if (!asset) reasons.push("unknown-license-asset");
       else if (
         asset.provenance.kind === "third-party" &&
@@ -823,26 +995,23 @@ function evaluateGate(
   ) {
     const expectedIds = gate.componentIds.map(String);
     const reviewedIds = observation.reviewedComponentIds.map(String);
+    const reviewedIdSet = new Set(reviewedIds);
     if (!uniqueStrings(expectedIds) || !uniqueStrings(reviewedIds))
       reasons.push("duplicate-license-component");
     if (
       expectedIds.length !== reviewedIds.length ||
-      expectedIds.some((id) => !reviewedIds.includes(id))
+      expectedIds.some((id) => !reviewedIdSet.has(id))
     )
       reasons.push("license-component-set-mismatch");
     for (const id of expectedIds) {
-      const component = input.dependencies.components.find(
-        ({ id: componentId }) => componentId === id,
-      );
+      const component = indexes.componentsById.get(id);
       if (!component) reasons.push("unknown-license-component");
       else if (component.review.status !== "approved")
         reasons.push("dependency-license-not-approved");
     }
   } else if (gate.kind === "benchmark" && observation.kind === gate.kind) {
-    const tier = input.benchmarks.tiers.find(({ id }) => id === gate.tierId);
-    const environment = input.benchmarks.environments.find(
-      ({ id }) => id === gate.environmentId,
-    );
+    const tier = indexes.tiersById.get(String(gate.tierId));
+    const environment = indexes.environmentIds.has(String(gate.environmentId));
     const metric = tier?.metrics.find(({ id }) => id === gate.metricId);
     if (
       observation.tierId !== gate.tierId ||
@@ -857,12 +1026,8 @@ function evaluateGate(
         reasons.push("research-tier-cannot-release");
       if (observation.samples.length !== tier.repetitions.measured)
         reasons.push("benchmark-sample-count-mismatch");
-      const value = aggregate(observation.samples, metric.aggregation);
-      const passed =
-        metric.comparator === "less-than-or-equal"
-          ? value <= metric.threshold
-          : value >= metric.threshold;
-      if (!passed) reasons.push("benchmark-threshold-failed");
+      if (!aggregatePasses(observation.samples, metric))
+        reasons.push("benchmark-threshold-failed");
     }
   } else if (
     gate.kind === "network-isolation" &&
@@ -942,6 +1107,29 @@ export function evaluateRelease(value: unknown): ReleaseEvaluation {
   const adapter = input.registry.adapters.find((candidate) =>
     adapterEqual(candidate, input.policy.subject.adapter),
   );
+  const indexes: ReleaseEvaluationIndexes = {
+    fixturesById: new Map(
+      input.fixtures.cases.map((fixture) => [String(fixture.id), fixture]),
+    ),
+    assetsById: new Map(
+      input.fixtures.assets.map((asset) => [String(asset.id), asset]),
+    ),
+    componentsById: new Map(
+      input.dependencies.components.map((component) => [
+        String(component.id),
+        component,
+      ]),
+    ),
+    tiersById: new Map(
+      input.benchmarks.tiers.map((tier) => [String(tier.id), tier]),
+    ),
+    environmentIds: new Set(
+      input.benchmarks.environments.map(({ id }) => String(id)),
+    ),
+    adapterFormatIds: new Set(
+      adapter?.formats.map(({ formatId }) => String(formatId)) ?? [],
+    ),
+  };
   if (!adapter) inputReasons.push("release-adapter-not-registered");
   if (!adapterEqual(input.dependencies.adapter, input.policy.subject.adapter))
     inputReasons.push("dependency-adapter-mismatch");
@@ -951,7 +1139,6 @@ export function evaluateRelease(value: unknown): ReleaseEvaluation {
   )
     inputReasons.push("dependency-inventory-reference-mismatch");
   if (adapter) {
-    const formatIds = adapter.formats.map(({ formatId }) => String(formatId));
     const hasRequiredCapabilityGate = (
       capability: Extract<
         ReleaseGate,
@@ -964,15 +1151,17 @@ export function evaluateRelease(value: unknown): ReleaseEvaluation {
           gate.required &&
           gate.capability === capability,
       );
-    if (formatIds.includes("step") && !hasRequiredCapabilityGate("native-step"))
+    if (
+      adapter.capabilities.nativeStep === "release-evidence-required" &&
+      !hasRequiredCapabilityGate("native-step")
+    )
       inputReasons.push("missing-native-step-gate");
     if (
-      formatIds.includes("3mf") &&
       adapter.capabilities.archiveCompression ===
         "bounded-compressed-evidence-required" &&
-      !hasRequiredCapabilityGate("bounded-compressed-3mf")
+      !hasRequiredCapabilityGate("bounded-archive-compression")
     )
-      inputReasons.push("missing-compressed-3mf-gate");
+      inputReasons.push("missing-bounded-archive-compression-gate");
     if (
       adapter.capabilities.externalResources === "resolve" &&
       !hasRequiredCapabilityGate("external-resource-resolution")
@@ -980,12 +1169,15 @@ export function evaluateRelease(value: unknown): ReleaseEvaluation {
       inputReasons.push("missing-external-resource-gate");
   }
 
-  const requiredFixtureCaseIds = input.policy.gates.flatMap((gate) =>
-    gate.kind === "fixture-cases" && gate.required ? gate.caseIds : [],
-  );
+  const requiredFixtureCaseIds = input.policy.gates.flatMap((gate) => {
+    if (!gate.required) return [];
+    if (gate.kind === "fixture-cases") return gate.caseIds;
+    if (gate.kind === "deterministic-replay") return [gate.caseId];
+    return [];
+  });
   const requiredFixtureAssetIds = new Set(
     requiredFixtureCaseIds.flatMap((caseId) => {
-      const fixture = input.fixtures.cases.find(({ id }) => id === caseId);
+      const fixture = indexes.fixturesById.get(String(caseId));
       return fixture ? [fixture.assetId] : [];
     }),
   );
@@ -1024,13 +1216,14 @@ export function evaluateRelease(value: unknown): ReleaseEvaluation {
     inputReasons.push("unknown-gate-observation");
 
   const gateResults = [...input.policy.gates]
-    .sort((left, right) => String(left.id).localeCompare(String(right.id)))
+    .sort((left, right) => compareText(String(left.id), String(right.id)))
     .map((gate) =>
       evaluateGate(
         gate,
         input.evidence.observations.find(({ gateId }) => gateId === gate.id),
         input,
         adapter,
+        indexes,
       ),
     );
   const stableInputReasons = [...new Set(inputReasons)].sort();
