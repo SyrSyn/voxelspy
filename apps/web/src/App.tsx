@@ -2,15 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Route, Routes, useLocation } from "react-router";
 import { Wordmark } from "./Brand";
 import { ComparisonFlow } from "./ComparisonFlow";
+import { HomeDemo } from "./HomeDemo";
 import { docs, searchDocs, type DocPage } from "./content";
 
 type ThemePreference = "system" | "light" | "dark";
 
 const baseMetadata = {
   "/": {
-    title: "VoxelSpy — Private 3D model comparison",
+    title: "VoxelSpy — A 3D Toolkit, Free Forever",
     description:
-      "Inspect 3D model revisions locally and keep source geometry on your device.",
+      "Explore a loaded sample revision with synchronized difference, baseline, and candidate views.",
   },
   "/compare/": {
     title: "Compare models — VoxelSpy",
@@ -95,7 +96,7 @@ function Header() {
     <header className="site-header">
       <div className="shell header-inner">
         <Link className="brand-link" to="/" aria-label="VoxelSpy home">
-          <Wordmark />
+          <Wordmark markSize={40} />
         </Link>
         <nav
           className={open ? "main-nav is-open" : "main-nav"}
@@ -108,6 +109,16 @@ function Header() {
           <NavLink to="/docs/">Docs</NavLink>
         </nav>
         <div className="header-actions">
+          <a
+            className="github-link"
+            href="https://github.com/SyrSyn/voxelspy"
+            target="_blank"
+            rel="noreferrer"
+            aria-label="VoxelSpy on GitHub, 0 stars"
+          >
+            <span className="github-label">GitHub</span>
+            <span aria-hidden="true">★ 0</span>
+          </a>
           <ThemeButton />
           <button
             className="menu-button"
@@ -139,87 +150,7 @@ function Footer() {
 }
 
 function HomePage() {
-  return (
-    <>
-      <section className="hero shell">
-        <div>
-          <span className="eyebrow">
-            <i className="pulse" /> Browser-local by default
-          </span>
-          <h1>
-            See what changed.<span> Keep the model.</span>
-          </h1>
-          <p className="lede">
-            Compare 3D revisions, inspect meaningful geometric changes, and
-            review bounded local results without making source models someone
-            else's data.
-          </p>
-          <div className="actions">
-            <Link className="button button-primary" to="/compare/">
-              Start a comparison
-            </Link>
-            <Link
-              className="button button-secondary"
-              to="/docs/getting-started/"
-            >
-              Read the guide
-            </Link>
-          </div>
-          <ul className="trust-row" aria-label="Product properties">
-            <li>Local files</li>
-            <li>Explicit units</li>
-            <li>Inspectible methods</li>
-          </ul>
-        </div>
-        <div
-          className="hero-graphic"
-          aria-label="Abstract baseline and candidate model comparison"
-        >
-          <div className="model-plane model-plane-a" />
-          <div className="model-plane model-plane-b" />
-          <div className="change-pip pip-one" />
-          <div className="change-pip pip-two" />
-          <div className="graphic-key">
-            <span>Baseline</span>
-            <span>Candidate</span>
-            <strong>Local comparison</strong>
-          </div>
-        </div>
-      </section>
-      <section className="section shell" aria-labelledby="principles-title">
-        <header className="section-heading">
-          <span className="eyebrow">Designed for scrutiny</span>
-          <h2 id="principles-title">A result you can reason about</h2>
-        </header>
-        <div className="card-grid">
-          <article>
-            <span>01</span>
-            <h3>Meaning stays intact</h3>
-            <p>
-              Units, transforms, warnings, provenance, and uncertainty stay
-              visible. Corrections are explicit.
-            </p>
-          </article>
-          <article>
-            <span>02</span>
-            <h3>Methods fit the input</h3>
-            <p>
-              Every analysis method states its preconditions and whether its
-              answer is exact, approximate, or indeterminate.
-            </p>
-          </article>
-          <article>
-            <span>03</span>
-            <h3>Sharing is separate</h3>
-            <p>
-              Normal comparison remains local. Portable report and session
-              export is not connected to this browser workflow yet.
-            </p>
-          </article>
-        </div>
-      </section>
-    </>
-  );
+  return <HomeDemo />;
 }
 
 function SearchBox() {

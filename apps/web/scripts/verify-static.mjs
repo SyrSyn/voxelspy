@@ -38,6 +38,14 @@ for (const route of routes) {
     `${route || "/"} lacks the early theme guard`,
   );
 }
+const home = await readFile(path.join(root, "dist/index.html"), "utf8");
+assert.match(home, /Instant - Local - Open Source/);
+assert.match(home, /A 3D Toolkit, Free Forever\./);
+assert.match(home, /viewport-difference/);
+assert.match(home, /viewport-baseline/);
+assert.match(home, /viewport-candidate/);
+assert.doesNotMatch(home, /See what changed/);
+assert.doesNotMatch(home, /Mounting bracket reinforcement/);
 const compare = await readFile(
   path.join(root, "dist/compare/index.html"),
   "utf8",

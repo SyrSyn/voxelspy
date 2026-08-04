@@ -14,10 +14,10 @@ export function VoxelMark({ size = 32 }: { size?: number }) {
   );
 }
 
-export function Wordmark() {
+export function Wordmark({ markSize = 32 }: { markSize?: number }) {
   return (
     <span className="wordmark">
-      <VoxelMark />
+      <VoxelMark size={markSize} />
       <span>
         Voxel<span>Spy</span>
       </span>

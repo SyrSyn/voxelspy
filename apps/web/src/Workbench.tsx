@@ -44,6 +44,11 @@ export interface WorkbenchProps {
   candidate: NormalizedModel;
   analysis: AnalysisResult;
   onReset?: () => void;
+  title?: string;
+  label?: string;
+  headerAction?: ReactNode;
+  variant?: "default" | "sample";
+  enableKeyboardShortcuts?: boolean;
 }
 
 const identity = new Matrix4();
@@ -698,6 +703,11 @@ export function Workbench({
   candidate,
   analysis,
   onReset,
+  title = "Comparison workbench",
+  label,
+  headerAction,
+  variant = "default",
+  enableKeyboardShortcuts = true,
 }: WorkbenchProps) {
   const renderFrame = useMemo(
     () => renderFrameFor(baseline, candidate),
@@ -758,6 +768,7 @@ export function Workbench({
     [origin, regions, renderFrame.renderable],
   );
   useEffect(() => {
+    if (!enableKeyboardShortcuts) return;
     const listener = (event: KeyboardEvent) => {
       if (
         event.target instanceof HTMLInputElement ||
@@ -779,18 +790,23 @@ export function Workbench({
     };
     window.addEventListener("keydown", listener);
     return () => window.removeEventListener("keydown", listener);
-  }, [initial, ordered, select, selected]);
+  }, [enableKeyboardShortcuts, initial, ordered, select, selected]);
 
   const semantics =
     analysis.outcome.state === "complete"
       ? analysis.outcome.semantics.replaceAll("-", " ")
       : "indeterminate";
   return (
-    <section className="workbench" aria-labelledby="workbench-title">
+    <section
+      className={`workbench workbench-${variant}`}
+      aria-labelledby="workbench-title"
+    >
       <header className="workbench-header">
         <div>
-          <span className="eyebrow">Local analysis · {semantics}</span>
-          <h1 id="workbench-title">Comparison workbench</h1>
+          <span className="eyebrow">
+            {label ?? `Local analysis · ${semantics}`}
+          </span>
+          <h1 id="workbench-title">{title}</h1>
         </div>
         <div className="workbench-actions">
           <button
@@ -803,7 +819,7 @@ export function Workbench({
               }))
             }
           >
-            Fit all <kbd>F</kbd>
+            Fit all {enableKeyboardShortcuts && <kbd>F</kbd>}
           </button>
           {onReset && (
             <button
@@ -814,6 +830,7 @@ export function Workbench({
               New comparison
             </button>
           )}
+          {headerAction}
         </div>
       </header>
       <div className="workbench-toolbar">
@@ -831,7 +848,7 @@ export function Workbench({
         <span>Orbit, pan, and zoom are synchronized across all views.</span>
       </div>
       <div className="viewport-grid">
-        {(["baseline", "difference", "candidate"] as const).map((kind) => (
+        {(["difference", "baseline", "candidate"] as const).map((kind) => (
           <section className={`viewport viewport-${kind}`} key={kind}>
             <header>
               <span>

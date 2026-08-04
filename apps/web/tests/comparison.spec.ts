@@ -22,6 +22,60 @@ endfacet
 endsolid candidate
 `;
 
+test("opens with a working sample difference above its source models", async ({
+  page,
+}) => {
+  const offOrigin: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).origin !== "http://127.0.0.1:4173")
+      offOrigin.push(request.url());
+  });
+
+  await page.goto("/");
+  const sample = page.locator(".workbench-sample");
+  await expect(
+    sample.getByRole("heading", { name: "A 3D Toolkit, Free Forever." }),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(sample.getByText("Instant - Local - Open Source")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "VoxelSpy on GitHub, 0 stars" }),
+  ).toHaveAttribute("href", "https://github.com/SyrSyn/voxelspy");
+  await expect(sample.locator("canvas")).toHaveCount(3);
+
+  const views = sample.locator(".viewport");
+  await expect(views).toHaveCount(3);
+  await expect(views.nth(0)).toHaveClass(/viewport-difference/);
+  await expect(views.nth(1)).toHaveClass(/viewport-baseline/);
+  await expect(views.nth(2)).toHaveClass(/viewport-candidate/);
+  const boxes = await views.evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const box = node.getBoundingClientRect();
+      return { top: box.top, bottom: box.bottom };
+    }),
+  );
+  expect(boxes[1]!.top).toBeGreaterThanOrEqual(boxes[0]!.bottom - 1);
+  expect(boxes[2]!.top).toBeGreaterThanOrEqual(boxes[0]!.bottom - 1);
+
+  await expect(
+    sample.getByRole("heading", { name: "Changed regions" }),
+  ).toBeVisible();
+  expect(await sample.locator(".findings li").count()).toBeGreaterThan(0);
+  await sample.getByRole("slider", { name: /Cross section/ }).fill("50");
+  await expect(sample.locator(".workbench-toolbar output")).toHaveText("50%");
+  await expect(
+    sample.getByRole("link", { name: "Compare your own models" }),
+  ).toBeVisible();
+  await expect(page.locator("#main-content h1")).toHaveCount(1);
+  expect(offOrigin).toEqual([]);
+  expect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth >
+        document.documentElement.clientWidth,
+    ),
+  ).toBe(false);
+});
+
 test("imports, analyzes, and opens synchronized comparison views locally", async ({
   page,
 }) => {
