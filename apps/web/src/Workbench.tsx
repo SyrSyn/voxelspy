@@ -47,6 +47,7 @@ export interface WorkbenchProps {
 }
 
 const identity = new Matrix4();
+const MAX_PRECISION_SAFE_RENDER_SPAN_MILLIMETRES = 500_000;
 
 function modelInstances(model: NormalizedModel) {
   const meshById = new Map(model.meshes.map((mesh) => [mesh.id, mesh]));
@@ -140,12 +141,31 @@ function modelBounds(model: NormalizedModel) {
   return bounds;
 }
 
-function initialCameraFor(
-  baseline: NormalizedModel,
-  candidate: NormalizedModel,
-): CameraState {
+function safeBoundsCenter(bounds: Box3) {
+  return new Vector3(
+    bounds.min.x / 2 + bounds.max.x / 2,
+    bounds.min.y / 2 + bounds.max.y / 2,
+    bounds.min.z / 2 + bounds.max.z / 2,
+  );
+}
+
+function renderFrameFor(baseline: NormalizedModel, candidate: NormalizedModel) {
   const bounds = modelBounds(baseline).union(modelBounds(candidate));
-  const size = Math.max(bounds.getSize(new Vector3()).length(), 1);
+  const spans = [
+    bounds.max.x - bounds.min.x,
+    bounds.max.y - bounds.min.y,
+    bounds.max.z - bounds.min.z,
+  ];
+  const renderable = spans.every(
+    (span) =>
+      Number.isFinite(span) &&
+      span <= MAX_PRECISION_SAFE_RENDER_SPAN_MILLIMETRES,
+  );
+  const size = renderable ? Math.max(Math.hypot(...spans), 1) : 1;
+  return { bounds, origin: safeBoundsCenter(bounds), renderable, size };
+}
+
+function initialCameraFor(size: number): CameraState {
   return {
     position: [size * 0.8, size * 0.62, size * 0.82],
     target: [0, 0, 0],
@@ -338,6 +358,8 @@ function Scene({
   publish,
   select,
   origin,
+  renderable,
+  sceneSize,
 }: WorkbenchProps & {
   kind: ViewKind;
   camera: CameraState;
@@ -346,6 +368,8 @@ function Scene({
   publish: (state: Omit<CameraState, "revision">) => void;
   select: (id: RegionId) => void;
   origin: Vector3;
+  renderable: boolean;
+  sceneSize: number;
 }) {
   const [available, setAvailable] = useState(false);
   useEffect(() => setAvailable(hasWebGL()), []);
@@ -367,11 +391,23 @@ function Scene({
       accessible.
     </div>
   );
+  if (!renderable)
+    return (
+      <div className="render-fallback" role="status">
+        3D preview withheld because the model span exceeds the precision-safe
+        rendering range. Import and analysis evidence remain available.
+      </div>
+    );
   if (!available) return fallback;
   return (
     <RenderBoundary fallback={fallback}>
       <Canvas
-        camera={{ position: camera.position, fov: 38, near: 0.001, far: 1e12 }}
+        camera={{
+          position: camera.position,
+          fov: 38,
+          near: 0.001,
+          far: Math.max(sceneSize * 12, 1_000),
+        }}
         frameloop="demand"
         dpr={[1, 1.5]}
         gl={{
@@ -663,16 +699,14 @@ export function Workbench({
   analysis,
   onReset,
 }: WorkbenchProps) {
-  const initial = useMemo(
-    () => initialCameraFor(baseline, candidate),
+  const renderFrame = useMemo(
+    () => renderFrameFor(baseline, candidate),
     [baseline, candidate],
   );
-  const origin = useMemo(
-    () =>
-      modelBounds(baseline)
-        .union(modelBounds(candidate))
-        .getCenter(new Vector3()),
-    [baseline, candidate],
+  const { origin } = renderFrame;
+  const initial = useMemo(
+    () => initialCameraFor(renderFrame.size),
+    [renderFrame.size],
   );
   const [camera, setCamera] = useState(initial);
   const [clip, setClip] = useState(100);
@@ -697,6 +731,7 @@ export function Workbench({
   const select = useCallback(
     (id: RegionId) => {
       setSelected(id);
+      if (!renderFrame.renderable) return;
       const region = regions.get(id);
       if (!region) return;
       const size = Math.max(
@@ -720,7 +755,7 @@ export function Workbench({
         revision: current.revision + 1,
       }));
     },
-    [origin, regions],
+    [origin, regions, renderFrame.renderable],
   );
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -820,6 +855,8 @@ export function Workbench({
                 publish={publish}
                 select={select}
                 origin={origin}
+                renderable={renderFrame.renderable}
+                sceneSize={renderFrame.size}
               />
             </div>
           </section>
