@@ -2,7 +2,7 @@
 
 VoxelSpy is a free, open-source toolkit for understanding geometric changes between 3D models. The first release is a local-first browser application: load two revisions, inspect what changed, measure the difference, annotate findings, and export a reproducible report without uploading the models during normal use.
 
-The project is in its foundation and evidence-gathering stage. APIs, supported limits, and analysis semantics are not stable yet.
+The project is in its contract-foundation stage. Versioned repository contracts are accepted for the first implementation, but supported adapters, browser limits, and release claims still require fixture and runtime evidence.
 
 ## Direction
 
@@ -16,7 +16,9 @@ The browser tool will normalize input into an explicit engineering coordinate sy
 
 ## Repository status
 
-This repository currently contains the public project foundation. Geometry algorithms, package contracts, browser limits, and format behavior will be accepted only after fixture-based spikes and cross-browser evidence.
+This repository contains the public project foundation and the accepted version 1 data boundaries for geometry, import, analysis, review reports, portable sessions, worker transport, adapter evidence, and release gates. These contracts are an implementation baseline inside the repository; the package remains private and unpublished, and its `0.1.0` version is not an independent stability promise.
+
+The browser application and production adapters are not implemented yet. Format support, analysis accuracy, performance limits, accessibility, and browser readiness remain release-gated claims that require the evidence defined by the contracts.
 
 The intended workspace layout is:
 
