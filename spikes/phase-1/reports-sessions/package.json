@@ -1,0 +1,31 @@
+{
+  "name": "@voxelspy/reports-sessions-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "generate": "pnpm build && node dist/cli.js artifacts",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "dependencies": {
+    "fflate": "0.8.2",
+    "zod": "4.0.17"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.33.0",
+    "@types/node": "24.3.0",
+    "eslint": "9.33.0",
+    "fast-check": "4.3.0",
+    "typescript": "5.9.2",
+    "typescript-eslint": "8.40.0",
+    "vitest": "3.2.4"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.33.2"
+}
