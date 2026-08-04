@@ -34,9 +34,19 @@ A version 1 portable session is deliberately self-contained: `manifest.json`, on
 
 Session archive implementation remains outside this package. The contract provides caller-supplied limits and correlated preflight/post-inflate evidence for compressed bytes, entry count, individual and aggregate expansion, compression ratio, dedicated manifest/report sizes, exact archive membership, and verified payload sizes and hashes. Implementations must reject traversal, malformed or duplicate archive names, encryption, unsupported compression, inconsistent headers, trailing data, invalid UTF-8/JSON, and duplicate JSON keys before interpreting content. No product-default limits are defined here.
 
+## Worker protocol and buffer ownership
+
+Worker protocol V1 is a strict, environment-neutral message boundary for a browser dedicated-worker implementation. A ready/initialize handshake precedes execution. The wire supports import and analysis execution, monotonic work-unit progress, correlated results, explicit cancellation acknowledgement and completion, sanitized structured errors, and acknowledged disposal. Exactly one operation may be active. Request identifiers are unique for the entire worker lifetime, including after completion; `validateWorkerProtocolTrace()` checks those lifecycle, correlation, progress, and result-exchange invariants as a pure ordered-trace validation.
+
+Error producers must map caught failures to stable caller-safe codes and messages. They must never serialize raw exception text, stacks, local paths, source content, credentials, or other secrets. The error schema's bounded single-line text and strict fields are structural backstops, not a substitute for sanitizing at the failure boundary.
+
+Cancellation has an explicit completion race. An `accepted` acknowledgement is followed by `cancelled`. If a result or operation error was already queued before acknowledgement, it remains authoritative and is followed by an `already-completed` cancellation acknowledgement. Messages from the worker are expected to retain their normal same-sender order; the protocol does not assume ordering between messages travelling in opposite directions.
+
+Transferable `ArrayBuffer` ownership is the mandatory V1 transport. `getWorkerMessageTransferList()` returns the complete deterministic list for an import request or successful import result, and `hasExactWorkerMessageTransferList()` rejects missing, extra, reordered, or duplicate buffers. Posting that list relinquishes the sender's ownership and may detach its views immediately. Preserving input requires an explicit caller copy. Shared memory may be used only as an optional implementation-internal acceleration when the environment permits it; `SharedArrayBuffer`, shared-memory negotiation, and synchronization objects are not V1 wire payloads or baseline requirements.
+
 ## Deliberate exclusions
 
-The package has no dependency on React, Three.js, DOM `File`, browser globals, Node built-ins, archive implementations, storage, identity, hosting, or persistence. It does not select an importer, geometry kernel, accuracy threshold, method fallback, resource limit, worker topology, canonical JSON byte encoding, report renderer, archive parser, or deployment policy.
+The package has no dependency on React, Three.js, DOM `File`, browser globals, Node built-ins, archive implementations, storage, identity, hosting, or persistence. It does not select an importer, geometry kernel, accuracy threshold, method fallback, resource limit, worker implementation or packaging path, canonical JSON byte encoding, report renderer, archive parser, or deployment policy.
 
 The hierarchical placement shape preserves a serializable rooted tree without freezing one CAD engine's runtime objects. Typed geometry needs a separately versioned binary format before it can appear in a portable session.
 
@@ -48,4 +58,4 @@ From the repository root:
 pnpm --filter @voxelspy/contracts check
 ```
 
-Tests cover finite values, transforms, typed-array layout, graph references, resource bounds, version dispatch, result semantics, review/report graphs, portable-session evidence, and strict portable metadata. Browser-library and Node-library TypeScript consumers compile against the same package exports.
+Tests cover finite values, transforms, typed-array layout, graph references, resource bounds, version dispatch, result semantics, review/report graphs, portable-session evidence, worker lifecycle traces, exact buffer transfer lists, and strict portable metadata. Browser-library and Node-library TypeScript consumers compile against the same package exports.

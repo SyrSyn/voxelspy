@@ -4,3 +4,4 @@ export * from "./import.js";
 export * from "./primitives.js";
 export * from "./report.js";
 export * from "./session.js";
+export * from "./worker.js";
