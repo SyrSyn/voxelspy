@@ -64,6 +64,34 @@ test("imports, analyzes, and opens synchronized comparison views locally", async
     page.getByRole("heading", { name: "Changed regions" }),
   ).toBeVisible();
   await expect(
+    page.getByRole("heading", { name: "Analysis interpretation" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Approximation and uncertainty" }),
+  ).toBeVisible();
+  await expect(page.getByText("omittedRegionCount")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Import interpretation" }),
+  ).toBeVisible();
+  const baselineEvidence = page
+    .getByRole("article")
+    .filter({ hasText: "Baseline import" });
+  await expect(baselineEvidence.getByText("millimetres · user")).toBeVisible();
+  await expect(
+    baselineEvidence.getByText("right-handed, Z up · user"),
+  ).toBeVisible();
+  await expect(
+    baselineEvidence.getByText("user-source-frame", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    baselineEvidence.getByText("Facet normals are retained neither", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(
+    baselineEvidence.getByLabel("Baseline source-to-model transform rows"),
+  ).toBeVisible();
+  await expect(
     page.getByText("Model data remains in this browser."),
   ).toBeVisible();
   expect(offOrigin).toEqual([]);
@@ -89,4 +117,39 @@ test("keeps capability guidance usable on a compact viewport", async ({
       document.documentElement.clientWidth,
   );
   expect(overflow).toBe(false);
+});
+
+test("requires a fresh source-frame interpretation when a file is replaced", async ({
+  page,
+}) => {
+  await page.goto("/compare/");
+  const baselineCard = page.locator(".source-card").first();
+  const fileInput = baselineCard.locator('input[type="file"]');
+  await fileInput.setInputFiles({
+    name: "first.stl",
+    mimeType: "model/stl",
+    buffer: Buffer.from(baseline),
+  });
+  await baselineCard.getByLabel("Source unit").selectOption("millimetre");
+  await baselineCard
+    .getByLabel("Source up-axis")
+    .selectOption("right-handed-z-up");
+  await expect(baselineCard.getByText("Supported mesh format")).toBeVisible();
+
+  await fileInput.setInputFiles({
+    name: "replacement.stl",
+    mimeType: "model/stl",
+    buffer: Buffer.from(candidate),
+  });
+
+  await expect(baselineCard.getByLabel("Source unit")).toHaveValue("");
+  await expect(baselineCard.getByLabel("Source up-axis")).toHaveValue("");
+  await expect(
+    baselineCard.getByText("Choose the source unit and up-axis", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Validate and compare" }),
+  ).toBeDisabled();
 });

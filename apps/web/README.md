@@ -25,6 +25,10 @@ Normal model selection and comparison are browser-local. The application does no
 
 STL and OBJ import plus sampled surface-distance analysis run in a dedicated browser worker. Because those formats do not authoritatively declare units or an up-axis, comparison remains unavailable until the user explicitly supplies both interpretations for each file.
 
+The workbench keeps the selected source frame, normalization transform, importer provenance, import warnings and notes, analysis warnings, and approximation uncertainty visible alongside the result. Selecting a replacement file clears the previous file's interpretation so the new source must be confirmed independently.
+
+Portable report and session contracts exist in the workspace, but browser save and export actions are not connected yet.
+
 ## Static hosting
 
 The build produces route-specific HTML for direct navigation and a static `404.html`. No provider-specific runtime, server function, or fallback rewrite is required. A production origin and provider configuration are intentionally outside this package.

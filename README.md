@@ -2,7 +2,7 @@
 
 VoxelSpy is a free, open-source toolkit for understanding geometric changes between 3D models. The first release is a local-first browser application: load two revisions, inspect what changed, measure the difference, annotate findings, and export a reproducible report without uploading the models during normal use.
 
-The project is in its contract-foundation stage. Versioned repository contracts are accepted for the first implementation, but supported adapters, browser limits, and release claims still require fixture and runtime evidence.
+The project is in a pre-release implementation stage. Versioned repository contracts are accepted, and the first browser-local comparison slice is implemented. Broader format support, accuracy claims, performance tiers, accessibility, and release readiness still require fixture and runtime evidence.
 
 ## Direction
 
@@ -18,7 +18,9 @@ The browser tool will normalize input into an explicit engineering coordinate sy
 
 This repository contains the public project foundation and the accepted version 1 data boundaries for geometry, import, analysis, review reports, portable sessions, worker transport, adapter evidence, and release gates. These contracts are an implementation baseline inside the repository; the package remains private and unpublished, and its `0.1.0` version is not an independent stability promise.
 
-The browser application and production adapters are not implemented yet. Format support, analysis accuracy, performance limits, accessibility, and browser readiness remain release-gated claims that require the evidence defined by the contracts.
+The static browser application currently imports bounded ASCII or binary STL and a documented OBJ subset. It requires an explicit unit and up-axis for each source, normalizes to millimetres and right-handed Z-up, runs approximate sampled surface-distance analysis in a dedicated browser worker, and opens synchronized baseline, difference, and candidate views. Import provenance, warnings, method semantics, and uncertainty remain visible in the result. Portable report/session export, annotations, hosted services, and the other formats in the project direction are not connected to this workflow.
+
+Implementation ceilings are fail-closed safety bounds, not general model-size or production-readiness claims. See the web, importer, and analysis package READMEs for the exact supported subsets and method limits.
 
 The intended workspace layout is:
 
@@ -42,11 +44,17 @@ pnpm install
 pnpm check
 ```
 
-Additional commands will be documented as runnable packages are added. See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution and verification expectations.
+Run the web application locally with:
+
+```sh
+pnpm --filter @voxelspy/web dev
+```
+
+Package-specific checks and limits are documented in the READMEs under `apps/` and `packages/`. See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution and verification expectations.
 
 ## Privacy and security
 
-The public browser experience is intended to perform normal model comparison locally. Network behavior and third-party assets must remain explicit and auditable. This is a design target, not a claim that unfinished software is production-ready. See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md).
+The implemented comparison path reads source files, imports geometry, and runs analysis locally in the browser without a model API, hosted identity, storage, or telemetry. Network behavior and third-party assets must remain explicit and auditable. This local boundary does not make the pre-release software production-ready. See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md).
 
 ## License
 

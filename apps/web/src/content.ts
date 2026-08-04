@@ -62,7 +62,7 @@ export const docs: DocPage[] = [
         id: "portable-artifacts",
         title: "Portable artifacts are explicit",
         paragraphs: [
-          "Reports and sessions use versioned, serializable data so recipients can understand what an artifact contains without hidden application state.",
+          "Reports and sessions have versioned, serializable data boundaries, but portable export is not connected to the browser workflow yet.",
         ],
       },
     ],

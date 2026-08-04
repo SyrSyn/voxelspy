@@ -451,6 +451,212 @@ function formatMetric(value: number, unit: string) {
   return `${Number.isInteger(value) ? value : value.toPrecision(4)} ${labels[unit] ?? unit}`.trim();
 }
 
+function sourceUnitLabel(unit: NormalizedModel["provenance"]["sourceUnit"]) {
+  return {
+    micrometre: "micrometres",
+    millimetre: "millimetres",
+    centimetre: "centimetres",
+    metre: "metres",
+    inch: "inches",
+    foot: "feet",
+  }[unit];
+}
+
+function sourceAxisLabel(axis: NormalizedModel["provenance"]["sourceAxis"]) {
+  return axis === "right-handed-z-up"
+    ? "right-handed, Z up"
+    : "right-handed, Y up";
+}
+
+function transformRows(transform: readonly number[]) {
+  return [0, 1, 2, 3].map((row) =>
+    [0, 1, 2, 3]
+      .map((column) => transform[column * 4 + row] ?? 0)
+      .map((value) => (Object.is(value, -0) ? "0" : String(value)))
+      .join("  "),
+  );
+}
+
+function portableValue(value: unknown) {
+  return JSON.stringify(value);
+}
+
+function ModelEvidence({
+  label,
+  model,
+}: {
+  label: "Baseline" | "Candidate";
+  model: NormalizedModel;
+}) {
+  const provenance = model.provenance;
+  return (
+    <article className="source-card">
+      <span className="eyebrow">{label} import</span>
+      <h3>{provenance.sourceName}</h3>
+      <dl>
+        <div>
+          <dt>Selected source unit</dt>
+          <dd>
+            {sourceUnitLabel(provenance.sourceUnit)} ·{" "}
+            {provenance.sourceResolution.unit}
+          </dd>
+        </div>
+        <div>
+          <dt>Selected source up-axis</dt>
+          <dd>
+            {sourceAxisLabel(provenance.sourceAxis)} ·{" "}
+            {provenance.sourceResolution.axis}
+          </dd>
+        </div>
+        <div>
+          <dt>Detected source frame</dt>
+          <dd>
+            Unit {provenance.detectedSourceUnit}; axis{" "}
+            {provenance.detectedSourceAxis}
+          </dd>
+        </div>
+      </dl>
+      <details open>
+        <summary>Normalization and provenance</summary>
+        <p>
+          Source to model transform (rows; canonical model frame is millimetres,
+          right-handed Z up):
+        </p>
+        <ol aria-label={`${label} source-to-model transform rows`}>
+          {transformRows(provenance.appliedSourceToModel).map((row, index) => (
+            <li key={index}>
+              <code>{row}</code>
+            </li>
+          ))}
+        </ol>
+        <dl>
+          <div>
+            <dt>Format</dt>
+            <dd>{provenance.formatId}</dd>
+          </div>
+          <div>
+            <dt>Importer</dt>
+            <dd>
+              {provenance.importerId} {provenance.importerVersion}
+            </dd>
+          </div>
+          {provenance.sourceDigest && (
+            <div>
+              <dt>Source SHA-256</dt>
+              <dd>
+                <code>
+                  {provenance.sourceDigest.value.match(/.{1,8}/gu)?.join(" ")}
+                </code>
+              </dd>
+            </div>
+          )}
+        </dl>
+      </details>
+      <section aria-labelledby={`${label.toLocaleLowerCase("en-US")}-warnings`}>
+        <h4 id={`${label.toLocaleLowerCase("en-US")}-warnings`}>
+          Import warnings
+        </h4>
+        {model.warnings.length === 0 ? (
+          <p>No import warnings.</p>
+        ) : (
+          <ul>
+            {model.warnings.map((warning) => (
+              <li key={warning.code}>
+                <strong>{warning.code}</strong> ({warning.severity}):{" "}
+                {warning.message}
+                {warning.location && <> Location: {warning.location}.</>}
+                {warning.details && (
+                  <code> {portableValue(warning.details)}</code>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <section aria-labelledby={`${label.toLocaleLowerCase("en-US")}-notes`}>
+        <h4 id={`${label.toLocaleLowerCase("en-US")}-notes`}>Importer notes</h4>
+        {provenance.notes.length === 0 ? (
+          <p>No importer notes.</p>
+        ) : (
+          <ul>
+            {provenance.notes.map((note, index) => (
+              <li key={`${index}-${note}`}>{note}</li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </article>
+  );
+}
+
+function AnalysisEvidence({ analysis }: { analysis: AnalysisResult }) {
+  const outcome = analysis.outcome;
+  return (
+    <section className="method-card" aria-labelledby="analysis-evidence-title">
+      <div>
+        <span className="eyebrow">Method evidence</span>
+        <h2 id="analysis-evidence-title">Analysis interpretation</h2>
+        <p>
+          {outcome.requestedMethod.id} {outcome.requestedMethod.version} ·{" "}
+          {outcome.state}
+        </p>
+      </div>
+      <div>
+        <h3>Analysis warnings</h3>
+        {analysis.warnings.length === 0 ? (
+          <p>No analysis warnings.</p>
+        ) : (
+          <ul>
+            {analysis.warnings.map((warning) => (
+              <li key={warning.code}>
+                <strong>{warning.code}</strong> ({warning.severity}):{" "}
+                {warning.message}
+                {warning.location && <> Location: {warning.location}.</>}
+                {warning.details && (
+                  <code> {portableValue(warning.details)}</code>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        {outcome.state === "complete" &&
+          outcome.semantics === "approximate" && (
+            <section aria-labelledby="analysis-uncertainty-title">
+              <h3 id="analysis-uncertainty-title">
+                Approximation and uncertainty
+              </h3>
+              <p>{outcome.uncertainty.description}</p>
+              <dl>
+                {Object.entries(outcome.uncertainty.parameters).map(
+                  ([key, value]) => (
+                    <div key={key}>
+                      <dt>{key}</dt>
+                      <dd>
+                        <code>{portableValue(value)}</code>
+                      </dd>
+                    </div>
+                  ),
+                )}
+              </dl>
+            </section>
+          )}
+        {outcome.state === "complete" && outcome.adjustments.length > 0 && (
+          <section aria-labelledby="analysis-adjustments-title">
+            <h3 id="analysis-adjustments-title">Analysis adjustments</h3>
+            <ul>
+              {outcome.adjustments.map((adjustment, index) => (
+                <li key={`${adjustment.field}-${index}`}>
+                  <strong>{adjustment.field}:</strong> {adjustment.reason}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function Workbench({
   baseline,
   candidate,
@@ -668,6 +874,21 @@ export function Workbench({
           </ol>
         )}
       </aside>
+      <AnalysisEvidence analysis={analysis} />
+      <section aria-labelledby="import-evidence-title">
+        <header className="section-heading">
+          <span className="eyebrow">Source evidence</span>
+          <h2 id="import-evidence-title">Import interpretation</h2>
+          <p>
+            Review the source frame, normalization, warnings, and provenance
+            used for this result.
+          </p>
+        </header>
+        <div className="file-grid">
+          <ModelEvidence label="Baseline" model={baseline} />
+          <ModelEvidence label="Candidate" model={candidate} />
+        </div>
+      </section>
       <footer className="workbench-footer">
         <span>
           <strong>Baseline:</strong> {baseline.provenance.sourceName}

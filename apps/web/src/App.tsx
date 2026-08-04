@@ -151,8 +151,8 @@ function HomePage() {
           </h1>
           <p className="lede">
             Compare 3D revisions, inspect meaningful geometric changes, and
-            create portable results without making source models someone else's
-            data.
+            review bounded local results without making source models someone
+            else's data.
           </p>
           <div className="actions">
             <Link className="button button-primary" to="/compare/">
@@ -212,8 +212,8 @@ function HomePage() {
             <span>03</span>
             <h3>Sharing is separate</h3>
             <p>
-              Normal comparison remains local. A portable artifact exists only
-              when you deliberately create one.
+              Normal comparison remains local. Portable report and session
+              export is not connected to this browser workflow yet.
             </p>
           </article>
         </div>

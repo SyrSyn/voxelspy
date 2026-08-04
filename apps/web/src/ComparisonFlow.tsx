@@ -90,8 +90,9 @@ function SourceCard({
           accept=".stl,.obj"
           onChange={(event) =>
             update({
-              ...selection,
               file: event.currentTarget.files?.[0] ?? null,
+              unit: "",
+              axis: "",
             })
           }
         />
