@@ -41,7 +41,8 @@ export const docs: DocPage[] = [
     path: "/docs/privacy/",
     eyebrow: "Data boundary",
     title: "Privacy by default",
-    description: "Understand what stays on your device and where explicit sharing begins.",
+    description:
+      "Understand what stays on your device and where explicit sharing begins.",
     sections: [
       {
         id: "local-comparison",
@@ -97,18 +98,32 @@ export const docs: DocPage[] = [
   },
 ];
 
-export const routes = ["/", "/compare/", "/docs/", ...docs.map((doc) => doc.path)];
+export const routes = [
+  "/",
+  "/compare/",
+  "/docs/",
+  ...docs.map((doc) => doc.path),
+];
 
 export function searchDocs(query: string) {
-  const terms = query.trim().toLocaleLowerCase("en-US").split(/\s+/u).filter(Boolean);
+  const terms = query
+    .trim()
+    .toLocaleLowerCase("en-US")
+    .split(/\s+/u)
+    .filter(Boolean);
   if (terms.length === 0) return [];
   return docs.filter((doc) => {
     const text = [
       doc.title,
       doc.description,
       doc.eyebrow,
-      ...doc.sections.flatMap((section) => [section.title, ...section.paragraphs]),
-    ].join(" ").toLocaleLowerCase("en-US");
+      ...doc.sections.flatMap((section) => [
+        section.title,
+        ...section.paragraphs,
+      ]),
+    ]
+      .join(" ")
+      .toLocaleLowerCase("en-US");
     return terms.every((term) => text.includes(term));
   });
 }

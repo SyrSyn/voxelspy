@@ -18,7 +18,9 @@ export function Wordmark() {
   return (
     <span className="wordmark">
       <VoxelMark />
-      <span>Voxel<span>Spy</span></span>
+      <span>
+        Voxel<span>Spy</span>
+      </span>
     </span>
   );
 }

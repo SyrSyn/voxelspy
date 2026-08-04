@@ -23,7 +23,7 @@ pnpm --filter @voxelspy/web build
 
 Normal model selection and comparison are browser-local. The application does not require hosted identity, storage, telemetry, or a model API. Any future network-backed feature must expose its destination and require a deliberate action.
 
-The comparison action currently remains visible but disabled until validated importer and analysis packages are connected. The interface states that boundary directly instead of implying unavailable behavior.
+STL and OBJ import plus sampled surface-distance analysis run in a dedicated browser worker. Because those formats do not authoritatively declare units or an up-axis, comparison remains unavailable until the user explicitly supplies both interpretations for each file.
 
 ## Static hosting
 

@@ -8,13 +8,17 @@
     "dev": "vite --host 127.0.0.1",
     "lint": "tsc --noEmit",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "vitest run",
+    "test": "vitest run src",
+    "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@react-three/drei": "10.7.6",
     "@react-three/fiber": "9.3.0",
+    "@voxelspy/analysis": "workspace:*",
     "@voxelspy/contracts": "workspace:*",
+    "@voxelspy/importers": "workspace:*",
+    "@voxelspy/session-archive": "workspace:*",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-router": "8.3.0",
@@ -22,6 +26,7 @@
     "three-stdlib": "2.36.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "@types/node": "26.1.2",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",

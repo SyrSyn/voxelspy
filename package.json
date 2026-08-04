@@ -9,8 +9,8 @@
     "build": "turbo run build",
     "check": "pnpm format:check && turbo run lint typecheck test build",
     "dev": "turbo run dev --parallel",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format": "git ls-files -z | xargs -0 prettier --write --ignore-unknown",
+    "format:check": "git ls-files -z | xargs -0 prettier --check --ignore-unknown",
     "lint": "turbo run lint",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck"

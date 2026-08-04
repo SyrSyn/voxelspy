@@ -14,10 +14,14 @@
       (() => {
         try {
           const saved = localStorage.getItem("voxelspy-theme");
-          const preference = saved === "light" || saved === "dark" ? saved : "system";
-          const resolved = preference === "system"
-            ? matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
-            : preference;
+          const preference =
+            saved === "light" || saved === "dark" ? saved : "system";
+          const resolved =
+            preference === "system"
+              ? matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light"
+              : preference;
           document.documentElement.dataset.themePreference = preference;
           document.documentElement.dataset.theme = resolved;
         } catch {
