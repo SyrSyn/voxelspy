@@ -636,14 +636,14 @@ export const releaseGateResultSchema = z.strictObject({
   gateId: entityIdSchema,
   required: z.boolean(),
   passed: z.boolean(),
-  reasons: z.array(z.string().min(1).max(200)).max(64),
+  reasons: z.array(safeString(200)).max(64),
 });
 export type ReleaseGateResult = z.infer<typeof releaseGateResultSchema>;
 
 export const releaseEvaluationSchema = z.strictObject({
   contractVersion: z.literal(1),
   status: z.enum(["pass", "fail"]),
-  inputReasons: z.array(z.string().min(1).max(500)).max(1_000),
+  inputReasons: z.array(safeString(500)).max(1_000),
   gateResults: z.array(releaseGateResultSchema).max(1_000),
 });
 export type ReleaseEvaluation = z.infer<typeof releaseEvaluationSchema>;

@@ -620,5 +620,13 @@ describe("release evaluation", () => {
       /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
     );
     expect(releaseEvaluationSchema.parse(result)).toEqual(result);
+    expect(() =>
+      releaseEvaluationSchema.parse({
+        contractVersion: 1,
+        status: "fail",
+        inputReasons: ["unsafe\u2028reason"],
+        gateResults: [],
+      }),
+    ).toThrow();
   });
 });
