@@ -6,6 +6,7 @@ import {
   fixtureManifestSchema,
   importerRegistrySchema,
   releaseEvaluationInputSchema,
+  releaseEvaluationSchema,
   releasePolicySchema,
 } from "../src/adapter-evidence.js";
 
@@ -597,5 +598,27 @@ describe("release evaluation", () => {
     );
     expect(first.inputReasons.join("").includes("\u0000")).toBe(false);
     expect(first.inputReasons.join("").includes("\ud800")).toBe(false);
+  });
+
+  it("rejects unsafe metadata and sanitizes hostile failure paths", () => {
+    for (const value of [
+      "1.0.0\nforged",
+      "1.0.0\u0085forged",
+      "1.0.0\u2028forged",
+      "1.0.0\u202eforged",
+      " 1.0.0",
+    ]) {
+      const unsafeRegistry = registry();
+      unsafeRegistry.registryVersion = value;
+      expect(() => importerRegistrySchema.parse(unsafeRegistry)).toThrow();
+    }
+
+    const maliciousKey = "extra\n\u202eforged";
+    const result = evaluateRelease({ ...input(), [maliciousKey]: true });
+    expect(result.status).toBe("fail");
+    expect(result.inputReasons.join(" ")).not.toMatch(
+      /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
+    );
+    expect(releaseEvaluationSchema.parse(result)).toEqual(result);
   });
 });

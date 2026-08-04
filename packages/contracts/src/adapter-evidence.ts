@@ -9,14 +9,16 @@ import {
   sha256DigestSchema,
 } from "./primitives.js";
 
-const controlCharacters = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
+const unsafeTextCharacters =
+  /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u2028-\u202e\u2066-\u2069]/u;
 const safeString = (maximum: number) =>
   z
     .string()
     .min(1)
     .max(maximum)
+    .refine((value) => value.trim() === value, "Text must be trimmed")
     .refine(
-      (value) => isPortableJson(value) && !controlCharacters.test(value),
+      (value) => isPortableJson(value) && !unsafeTextCharacters.test(value),
       "Text contains an unsupported Unicode or control character",
     );
 const safeVersion = safeString(128);
@@ -53,7 +55,7 @@ function sanitizeReason(value: string): string {
   let output = "";
   for (let index = 0; index < value.length && output.length < 500; index += 1) {
     const unit = value.charCodeAt(index);
-    if (controlCharacters.test(value[index] ?? "")) {
+    if (unsafeTextCharacters.test(value[index] ?? "")) {
       output += "?";
       continue;
     }
