@@ -1,0 +1,9 @@
+{
+  "name": "VoxelSpy",
+  "short_name": "VoxelSpy",
+  "description": "Private, local-first 3D model comparison.",
+  "display": "standalone",
+  "background_color": "#101312",
+  "theme_color": "#101312",
+  "icons": []
+}

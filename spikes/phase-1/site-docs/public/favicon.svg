@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="VoxelSpy">
+  <rect width="64" height="64" rx="14" fill="#101312"/>
+  <path fill="#4de28a" d="M20 12h24v8h8v24h-8v8H20v-8h-8V20h8zm4 8v8h-4v8h4v8h16v-8h4v-8h-4v-8z"/>
+  <path fill="#e8efeb" d="M28 24h8v4h4v8h-4v4h-8v-4h-4v-8h4z"/>
+</svg>

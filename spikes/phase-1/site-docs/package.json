@@ -1,0 +1,31 @@
+{
+  "name": "@voxelspy/site-docs-evidence",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build && vite build --ssr src/entry-server.tsx --outDir .ssr && node scripts/prerender.mjs",
+    "check": "pnpm typecheck && pnpm build && pnpm verify:static",
+    "dev": "vite",
+    "preview": "vite preview",
+    "test:browser": "playwright test",
+    "typecheck": "tsc --noEmit",
+    "verify:static": "node scripts/verify-static.mjs"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-router": "8.3.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "@playwright/test": "1.62.1",
+    "@types/node": "26.1.2",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
+    "axe-core": "4.12.1",
+    "typescript": "7.0.2",
+    "vite": "8.2.0"
+  }
+}
