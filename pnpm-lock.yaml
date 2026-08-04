@@ -24,6 +24,9 @@ importers:
         specifier: 4.1.12
         version: 4.1.12
     devDependencies:
+      esbuild:
+        specifier: 0.28.1
+        version: 0.28.1
       vitest:
         specifier: 3.2.7
         version: 3.2.7

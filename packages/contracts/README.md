@@ -65,7 +65,17 @@ The hierarchical placement shape preserves a serializable rooted tree without fr
 From the repository root:
 
 ```sh
+pnpm install --frozen-lockfile
 pnpm --filter @voxelspy/contracts check
 ```
 
-Tests cover finite values, transforms, typed-array layout, graph references, resource bounds, version dispatch, result semantics, review/report graphs, portable-session evidence, worker lifecycle traces, exact buffer transfer lists, adapter registries, fixture licensing, benchmark aggregation, fail-closed release evaluation, and strict portable metadata. Browser-library and Node-library TypeScript consumers compile against the same package exports.
+For a final acceptance replay without task-cache reuse:
+
+```sh
+pnpm format:check
+pnpm exec turbo run lint typecheck test build --force
+```
+
+Tests cover finite values, transforms, typed-array layout, graph references, resource bounds, version dispatch, result semantics, review/report graphs, portable-session evidence, worker lifecycle traces, exact buffer transfer lists, adapter registries, fixture licensing, benchmark aggregation, fail-closed release evaluation, and strict portable metadata. A correlated integration fixture crosses import, analysis, worker, adapter/release, report, and session boundaries. Browser-library and NodeNext TypeScript consumers compile against every public subpath.
+
+The distribution check creates a temporary package tarball, verifies its exact contents and emitted dependency boundary, and installs it offline. It then executes a Node ESM consumer, proves private deep imports remain blocked, builds a browser-targeted bundle, and executes that bundle's schema checks. Temporary packages and bundles are removed after every run.

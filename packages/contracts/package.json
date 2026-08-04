@@ -50,7 +50,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
-    "consumer:check": "pnpm build && node scripts/check-exports.mjs && tsc -p test/consumers/browser/tsconfig.json && tsc -p test/consumers/node/tsconfig.json",
+    "consumer:check": "pnpm build && node scripts/check-exports.mjs && tsc -p test/consumers/browser/tsconfig.json && tsc -p test/consumers/node/tsconfig.json && node scripts/check-distribution.mjs",
     "lint": "node scripts/check-boundaries.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json && pnpm consumer:check"
@@ -59,6 +59,7 @@
     "zod": "4.1.12"
   },
   "devDependencies": {
+    "esbuild": "0.28.1",
     "vitest": "3.2.7"
   },
   "engines": {
