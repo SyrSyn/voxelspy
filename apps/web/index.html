@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" data-theme-preference="system">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#111714" />
+    <meta name="robots" content="index,follow" />
+    <meta property="og:site_name" content="VoxelSpy" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script>
+      (() => {
+        try {
+          const saved = localStorage.getItem("voxelspy-theme");
+          const preference = saved === "light" || saved === "dark" ? saved : "system";
+          const resolved = preference === "system"
+            ? matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+            : preference;
+          document.documentElement.dataset.themePreference = preference;
+          document.documentElement.dataset.theme = resolved;
+        } catch {
+          document.documentElement.dataset.theme = "dark";
+        }
+      })();
+    </script>
+    <!--app-head-->
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <div id="root"><!--app-html--></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
