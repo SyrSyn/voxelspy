@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": []
+  },
+  "include": [
+    "src/index.ts",
+    "src/capabilities.ts",
+    "src/protocol.ts",
+    "src/virtual-inline-worker-source.d.ts"
+  ]
+}

@@ -1,0 +1,5 @@
+coverage/
+dist/
+node_modules/
+consumers/ssr/dist/
+consumers/vite/dist/

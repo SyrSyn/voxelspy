@@ -1,0 +1,47 @@
+{
+  "name": "@voxelspy/worker-performance-spike",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./worker": "./dist/browser-worker.js"
+  },
+  "scripts": {
+    "benchmark": "pnpm build && node bench/benchmark.mjs",
+    "build": "node scripts/build.mjs && tsc -p tsconfig.build.json",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm consumer:build && pnpm benchmark",
+    "consumer:build": "node scripts/build-consumers.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "test": "pnpm build && vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.2",
+    "@types/node": "24.10.1",
+    "esbuild": "0.27.3",
+    "eslint": "9.39.2",
+    "globals": "17.3.0",
+    "prettier": "3.9.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.54.0",
+    "vite": "7.3.1",
+    "vitest": "4.0.18"
+  }
+}
