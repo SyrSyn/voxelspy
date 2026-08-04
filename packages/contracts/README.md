@@ -1,6 +1,6 @@
 # `@voxelspy/contracts`
 
-This package defines the versioned, environment-neutral data boundaries shared by VoxelSpy runtimes. It is a private workspace package while the first public contracts are reviewed. Package version `0.1.0` does not imply that the schemas are ready for independent publication.
+This package defines the accepted version 1, environment-neutral data boundaries used by the repository's first implementation. It remains a private, unpublished workspace package. Package version `0.1.0` and repository acceptance do not promise independent package stability or publication readiness.
 
 ## Coordinate and ownership conventions
 
