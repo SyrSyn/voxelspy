@@ -1,0 +1,31 @@
+node_modules/
+dist/
+coverage/
+.turbo/
+.pnpm-store/
+.vite/
+*.tsbuildinfo
+
+# Local configuration and secrets
+.private/
+.env
+.env.*
+!.env.example
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Runtime output
+*.log
+*.pid
+*.seed
+playwright-report/
+test-results/
+
+# Temporary files
+.cache/
+tmp/
+temp/
