@@ -67,11 +67,44 @@ importers:
         specifier: 3.2.7
         version: 3.2.7(@types/node@26.1.2)(lightningcss@1.33.0)
 
+  packages/analysis:
+    dependencies:
+      '@voxelspy/contracts':
+        specifier: workspace:^
+        version: link:../contracts
+    devDependencies:
+      vitest:
+        specifier: 3.2.7
+        version: 3.2.7(@types/node@26.1.2)(lightningcss@1.33.0)
+
   packages/contracts:
     dependencies:
       zod:
         specifier: 4.1.12
         version: 4.1.12
+    devDependencies:
+      esbuild:
+        specifier: 0.28.1
+        version: 0.28.1
+      vitest:
+        specifier: 3.2.7
+        version: 3.2.7(@types/node@26.1.2)(lightningcss@1.33.0)
+
+  packages/importers:
+    dependencies:
+      '@voxelspy/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      vitest:
+        specifier: 3.2.7
+        version: 3.2.7(@types/node@26.1.2)(lightningcss@1.33.0)
+
+  packages/session-archive:
+    dependencies:
+      '@voxelspy/contracts':
+        specifier: workspace:*
+        version: link:../contracts
     devDependencies:
       esbuild:
         specifier: 0.28.1
