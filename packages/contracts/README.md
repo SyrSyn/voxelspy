@@ -24,9 +24,19 @@ Analysis distinguishes three outcomes:
 
 Cancellation is a worker lifecycle event, not an analysis result. A requested method never falls through silently to another method.
 
+## Reports and portable sessions
+
+Version 1 reports are immutable, bounded review snapshots. They embed a correlated analysis request/result exchange, exactly two source-model records, comparison- or model-frame callouts and distances, manual or automatic findings, renderer-neutral saved views, and bounded 2D line/label figure primitives. Coordinates remain finite canonical millimetres. Automatic findings reference their analysis request and at least one existing change region; indeterminate analyses can still produce manual findings but cannot claim automatic regions.
+
+Report entity IDs are unique across models, metrics, regions, markups, findings, views, and figures. Source digests and names must agree with import normalization provenance. Timestamps use the exact UTC millisecond form `YYYY-MM-DDTHH:mm:ss.sssZ`; unsupported versions and unknown keys reject instead of being guessed or stripped. Figure primitives are already-reviewed export inputs, so report exporters do not rerun geometry implicitly.
+
+A version 1 portable session is deliberately self-contained: `manifest.json`, one verified report payload, and the two original source-model payloads. The manifest uses canonical lowercase relative paths, sorted entries, positive safe byte counts, and SHA-256 digests. Its report and source records must match the report graph exactly. Saving or sharing a session therefore transfers the original model data and must be presented as an explicit user action.
+
+Session archive implementation remains outside this package. The contract provides caller-supplied limits and correlated preflight/post-inflate evidence for compressed bytes, entry count, individual and aggregate expansion, compression ratio, dedicated manifest/report sizes, exact archive membership, and verified payload sizes and hashes. Implementations must reject traversal, malformed or duplicate archive names, encryption, unsupported compression, inconsistent headers, trailing data, invalid UTF-8/JSON, and duplicate JSON keys before interpreting content. No product-default limits are defined here.
+
 ## Deliberate exclusions
 
-The package has no dependency on React, Three.js, DOM `File`, browser globals, Node built-ins, archive implementations, storage, identity, hosting, or persistence. It does not select an importer, geometry kernel, accuracy threshold, method fallback, resource limit, worker topology, canonical JSON byte encoding, report layout, or deployment policy.
+The package has no dependency on React, Three.js, DOM `File`, browser globals, Node built-ins, archive implementations, storage, identity, hosting, or persistence. It does not select an importer, geometry kernel, accuracy threshold, method fallback, resource limit, worker topology, canonical JSON byte encoding, report renderer, archive parser, or deployment policy.
 
 The hierarchical placement shape preserves a serializable rooted tree without freezing one CAD engine's runtime objects. Typed geometry needs a separately versioned binary format before it can appear in a portable session.
 
@@ -38,4 +48,4 @@ From the repository root:
 pnpm --filter @voxelspy/contracts check
 ```
 
-Tests cover finite values, transforms, typed-array layout, graph references, resource bounds, version dispatch, result semantics, and strict portable metadata. Browser-library and Node-library TypeScript consumers compile against the same package exports.
+Tests cover finite values, transforms, typed-array layout, graph references, resource bounds, version dispatch, result semantics, review/report graphs, portable-session evidence, and strict portable metadata. Browser-library and Node-library TypeScript consumers compile against the same package exports.

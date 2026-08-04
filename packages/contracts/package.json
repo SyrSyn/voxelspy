@@ -29,6 +29,14 @@
     "./analysis": {
       "types": "./dist/analysis.d.ts",
       "import": "./dist/analysis.js"
+    },
+    "./report": {
+      "types": "./dist/report.d.ts",
+      "import": "./dist/report.js"
+    },
+    "./session": {
+      "types": "./dist/session.d.ts",
+      "import": "./dist/session.js"
     }
   },
   "scripts": {
