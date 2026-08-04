@@ -7,6 +7,7 @@ import {
   openSessionArchive,
 } from "../src/index.js";
 import { createStoredZip } from "../src/zip.js";
+import { decodeStrictJson } from "../src/json.js";
 import {
   createSessionFixture,
   testLimits,
@@ -148,6 +149,23 @@ describe("portable session archive", () => {
       () => openSessionArchive(request(futureArchive)),
       "UNSUPPORTED_VERSION",
     );
+  });
+
+  it("preserves prototype-named keys as inert own properties", () => {
+    const parsed = decodeStrictJson(
+      new TextEncoder().encode('{"__proto__":{"polluted":true},"x":1}'),
+    ) as Record<string, unknown>;
+    expect(Object.getPrototypeOf(parsed)).toBeNull();
+    expect(Object.keys(parsed)).toEqual(["__proto__", "x"]);
+    expect(Object.hasOwn(parsed, "__proto__")).toBe(true);
+    expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
+  });
+
+  it("rejects whitespace outside the JSON grammar", () => {
+    const nonBreakingSpace = "\u00a0";
+    expect(() =>
+      decodeStrictJson(new TextEncoder().encode(`{"x":${nonBreakingSpace}1}`)),
+    ).toThrow(/Invalid JSON/u);
   });
 
   it("enforces archive, count, entry, aggregate, and structured limits", async () => {

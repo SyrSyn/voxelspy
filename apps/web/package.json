@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "build": "vite build && vite build --ssr src/entry-server.tsx --outDir .ssr && node scripts/prerender.mjs && node scripts/verify-static.mjs",
+    "deps:build": "pnpm --filter @voxelspy/contracts build && pnpm --filter @voxelspy/importers build && pnpm --filter @voxelspy/analysis build && pnpm --filter @voxelspy/session-archive build",
     "dev": "vite --host 127.0.0.1",
-    "lint": "tsc --noEmit",
+    "lint": "pnpm deps:build && tsc --noEmit",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run src",
     "test:e2e": "playwright test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "pnpm deps:build && tsc --noEmit"
   },
   "dependencies": {
     "@react-three/drei": "10.7.6",

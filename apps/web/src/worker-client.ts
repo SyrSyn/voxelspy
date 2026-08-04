@@ -2,8 +2,10 @@ import { SURFACE_DISTANCE_METHOD } from "@voxelspy/analysis";
 import {
   IDENTITY_MAT4,
   WORKER_PROTOCOL_VERSION,
+  analysisExchangeSchema,
   analysisRequestSchema,
   getWorkerMessageTransferList,
+  importExchangeSchema,
   importRequestSchema,
   modelIdSchema,
   requestIdSchema,
@@ -121,6 +123,7 @@ export async function runComparison(
           },
         },
       });
+      const validationRequest = structuredClone(request);
       post({
         protocolVersion: 1,
         type: "execute",
@@ -140,6 +143,7 @@ export async function runComparison(
         );
       const result: ImportResult = response.result;
       if (!result.ok) throw new Error(result.message);
+      importExchangeSchema.parse({ request: validationRequest, result });
       return result.model;
     };
 
@@ -177,7 +181,11 @@ export async function runComparison(
     if (response.type === "error") throw new Error(response.error.message);
     if (response.type !== "result" || response.operation !== "analysis")
       throw new Error("Comparison worker returned the wrong result type.");
-    return { baseline, candidate, analysis: response.result };
+    const analysis = analysisExchangeSchema.parse({
+      request,
+      result: response.result,
+    }).result;
+    return { baseline, candidate, analysis };
   } finally {
     worker.terminate();
   }

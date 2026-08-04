@@ -92,25 +92,50 @@ function modelInstances(model: NormalizedModel) {
   return placed;
 }
 
-function geometryFor(mesh: NormalizedModel["meshes"][number]) {
+function geometryFor(
+  mesh: NormalizedModel["meshes"][number],
+  matrix: Matrix4,
+  origin: Vector3,
+) {
   const geometry = new BufferGeometry();
-  geometry.setAttribute(
-    "position",
-    new BufferAttribute(new Float32Array(mesh.geometry.positions), 3),
-  );
+  const positions = toRenderPositions(mesh.geometry.positions, matrix, origin);
+  geometry.setAttribute("position", new BufferAttribute(positions, 3));
   geometry.setIndex(new BufferAttribute(mesh.geometry.indices, 1));
   geometry.computeVertexNormals();
   geometry.computeBoundingBox();
   return geometry;
 }
 
+export function toRenderPositions(
+  source: Float64Array,
+  matrix: Matrix4,
+  origin: Vector3,
+): Float32Array {
+  const positions = new Float32Array(source.length);
+  const point = new Vector3();
+  for (let index = 0; index < source.length; index += 3) {
+    point
+      .set(source[index]!, source[index + 1]!, source[index + 2]!)
+      .applyMatrix4(matrix)
+      .sub(origin);
+    positions[index] = point.x;
+    positions[index + 1] = point.y;
+    positions[index + 2] = point.z;
+  }
+  return positions;
+}
+
 function modelBounds(model: NormalizedModel) {
   const bounds = new Box3();
+  const point = new Vector3();
   for (const instance of modelInstances(model)) {
-    const geometry = geometryFor(instance.mesh);
-    const local = geometry.boundingBox?.clone();
-    geometry.dispose();
-    if (local) bounds.union(local.applyMatrix4(instance.matrix));
+    const positions = instance.mesh.geometry.positions;
+    for (let index = 0; index < positions.length; index += 3) {
+      point
+        .set(positions[index]!, positions[index + 1]!, positions[index + 2]!)
+        .applyMatrix4(instance.matrix);
+      bounds.expandByPoint(point);
+    }
   }
   return bounds;
 }
@@ -120,15 +145,10 @@ function initialCameraFor(
   candidate: NormalizedModel,
 ): CameraState {
   const bounds = modelBounds(baseline).union(modelBounds(candidate));
-  const center = bounds.getCenter(new Vector3());
   const size = Math.max(bounds.getSize(new Vector3()).length(), 1);
   return {
-    position: [
-      center.x + size * 0.8,
-      center.y + size * 0.62,
-      center.z + size * 0.82,
-    ],
-    target: [center.x, center.y, center.z],
+    position: [size * 0.8, size * 0.62, size * 0.82],
+    target: [0, 0, 0],
     revision: 0,
   };
 }
@@ -211,20 +231,22 @@ const ModelMeshes = memo(function ModelMeshes({
   opacity = 1,
   wireframe = false,
   clippingPlanes,
+  origin,
 }: {
   model: NormalizedModel;
   color: string;
   opacity?: number;
   wireframe?: boolean;
   clippingPlanes: Plane[];
+  origin: Vector3;
 }) {
   const instances = useMemo(
     () =>
       modelInstances(model).map((instance) => ({
         ...instance,
-        geometry: geometryFor(instance.mesh),
+        geometry: geometryFor(instance.mesh, instance.matrix, origin),
       })),
-    [model],
+    [model, origin],
   );
   useEffect(
     () => () => instances.forEach((instance) => instance.geometry.dispose()),
@@ -233,12 +255,7 @@ const ModelMeshes = memo(function ModelMeshes({
   return (
     <>
       {instances.map((instance) => (
-        <mesh
-          key={instance.id}
-          geometry={instance.geometry}
-          matrix={instance.matrix}
-          matrixAutoUpdate={false}
-        >
+        <mesh key={instance.id} geometry={instance.geometry}>
           <meshStandardMaterial
             color={color}
             roughness={0.62}
@@ -258,10 +275,12 @@ function RegionMarkers({
   analysis,
   selected,
   select,
+  origin,
 }: {
   analysis: AnalysisResult;
   selected: RegionId | undefined;
   select: (id: RegionId) => void;
+  origin: Vector3;
 }) {
   if (analysis.outcome.state !== "complete") return null;
   return (
@@ -270,7 +289,7 @@ function RegionMarkers({
         const min = new Vector3(...region.bounds.min);
         const max = new Vector3(...region.bounds.max);
         const size = max.clone().sub(min);
-        const center = min.add(max).multiplyScalar(0.5);
+        const center = min.add(max).multiplyScalar(0.5).sub(origin);
         const color =
           region.category === "added"
             ? "#f0ad45"
@@ -318,6 +337,7 @@ function Scene({
   selected,
   publish,
   select,
+  origin,
 }: WorkbenchProps & {
   kind: ViewKind;
   camera: CameraState;
@@ -325,13 +345,16 @@ function Scene({
   selected: RegionId | undefined;
   publish: (state: Omit<CameraState, "revision">) => void;
   select: (id: RegionId) => void;
+  origin: Vector3;
 }) {
   const [available, setAvailable] = useState(false);
   useEffect(() => setAvailable(hasWebGL()), []);
-  const bounds = useMemo(
-    () => modelBounds(baseline).union(modelBounds(candidate)),
-    [baseline, candidate],
-  );
+  const bounds = useMemo(() => {
+    const value = modelBounds(baseline).union(modelBounds(candidate));
+    value.min.sub(origin);
+    value.max.sub(origin);
+    return value;
+  }, [baseline, candidate, origin]);
   const clipPlane = useMemo(() => {
     if (clip >= 100) return [];
     const min = bounds.min.x;
@@ -375,6 +398,7 @@ function Scene({
             model={baseline}
             color="#7e98a0"
             clippingPlanes={clipPlane}
+            origin={origin}
           />
         )}
         {kind === "candidate" && (
@@ -382,6 +406,7 @@ function Scene({
             model={candidate}
             color="#90a4aa"
             clippingPlanes={clipPlane}
+            origin={origin}
           />
         )}
         {kind === "difference" && (
@@ -392,17 +417,20 @@ function Scene({
               opacity={0.38}
               wireframe
               clippingPlanes={clipPlane}
+              origin={origin}
             />
             <ModelMeshes
               model={candidate}
               color="#e4a84a"
               opacity={0.65}
               clippingPlanes={clipPlane}
+              origin={origin}
             />
             <RegionMarkers
               analysis={analysis}
               selected={selected}
               select={select}
+              origin={origin}
             />
           </>
         )}
@@ -431,6 +459,13 @@ export function Workbench({
 }: WorkbenchProps) {
   const initial = useMemo(
     () => initialCameraFor(baseline, candidate),
+    [baseline, candidate],
+  );
+  const origin = useMemo(
+    () =>
+      modelBounds(baseline)
+        .union(modelBounds(candidate))
+        .getCenter(new Vector3()),
     [baseline, candidate],
   );
   const [camera, setCamera] = useState(initial);
@@ -464,17 +499,22 @@ export function Workbench({
         ),
         1,
       );
+      const anchor: [number, number, number] = [
+        region.anchor[0] - origin.x,
+        region.anchor[1] - origin.y,
+        region.anchor[2] - origin.z,
+      ];
       setCamera((current) => ({
-        target: [...region.anchor] as [number, number, number],
+        target: anchor,
         position: [
-          region.anchor[0] + size * 2.6,
-          region.anchor[1] + size * 1.8,
-          region.anchor[2] + size * 2.8,
+          anchor[0] + size * 2.6,
+          anchor[1] + size * 1.8,
+          anchor[2] + size * 2.8,
         ],
         revision: current.revision + 1,
       }));
     },
-    [regions],
+    [origin, regions],
   );
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -573,6 +613,7 @@ export function Workbench({
                 selected={selected}
                 publish={publish}
                 select={select}
+                origin={origin}
               />
             </div>
           </section>

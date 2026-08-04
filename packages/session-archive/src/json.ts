@@ -60,7 +60,7 @@ class StrictJsonParser {
 
   private readObject(): Record<string, unknown> {
     this.offset += 1;
-    const result: Record<string, unknown> = {};
+    const result = Object.create(null) as Record<string, unknown>;
     const keys = new Set<string>();
     this.skipWhitespace();
     if (this.consume("}")) return result;
@@ -136,7 +136,13 @@ class StrictJsonParser {
   }
 
   private skipWhitespace(): void {
-    while (/\s/u.test(this.source[this.offset] ?? "")) this.offset += 1;
+    while (
+      this.source[this.offset] === " " ||
+      this.source[this.offset] === "\t" ||
+      this.source[this.offset] === "\n" ||
+      this.source[this.offset] === "\r"
+    )
+      this.offset += 1;
   }
 
   private consume(character: string): boolean {
