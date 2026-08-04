@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "scope": "non-final geometry and format evidence",
+  "normalizedTarget": {
+    "unit": "millimetre",
+    "coordinateSystem": "right-handed-z-up"
+  },
+  "formats": [
+    {
+      "source": "generated-ascii.stl",
+      "format": "stl",
+      "meshes": 1,
+      "vertices": 4,
+      "triangles": 4,
+      "assemblyNodes": 0,
+      "sourceUnit": "millimetre",
+      "sourceAxis": "right-handed-z-up",
+      "warnings": []
+    },
+    {
+      "source": "generated.obj",
+      "format": "obj",
+      "meshes": 1,
+      "vertices": 4,
+      "triangles": 4,
+      "assemblyNodes": 0,
+      "sourceUnit": "centimetre",
+      "sourceAxis": "right-handed-z-up",
+      "warnings": []
+    },
+    {
+      "source": "generated.3mf",
+      "format": "3mf",
+      "meshes": 1,
+      "vertices": 4,
+      "triangles": 4,
+      "assemblyNodes": 3,
+      "sourceUnit": "centimetre",
+      "sourceAxis": "right-handed-z-up",
+      "warnings": []
+    },
+    {
+      "source": "generated.gltf",
+      "format": "gltf",
+      "meshes": 1,
+      "vertices": 3,
+      "triangles": 1,
+      "assemblyNodes": 1,
+      "sourceUnit": "metre",
+      "sourceAxis": "right-handed-y-up",
+      "warnings": []
+    },
+    {
+      "source": "generated.glb",
+      "format": "gltf",
+      "meshes": 1,
+      "vertices": 3,
+      "triangles": 1,
+      "assemblyNodes": 1,
+      "sourceUnit": "metre",
+      "sourceAxis": "right-handed-y-up",
+      "warnings": []
+    },
+    {
+      "source": "generated-sphere.step",
+      "format": "step-tessellation",
+      "meshes": 1,
+      "vertices": 114,
+      "triangles": 224,
+      "assemblyNodes": 2,
+      "sourceUnit": "inch",
+      "sourceAxis": "right-handed-y-up",
+      "warnings": []
+    }
+  ],
+  "comparisons": {
+    "sampledSurfaceDistanceOnRetessellatedSphere": {
+      "semantics": "approximate",
+      "distanceMillimetres": 1.367736397,
+      "sampling": "vertices-and-centroids",
+      "caveat": "Finite samples can miss an extremum between samples; this is not an exact Hausdorff distance"
+    },
+    "occupancyAtTwoMillimetres": {
+      "semantics": "approximate",
+      "voxelSizeMillimetres": 2,
+      "differingVoxels": 150,
+      "sampledVoxels": 441,
+      "estimatedDifferenceVolumeCubicMillimetres": 1200
+    },
+    "occupancyAtOneMillimetre": {
+      "semantics": "approximate",
+      "voxelSizeMillimetres": 1,
+      "differingVoxels": 1000,
+      "sampledVoxels": 2448,
+      "estimatedDifferenceVolumeCubicMillimetres": 1000
+    },
+    "occupancyBudgetRefusal": {
+      "semantics": "indeterminate",
+      "reason": "Occupancy requires 2448 samples; budget is 100"
+    },
+    "validatedAxisAlignedSolid": {
+      "semantics": "exact-for-validated-axis-aligned-boxes",
+      "firstVolumeCubicMillimetres": 1000,
+      "secondVolumeCubicMillimetres": 1000,
+      "intersectionVolumeCubicMillimetres": 460,
+      "symmetricDifferenceVolumeCubicMillimetres": 1080
+    },
+    "openMeshValidation": {
+      "valid": false,
+      "boundaryEdges": 4,
+      "nonManifoldEdges": 0,
+      "inconsistentEdges": 0,
+      "signedVolume": 999.9999999999999,
+      "reasons": ["4 boundary edges"]
+    },
+    "unsupportedSolidCase": {
+      "semantics": "indeterminate",
+      "reason": "The evidence kernel is exact only for validated, closed, axis-aligned boxes"
+    },
+    "disconnectedCornerFalsePositive": {
+      "semantics": "indeterminate",
+      "reason": "The evidence kernel is exact only for validated, closed, axis-aligned boxes"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@voxelspy/geometry-formats-spike",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "node --experimental-strip-types src/evidence.ts --check",
+    "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
+    "evidence": "node --experimental-strip-types src/evidence.ts",
+    "format:check": "prettier --check . --ignore-path ../../../.prettierignore",
+    "lint": "node scripts/lint.mjs",
+    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3"
+  }
+}
