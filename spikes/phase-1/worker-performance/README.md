@@ -2,6 +2,8 @@
 
 This directory is a disposable, self-contained investigation of worker packaging, control messages, buffer ownership, and runtime capability detection. It is evidence for later design work, not an accepted package, protocol, benchmark baseline, or application API.
 
+In this spike, **worker** means a browser dedicated Web Worker or a Node worker thread used by the automated harness. It does not mean a Cloudflare Worker, Pages Function, or other server-side runtime. The browser artifacts are static files suitable for a static-site deployment.
+
 The spike deliberately uses a small deterministic numeric transform in place of product geometry. It proves the transport and lifecycle behavior without selecting a geometry algorithm.
 
 ## Questions exercised
