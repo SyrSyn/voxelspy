@@ -6,7 +6,14 @@ import {
   analyzeModelPair,
   supportedAnalysisMethods,
 } from "../src/index.js";
-import { boxModel, request, translation, triangleModel } from "./fixtures.js";
+import {
+  boxModel,
+  disconnectedFacetModel,
+  facetLocalSquareModel,
+  request,
+  translation,
+  triangleModel,
+} from "./fixtures.js";
 
 describe("analysis method selection", () => {
   it("advertises explicit semantics and preconditions", () => {
@@ -98,6 +105,64 @@ describe("approximate surface-distance adapter", () => {
       regions: [],
       orderedRegionIds: [],
     });
+  });
+
+  it("connects STL-style facet-local vertices through exact shared edges", () => {
+    const result = analyzeModelPair({
+      request: request("surface-distance", {
+        candidateTransform: translation(0, 0, 1),
+      }),
+      baseline: facetLocalSquareModel("baseline"),
+      candidate: facetLocalSquareModel("candidate"),
+    });
+    expect(result.outcome.state).toBe("complete");
+    if (result.outcome.state !== "complete") return;
+    expect(result.outcome.regions.map(({ category }) => category)).toEqual([
+      "added",
+      "removed",
+    ]);
+    expect(
+      result.outcome.metrics
+        .filter(({ id }) => id.endsWith(".triangle-count"))
+        .map(({ value }) => value),
+    ).toEqual([2, 2]);
+  });
+
+  it("retains explicit detected and reported counts when regions truncate", () => {
+    const result = analyzeModelPair({
+      request: request("surface-distance", { parameters: { maxRegions: 2 } }),
+      baseline: disconnectedFacetModel("baseline", 5),
+      candidate: disconnectedFacetModel("candidate", 1),
+    });
+    expect(result.outcome.state).toBe("complete");
+    if (result.outcome.state !== "complete") return;
+    expect(result.outcome.regions).toHaveLength(2);
+    expect(result.warnings).toEqual([
+      expect.objectContaining({
+        code: "analysis.region-limit",
+        details: { detectedRegionCount: 4, reportedRegionCount: 2 },
+      }),
+    ]);
+    expect(
+      Object.fromEntries(
+        result.outcome.metrics
+          .filter(({ id }) =>
+            [
+              "surface.changed-region-count",
+              "surface.reported-region-count",
+            ].includes(id),
+          )
+          .map(({ id, value }) => [id, value]),
+      ),
+    ).toEqual({
+      "surface.changed-region-count": 4,
+      "surface.reported-region-count": 2,
+    });
+    if (result.outcome.semantics === "approximate") {
+      expect(result.outcome.uncertainty.parameters).toMatchObject({
+        omittedRegionCount: 2,
+      });
+    }
   });
 
   it("rejects degenerate surfaces and invalid parameters", () => {

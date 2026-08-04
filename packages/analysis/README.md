@@ -6,9 +6,9 @@ Deterministic, bounded geometry comparison over normalized VoxelSpy models. The 
 
 ### `surface-distance` 1.0.0
 
-This adapter samples every triangle's vertices and centroid, measures each sample against the opposite tessellated surface, groups adjacent changed triangles, and ranks regions by maximum distance followed by affected area. It requires a distance tolerance. `parameters.maxRegions` may limit the reported ranked regions to a positive integer no greater than 2,048; truncation produces an explicit warning and uncertainty count.
+This adapter samples every triangle's vertices and centroid, measures each sample against the opposite tessellated surface, groups changed triangles that share exact geometric edges, and ranks regions by maximum distance followed by affected area. Exact edge matching connects facet-local STL vertices when their endpoint coordinates are identical without introducing tolerance-based welding. It requires a distance tolerance. `parameters.maxRegions` may limit the reported ranked regions to a positive integer no greater than 2,048; truncation produces an explicit warning and uncertainty count.
 
-The result is always **approximate**, including when sampled distance is zero. Finite samples can miss extrema, topology is inferred from shared indices, and both values and regions depend on tessellation. This is not an exact Hausdorff-distance implementation.
+The result is always **approximate**, including when sampled distance is zero. Finite samples can miss extrema, edges that differ by any coordinate value remain separate, and both values and regions depend on tessellation. This is not an exact Hausdorff-distance implementation.
 
 ### `axis-aligned-box-solid` 1.0.0
 

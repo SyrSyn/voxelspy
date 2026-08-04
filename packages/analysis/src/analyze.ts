@@ -503,38 +503,36 @@ function directionalRegions(
       mean: distances.reduce((sum, value) => sum + value, 0) / distances.length,
     };
   });
-  const byVertex = new Map<number, number[]>();
+  const connectivity = new DisjointSet(source.triangles.length);
+  const firstTriangleByEdge = new Map<string, number>();
   for (const triangle of source.triangles) {
     if (!deviations[triangle.index]?.changed) continue;
-    for (const vertex of triangle.vertices) {
-      const members = byVertex.get(vertex) ?? [];
-      members.push(triangle.index);
-      byVertex.set(vertex, members);
-    }
-  }
-  const visited = new Set<number>();
-  const regions: RankedSurfaceRegion[] = [];
-  for (const seed of source.triangles) {
-    if (!deviations[seed.index]?.changed || visited.has(seed.index)) continue;
-    const component: Triangle[] = [];
-    const stack = [seed.index];
-    visited.add(seed.index);
-    while (stack.length > 0) {
-      const triangleIndex = stack.pop();
-      if (triangleIndex === undefined) break;
-      const triangle = source.triangles[triangleIndex];
-      if (triangle === undefined) continue;
-      component.push(triangle);
-      for (const vertex of triangle.vertices) {
-        for (const neighbor of byVertex.get(vertex) ?? []) {
-          if (!visited.has(neighbor)) {
-            visited.add(neighbor);
-            stack.push(neighbor);
-          }
-        }
+    const [first, second, third] = triangle.points;
+    for (const edge of [
+      exactEdgeKey(first, second),
+      exactEdgeKey(second, third),
+      exactEdgeKey(third, first),
+    ]) {
+      const neighbor = firstTriangleByEdge.get(edge);
+      if (neighbor === undefined) {
+        firstTriangleByEdge.set(edge, triangle.index);
+      } else {
+        connectivity.union(triangle.index, neighbor);
       }
     }
-    component.sort((left, right) => left.index - right.index);
+  }
+
+  const components = new Map<number, Triangle[]>();
+  for (const triangle of source.triangles) {
+    if (!deviations[triangle.index]?.changed) continue;
+    const root = connectivity.find(triangle.index);
+    const component = components.get(root) ?? [];
+    component.push(triangle);
+    components.set(root, component);
+  }
+
+  const regions: RankedSurfaceRegion[] = [];
+  for (const component of components.values()) {
     const componentDeviations = component.map(
       (triangle) => deviations[triangle.index]!,
     );
@@ -561,6 +559,48 @@ function directionalRegions(
     });
   }
   return regions;
+}
+
+class DisjointSet {
+  readonly #parents: Uint32Array;
+  readonly #ranks: Uint8Array;
+
+  constructor(size: number) {
+    this.#parents = Uint32Array.from({ length: size }, (_, index) => index);
+    this.#ranks = new Uint8Array(size);
+  }
+
+  find(value: number): number {
+    let root = value;
+    while (this.#parents[root] !== root) root = this.#parents[root]!;
+    while (this.#parents[value] !== value) {
+      const parent = this.#parents[value]!;
+      this.#parents[value] = root;
+      value = parent;
+    }
+    return root;
+  }
+
+  union(left: number, right: number): void {
+    let leftRoot = this.find(left);
+    let rightRoot = this.find(right);
+    if (leftRoot === rightRoot) return;
+    const leftRank = this.#ranks[leftRoot]!;
+    const rightRank = this.#ranks[rightRoot]!;
+    if (leftRank < rightRank) {
+      [leftRoot, rightRoot] = [rightRoot, leftRoot];
+    }
+    this.#parents[rightRoot] = leftRoot;
+    if (leftRank === rightRank) this.#ranks[leftRoot] = leftRank + 1;
+  }
+}
+
+function exactEdgeKey(first: Vec3, second: Vec3): string {
+  const firstKey = pointKey(first);
+  const secondKey = pointKey(second);
+  return compareText(firstKey, secondKey) <= 0
+    ? `${firstKey}|${secondKey}`
+    : `${secondKey}|${firstKey}`;
 }
 
 function distanceToSurface(

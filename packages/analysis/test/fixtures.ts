@@ -129,6 +129,83 @@ export function triangleModel(id: string): NormalizedModel {
   });
 }
 
+export function facetLocalSquareModel(id: string): NormalizedModel {
+  return generatedMeshModel(
+    id,
+    new Float64Array([0, 0, 0, 2, 0, 0, 2, 2, 0, 0, 0, 0, 2, 2, 0, 0, 2, 0]),
+    new Uint32Array([0, 1, 2, 3, 4, 5]),
+    "stl",
+    "Two connected facets with facet-local duplicate vertices.",
+  );
+}
+
+export function disconnectedFacetModel(
+  id: string,
+  triangleCount: number,
+): NormalizedModel {
+  const positions = new Float64Array(triangleCount * 9);
+  const indices = new Uint32Array(triangleCount * 3);
+  for (let triangle = 0; triangle < triangleCount; triangle += 1) {
+    const x = triangle * 10;
+    positions.set([x, 0, 0, x + 1, 0, 0, x, 1, 0], triangle * 9);
+    indices.set(
+      [triangle * 3, triangle * 3 + 1, triangle * 3 + 2],
+      triangle * 3,
+    );
+  }
+  return generatedMeshModel(
+    id,
+    positions,
+    indices,
+    "generated-fixture",
+    "Separated procedural triangles.",
+  );
+}
+
+function generatedMeshModel(
+  id: string,
+  positions: Float64Array,
+  indices: Uint32Array,
+  formatId: string,
+  note: string,
+): NormalizedModel {
+  return normalizedModelSchema.parse({
+    contractVersion: 1,
+    id,
+    frame: CANONICAL_FRAME,
+    meshes: [
+      {
+        id: `${id}.mesh`,
+        geometry: { positions, indices },
+      },
+    ],
+    placement: {
+      kind: "flat",
+      instances: [
+        {
+          id: `${id}.instance`,
+          meshId: `${id}.mesh`,
+          meshToModel: IDENTITY_MAT4,
+        },
+      ],
+    },
+    warnings: [],
+    provenance: {
+      formatId,
+      importerId: "analysis-test-fixture",
+      importerVersion: "1.0.0",
+      sourceName: `${id}.generated`,
+      detectedSourceUnit: "millimetre",
+      detectedSourceAxis: "right-handed-z-up",
+      sourceUnit: "millimetre",
+      sourceAxis: "right-handed-z-up",
+      sourceResolution: { unit: "embedded", axis: "embedded" },
+      appliedSourceToModel: IDENTITY_MAT4,
+      notes: [note],
+    },
+  });
+}
+
 export function request(
   method: "surface-distance" | "axis-aligned-box-solid" | "unknown-method",
   options: {
