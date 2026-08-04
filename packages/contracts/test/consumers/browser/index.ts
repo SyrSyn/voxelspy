@@ -1,4 +1,5 @@
 import {
+  importerRegistrySchema,
   analysisRequestSchema,
   getWorkerMessageTransferList,
   normalizedModelSchema,
@@ -10,6 +11,7 @@ import {
 export function validateBrowserInput(value: unknown): boolean {
   return (
     analysisRequestSchema.safeParse(value).success ||
+    importerRegistrySchema.safeParse(value).success ||
     normalizedModelSchema.safeParse(value).success ||
     reportSchema.safeParse(value).success
   );

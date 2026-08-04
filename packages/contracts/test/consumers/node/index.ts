@@ -1,4 +1,5 @@
 import {
+  evaluateRelease,
   importRequestSchema,
   portableJsonSchema,
   sessionManifestSchema,
@@ -6,10 +7,12 @@ import {
 } from "@voxelspy/contracts";
 
 export function validateNodeInput(value: unknown): boolean {
+  const releaseEvaluation = evaluateRelease(value);
   return (
     importRequestSchema.safeParse(value).success ||
     portableJsonSchema.safeParse(value).success ||
-    sessionManifestSchema.safeParse(value).success
+    sessionManifestSchema.safeParse(value).success ||
+    releaseEvaluation.status === "pass"
   );
 }
 

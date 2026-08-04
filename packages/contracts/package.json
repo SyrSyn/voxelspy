@@ -30,6 +30,10 @@
       "types": "./dist/analysis.d.ts",
       "import": "./dist/analysis.js"
     },
+    "./adapter-evidence": {
+      "types": "./dist/adapter-evidence.d.ts",
+      "import": "./dist/adapter-evidence.js"
+    },
     "./report": {
       "types": "./dist/report.d.ts",
       "import": "./dist/report.js"

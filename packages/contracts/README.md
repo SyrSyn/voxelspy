@@ -44,9 +44,19 @@ Cancellation has an explicit completion race. An `accepted` acknowledgement is f
 
 Transferable `ArrayBuffer` ownership is the mandatory V1 transport. `getWorkerMessageTransferList()` returns the complete deterministic list for an import request or successful import result, and `hasExactWorkerMessageTransferList()` rejects missing, extra, reordered, or duplicate buffers. Posting that list relinquishes the sender's ownership and may detach its views immediately. Preserving input requires an explicit caller copy. Shared memory may be used only as an optional implementation-internal acceleration when the environment permits it; `SharedArrayBuffer`, shared-memory negotiation, and synchronization objects are not V1 wire payloads or baseline requirements.
 
+## Adapter and release evidence
+
+Importer registry records are serialized descriptions, not runtime adapter objects. They identify exact adapter versions, byte-buffer transport, supported runtime kinds and formats, dependency-inventory evidence, and explicit policies for source metadata, assemblies, tessellation, external resources, archive compression, and native STEP. File extensions and media types are discovery hints only; callers still select a format explicitly. A STEP format declaration requires release evidence, and bounded compressed-3MF support cannot be inferred from stored-entry coverage.
+
+Fixture manifests bind each public-safe asset to its format, byte count, SHA-256 digest, source or generator record, and redistribution evidence. Cases correlate an exact adapter, request policy, and deterministic success or failure outcome. Third-party assets are not release-eligible while their redistribution review is pending or blocked.
+
+Benchmark documents keep workload tiers separate from environment profiles. Research tiers are evidence only and cannot satisfy a release gate. Release tiers define integer sample counts, an exact aggregation rule, and a reviewed threshold; observations retain every measured sample so the verdict can be recomputed.
+
+Release policies and observations contain only serializable evidence. `evaluateRelease` correlates document and artifact digests, derives every gate result, sorts stable reason codes, and fails closed on malformed, missing, duplicate, stale, unsupported, or mismatched evidence. Optional gates remain visible but do not change the overall verdict. The contracts define no product support matrix, benchmark budget, scanner, test runner, adapter loader, or deployment rule.
+
 ## Deliberate exclusions
 
-The package has no dependency on React, Three.js, DOM `File`, browser globals, Node built-ins, archive implementations, storage, identity, hosting, or persistence. It does not select an importer, geometry kernel, accuracy threshold, method fallback, resource limit, worker implementation or packaging path, canonical JSON byte encoding, report renderer, archive parser, or deployment policy.
+The package has no dependency on React, Three.js, DOM `File`, browser globals, Node built-ins, archive implementations, storage, identity, hosting, or persistence. It does not select an importer, geometry kernel, accuracy threshold, method fallback, resource limit, worker implementation or packaging path, canonical JSON byte encoding, report renderer, archive parser, evidence producer, or deployment policy.
 
 The hierarchical placement shape preserves a serializable rooted tree without freezing one CAD engine's runtime objects. Typed geometry needs a separately versioned binary format before it can appear in a portable session.
 
@@ -58,4 +68,4 @@ From the repository root:
 pnpm --filter @voxelspy/contracts check
 ```
 
-Tests cover finite values, transforms, typed-array layout, graph references, resource bounds, version dispatch, result semantics, review/report graphs, portable-session evidence, worker lifecycle traces, exact buffer transfer lists, and strict portable metadata. Browser-library and Node-library TypeScript consumers compile against the same package exports.
+Tests cover finite values, transforms, typed-array layout, graph references, resource bounds, version dispatch, result semantics, review/report graphs, portable-session evidence, worker lifecycle traces, exact buffer transfer lists, adapter registries, fixture licensing, benchmark aggregation, fail-closed release evaluation, and strict portable metadata. Browser-library and Node-library TypeScript consumers compile against the same package exports.
