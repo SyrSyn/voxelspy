@@ -77,6 +77,26 @@ describe("approximate surface-distance adapter", () => {
     if (first.outcome.state !== "complete") return;
     expect(first.outcome.semantics).toBe("approximate");
     expect(first.outcome.regions.length).toBeGreaterThan(0);
+    expect(first.outcome.regions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "added",
+          geometry: expect.objectContaining({
+            kind: "triangle-set",
+            model: "candidate",
+            triangleIndices: expect.any(Array),
+          }),
+        }),
+        expect.objectContaining({
+          category: "removed",
+          geometry: expect.objectContaining({
+            kind: "triangle-set",
+            model: "baseline",
+            triangleIndices: expect.any(Array),
+          }),
+        }),
+      ]),
+    );
     expect(first.outcome.orderedRegionIds).toEqual(
       first.outcome.regions.map(({ id }) => id),
     );
@@ -206,9 +226,7 @@ describe("approximate surface-distance adapter", () => {
 
   it("accelerates a pair that exceeds the former full-scan work estimate", () => {
     const triangleCount = 600;
-    expect(triangleCount * triangleCount * 8).toBeGreaterThan(
-      ANALYSIS_LIMITS.maxWorkUnits,
-    );
+    expect(triangleCount * triangleCount * 8).toBeGreaterThan(2_000_000);
     const input = {
       request: request("surface-distance", {
         candidateTransform: translation(0.5),
@@ -245,6 +263,26 @@ describe("approximate surface-distance adapter", () => {
       code: "resource-budget-exceeded",
       reasons: [expect.stringMatching(/exhausted the active budget/u)],
     });
+  });
+
+  it("accepts ordinary facet-local models above the former vertex ceiling", () => {
+    const result = analyzeModelPair({
+      request: request("surface-distance", {
+        maxWorkUnits: 1,
+        maxMemoryBytes: 128 * 1024 * 1024,
+      }),
+      baseline: disconnectedFacetModel("baseline", 75_655),
+      candidate: triangleModel("candidate"),
+    });
+
+    expect(result.outcome).toMatchObject({
+      state: "indeterminate",
+      code: "resource-budget-exceeded",
+      reasons: [expect.stringMatching(/exhausted the active budget/u)],
+    });
+    if (result.outcome.state === "indeterminate") {
+      expect(result.outcome.reasons.join(" ")).not.toMatch(/vertex/u);
+    }
   });
 });
 

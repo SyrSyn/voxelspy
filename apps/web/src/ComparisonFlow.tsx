@@ -1,6 +1,10 @@
 import type { SourceAxis, SourceUnit } from "@voxelspy/contracts";
 import { lazy, Suspense, useMemo, useState } from "react";
 import {
+  ANALYSIS_MEMORY_MAX_MIB,
+  ANALYSIS_MEMORY_MIN_MIB,
+  ANALYSIS_MEMORY_STEP_MIB,
+  DEFAULT_ANALYSIS_MEMORY_MIB,
   runComparison,
   type ComparisonProgress,
   type ComparisonSource,
@@ -177,6 +181,9 @@ export function ComparisonFlow() {
   const [progress, setProgress] = useState<ComparisonProgress>();
   const [error, setError] = useState<string>();
   const [result, setResult] = useState<CompletedComparison>();
+  const [analysisMemoryMiB, setAnalysisMemoryMiB] = useState(
+    DEFAULT_ANALYSIS_MEMORY_MIB,
+  );
   const baselineCapability = useMemo(
     () => sourceCapability(baseline),
     [baseline],
@@ -206,6 +213,7 @@ export function ComparisonFlow() {
         baseline as ComparisonSource,
         candidate as ComparisonSource,
         setProgress,
+        analysisMemoryMiB,
       );
       setResult(next);
     } catch (reason) {
@@ -281,6 +289,29 @@ export function ComparisonFlow() {
             tolerance. Preconditions and uncertainty remain attached to the
             result.
           </p>
+          <div className="analysis-capacity">
+            <label htmlFor="analysis-memory">
+              Analysis RAM allowance
+              <output htmlFor="analysis-memory">{analysisMemoryMiB} MiB</output>
+            </label>
+            <input
+              id="analysis-memory"
+              type="range"
+              min={ANALYSIS_MEMORY_MIN_MIB}
+              max={ANALYSIS_MEMORY_MAX_MIB}
+              step={ANALYSIS_MEMORY_STEP_MIB}
+              value={analysisMemoryMiB}
+              onChange={(event) =>
+                setAnalysisMemoryMiB(Number(event.currentTarget.value))
+              }
+              aria-describedby="analysis-memory-help"
+            />
+            <small id="analysis-memory-help">
+              This is a ceiling, not preallocated memory. Raising it also gives
+              the local worker more compute time; large settings may slow or
+              destabilize this tab.
+            </small>
+          </div>
         </section>
         <div className="comparison-status" aria-live="polite">
           <span className={ready ? "status-ready" : ""}>

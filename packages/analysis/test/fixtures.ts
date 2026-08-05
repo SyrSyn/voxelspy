@@ -212,6 +212,7 @@ export function request(
     candidateTransform?: Mat4;
     parameters?: Record<string, unknown>;
     maxWorkUnits?: number;
+    maxMemoryBytes?: number;
     baselineId?: string;
     candidateId?: string;
   } = {},
@@ -238,7 +239,7 @@ export function request(
       : {
           executionBudget: {
             maxWorkUnits: options.maxWorkUnits,
-            maxMemoryBytes: 8 * 1024 * 1024,
+            maxMemoryBytes: options.maxMemoryBytes ?? 8 * 1024 * 1024,
           },
         }),
   });

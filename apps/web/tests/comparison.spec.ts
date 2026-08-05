@@ -262,6 +262,17 @@ test("keeps capability guidance usable on a compact viewport", async ({
   await expect(
     page.getByRole("button", { name: "Validate and compare" }),
   ).toBeDisabled();
+  const memory = page.getByRole("slider", {
+    name: "Analysis RAM allowance",
+  });
+  await expect(memory).toHaveValue("256");
+  await memory.fill("512");
+  await expect(page.locator(".analysis-capacity output")).toHaveText("512 MiB");
+  await expect(
+    page.getByText("This is a ceiling, not preallocated memory", {
+      exact: false,
+    }),
+  ).toBeVisible();
   const overflow = await page.evaluate(
     () =>
       document.documentElement.scrollWidth >

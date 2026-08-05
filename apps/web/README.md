@@ -25,6 +25,8 @@ Normal model selection and comparison are browser-local. The application does no
 
 STL and OBJ import plus sampled surface-distance analysis run in a dedicated browser worker. Because those formats do not authoritatively declare units or an up-axis, the interface begins with millimetres and right-handed Z-up and exposes alternate interpretations as expert settings.
 
+The comparison form exposes an analysis RAM allowance from 128 MiB to 768 MiB and starts at 256 MiB. It is a fail-closed estimate ceiling rather than preallocated memory; raising it also gives the worker a proportionally larger compute budget. The browser client reports at most the 24 highest-ranked changed regions so rendering evidence remains bounded. Larger allowances can take longer or exhaust the resources available to a browser tab.
+
 The workbench keeps the selected source frame, normalization transform, importer provenance, import warnings and notes, analysis warnings, and approximation uncertainty available alongside the result. Selecting a replacement file restores the common source-frame defaults so an expert override cannot accidentally carry to a different model.
 
 Portable report and session contracts exist in the workspace, but browser save and export actions are not connected yet.

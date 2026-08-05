@@ -667,6 +667,11 @@ describe("analysis contracts", () => {
           category: "deviation",
           bounds: { min: [0, 0, 0], max: [1, 1, 1] },
           anchor: [0.5, 0.5, 0.5],
+          geometry: {
+            kind: "triangle-set",
+            model: "candidate",
+            triangleIndices: [2, 4, 6],
+          },
           metricIds: ["metric.distance"],
           warningCodes: [],
         },
@@ -728,6 +733,23 @@ describe("analysis contracts", () => {
           validation: [
             { ...assessment("model.baseline"), boundaryEdgeCount: 1 },
             assessment("model.candidate"),
+          ],
+        }),
+      ),
+    ).toThrow();
+    expect(() =>
+      analysisResultSchema.parse(
+        envelope({
+          ...exact,
+          regions: [
+            {
+              ...base.regions[0],
+              geometry: {
+                kind: "triangle-set",
+                model: "candidate",
+                triangleIndices: [2, 2],
+              },
+            },
           ],
         }),
       ),

@@ -18,9 +18,9 @@ The result is **exact within those validated preconditions**. Other closed solid
 
 ## Resource behavior
 
-The package validates model and request contracts before analysis. It expands assembly instances into the comparison frame without recentering, rescaling, alignment, repair, or reinterpretation. Built-in ceilings bound expanded vertices, triangles, estimated working memory, index construction, spatial traversal, exact triangle tests, connectivity work, and reported regions. A request may impose smaller execution budgets. Unsupported methods, failed method preconditions, exhausted budgets, and out-of-range numeric calculations fail closed as `indeterminate` outcomes.
+The package validates model and request contracts before analysis. It expands assembly instances into the comparison frame without recentering, rescaling, alignment, repair, or reinterpretation. Built-in ceilings bound expanded vertices, triangles, estimated working memory, index construction, spatial traversal, exact triangle tests, connectivity work, and reported regions. The current implementation ceilings are 3,000,000 expanded vertices, 1,000,000 expanded triangles, 768 MiB of estimated working memory, and 76,800,000 charged work units. A request may impose smaller execution budgets. Unsupported methods, failed method preconditions, exhausted budgets, and out-of-range numeric calculations fail closed as `indeterminate` outcomes.
 
-These ceilings are implementation safety limits, not model-size support claims. Production accuracy and device tiers still require accepted fixtures and browser benchmarks.
+These ceilings are implementation safety limits, not model-size support claims or memory reservations. Browser clients should expose conservative request budgets because available memory and practical runtime vary by device. Production accuracy and device tiers still require accepted fixtures and browser benchmarks.
 
 ## Example
 

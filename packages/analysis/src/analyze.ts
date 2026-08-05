@@ -30,10 +30,10 @@ export interface AnalysisResourceLimits {
 
 /** Safety ceilings for this implementation, not release-size claims. */
 export const ANALYSIS_LIMITS: AnalysisResourceLimits = Object.freeze({
-  maxExpandedVertices: 100_000,
-  maxExpandedTriangles: 50_000,
-  maxWorkUnits: 2_000_000,
-  maxMemoryBytes: 256 * 1024 * 1024,
+  maxExpandedVertices: 3_000_000,
+  maxExpandedTriangles: 1_000_000,
+  maxWorkUnits: 76_800_000,
+  maxMemoryBytes: 768 * 1024 * 1024,
   maxReportedRegions: 2_048,
 });
 
@@ -398,6 +398,11 @@ function analyzeSurfaceDistance(
         category: region.category,
         bounds: region.bounds,
         anchor: region.anchor,
+        geometry: {
+          kind: "triangle-set" as const,
+          model: region.category === "added" ? "candidate" : "baseline",
+          triangleIndices: [...region.triangleIndices],
+        },
         metricIds: [
           `${prefix}.maximum-distance`,
           `${prefix}.mean-distance`,
@@ -451,7 +456,7 @@ function analyzeSurfaceDistance(
       "numeric-range-exceeded",
       [
         error instanceof Error
-          ? error.message
+          ? error.message.slice(0, 950)
           : "Surface distance exceeded the supported numeric range.",
       ],
       validation,
@@ -491,6 +496,7 @@ interface RankedSurfaceRegion {
   readonly meanDistance: number;
   readonly area: number;
   readonly triangleCount: number;
+  readonly triangleIndices: readonly number[];
 }
 
 const DIRECTIONAL_TRIANGLE_WORK_UNITS = 8;
@@ -568,6 +574,7 @@ function directionalRegions(
         componentDeviations.length,
       area: component.reduce((sum, triangle) => sum + triangle.area, 0),
       triangleCount: component.length,
+      triangleIndices: component.map(({ index }) => index),
     });
   }
   return regions;

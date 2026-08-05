@@ -109,10 +109,19 @@ export const changeRegionSchema = z
     category: z.enum(["added", "removed", "deviation"]),
     bounds: z.strictObject({ min: vec3Schema, max: vec3Schema }),
     anchor: vec3Schema,
+    geometry: z
+      .strictObject({
+        kind: z.literal("triangle-set"),
+        model: z.enum(["baseline", "candidate"]),
+        triangleIndices: z
+          .array(z.number().int().safe().nonnegative())
+          .max(1_000_000),
+      })
+      .optional(),
     metricIds: z.array(metricIdSchema).max(128),
     warningCodes: z.array(entityIdSchema).max(128),
   })
-  .superRefine(({ bounds, anchor }, context) => {
+  .superRefine(({ bounds, anchor, geometry }, context) => {
     bounds.min.forEach((minimum, index) => {
       const maximum = bounds.max[index];
       const coordinate = anchor[index];
@@ -134,6 +143,16 @@ export const changeRegionSchema = z
         });
       }
     });
+    if (
+      geometry !== undefined &&
+      new Set(geometry.triangleIndices).size !== geometry.triangleIndices.length
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["geometry", "triangleIndices"],
+        message: "Region triangle references must be unique",
+      });
+    }
   })
   .superRefine(({ metricIds, warningCodes }, context) => {
     if (new Set(metricIds).size !== metricIds.length) {

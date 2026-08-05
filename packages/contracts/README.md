@@ -24,6 +24,8 @@ Analysis distinguishes three outcomes:
 
 Cancellation is a worker lifecycle event, not an analysis result. A requested method never falls through silently to another method.
 
+Changed regions may carry bounded triangle references into the flattened baseline or candidate geometry. These references let renderers highlight the actual analyzed surface while keeping region bounds and anchors available as renderer-neutral navigation evidence. Methods that do not produce triangle-level evidence may omit them.
+
 ## Reports and portable sessions
 
 Version 1 reports are immutable, bounded review snapshots. They embed a correlated analysis request/result exchange, exactly two source-model records, comparison- or model-frame callouts and distances, manual or automatic findings, renderer-neutral saved views, and bounded 2D line/label figure primitives. Coordinates remain finite canonical millimetres. Automatic findings reference their analysis request and at least one existing change region; indeterminate analyses can still produce manual findings but cannot claim automatic regions.

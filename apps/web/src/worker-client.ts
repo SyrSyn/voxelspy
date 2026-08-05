@@ -1,4 +1,4 @@
-import { SURFACE_DISTANCE_METHOD } from "@voxelspy/analysis";
+import { ANALYSIS_LIMITS, SURFACE_DISTANCE_METHOD } from "@voxelspy/analysis";
 import {
   IDENTITY_MAT4,
   WORKER_PROTOCOL_VERSION,
@@ -37,10 +37,41 @@ export type ComparisonProgress = {
   message: string;
 };
 
+export const ANALYSIS_MEMORY_MIN_MIB = 128;
+export const ANALYSIS_MEMORY_MAX_MIB = 768;
+export const ANALYSIS_MEMORY_STEP_MIB = 128;
+export const DEFAULT_ANALYSIS_MEMORY_MIB = 256;
+export const MAX_CHANGED_REGIONS = 24;
+const WORK_UNITS_PER_MIB = 100_000;
+
+export function analysisExecutionBudget(memoryMiB: number) {
+  if (
+    !Number.isInteger(memoryMiB) ||
+    memoryMiB < ANALYSIS_MEMORY_MIN_MIB ||
+    memoryMiB > ANALYSIS_MEMORY_MAX_MIB ||
+    memoryMiB % ANALYSIS_MEMORY_STEP_MIB !== 0
+  ) {
+    throw new RangeError(
+      `Analysis memory must be a ${ANALYSIS_MEMORY_STEP_MIB} MiB increment between ${ANALYSIS_MEMORY_MIN_MIB} and ${ANALYSIS_MEMORY_MAX_MIB} MiB.`,
+    );
+  }
+  return {
+    maxMemoryBytes: Math.min(
+      memoryMiB * 1024 * 1024,
+      ANALYSIS_LIMITS.maxMemoryBytes,
+    ),
+    maxWorkUnits: Math.min(
+      memoryMiB * WORK_UNITS_PER_MIB,
+      ANALYSIS_LIMITS.maxWorkUnits,
+    ),
+  };
+}
+
 export async function runComparison(
   baselineSource: ComparisonSource,
   candidateSource: ComparisonSource,
   progress: (value: ComparisonProgress) => void,
+  analysisMemoryMiB = DEFAULT_ANALYSIS_MEMORY_MIB,
 ): Promise<CompletedComparison> {
   const worker = new Worker(
     new URL("./comparison.worker.ts", import.meta.url),
@@ -161,12 +192,12 @@ export async function runComparison(
       requestId: analysisId,
       baseline: { modelId: baseline.id, modelToComparison: IDENTITY_MAT4 },
       candidate: { modelId: candidate.id, modelToComparison: IDENTITY_MAT4 },
-      method: SURFACE_DISTANCE_METHOD,
-      tolerance: { distanceMillimetres: 0.1 },
-      executionBudget: {
-        maxWorkUnits: 2_000_000,
-        maxMemoryBytes: 256 * 1024 * 1024,
+      method: {
+        ...SURFACE_DISTANCE_METHOD,
+        parameters: { maxRegions: MAX_CHANGED_REGIONS },
       },
+      tolerance: { distanceMillimetres: 0.1 },
+      executionBudget: analysisExecutionBudget(analysisMemoryMiB),
     });
     post({
       protocolVersion: 1,

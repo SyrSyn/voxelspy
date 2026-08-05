@@ -20,6 +20,7 @@ import {
   Box3,
   BufferAttribute,
   BufferGeometry,
+  DoubleSide,
   Matrix4,
   Plane,
   Vector3,
@@ -95,13 +96,18 @@ const modelPalettes = {
 } as const;
 type ModelPaletteId = keyof typeof modelPalettes;
 
-function modelInstances(model: NormalizedModel) {
+function modelInstances(
+  model: NormalizedModel,
+  modelToComparison: Matrix4 = identity,
+) {
   const meshById = new Map(model.meshes.map((mesh) => [mesh.id, mesh]));
   if (model.placement.kind === "flat") {
     return model.placement.instances.map((instance) => ({
       id: instance.id,
       mesh: meshById.get(instance.meshId)!,
-      matrix: new Matrix4().fromArray(instance.meshToModel),
+      matrix: modelToComparison
+        .clone()
+        .multiply(new Matrix4().fromArray(instance.meshToModel)),
     }));
   }
   const nodes = new Map(model.placement.nodes.map((node) => [node.id, node]));
@@ -113,7 +119,9 @@ function modelInstances(model: NormalizedModel) {
     mesh: NormalizedModel["meshes"][number];
     matrix: Matrix4;
   }[] = [];
-  const stack = model.placement.rootIds.map((id) => ({ id, parent: identity }));
+  const stack = [...model.placement.rootIds]
+    .reverse()
+    .map((id) => ({ id, parent: modelToComparison }));
   while (stack.length) {
     const current = stack.pop()!;
     const node = nodes.get(current.id);
@@ -133,8 +141,11 @@ function modelInstances(model: NormalizedModel) {
             .multiply(new Matrix4().fromArray(instance.meshToNode)),
         });
     }
-    for (const childId of node.childIds)
-      stack.push({ id: childId, parent: nodeMatrix });
+    for (let index = node.childIds.length - 1; index >= 0; index -= 1) {
+      const childId = node.childIds[index];
+      if (childId !== undefined)
+        stack.push({ id: childId, parent: nodeMatrix });
+    }
   }
   return placed;
 }
@@ -172,10 +183,10 @@ export function toRenderPositions(
   return positions;
 }
 
-function modelBounds(model: NormalizedModel) {
+function modelBounds(model: NormalizedModel, modelToComparison = identity) {
   const bounds = new Box3();
   const point = new Vector3();
-  for (const instance of modelInstances(model)) {
+  for (const instance of modelInstances(model, modelToComparison)) {
     const positions = instance.mesh.geometry.positions;
     for (let index = 0; index < positions.length; index += 3) {
       point
@@ -195,8 +206,15 @@ function safeBoundsCenter(bounds: Box3) {
   );
 }
 
-function renderFrameFor(baseline: NormalizedModel, candidate: NormalizedModel) {
-  const bounds = modelBounds(baseline).union(modelBounds(candidate));
+function renderFrameFor(
+  baseline: NormalizedModel,
+  candidate: NormalizedModel,
+  baselineToComparison = identity,
+  candidateToComparison = identity,
+) {
+  const bounds = modelBounds(baseline, baselineToComparison).union(
+    modelBounds(candidate, candidateToComparison),
+  );
   const spans = [
     bounds.max.x - bounds.min.x,
     bounds.max.y - bounds.min.y,
@@ -298,6 +316,7 @@ const ModelMeshes = memo(function ModelMeshes({
   wireframe = false,
   clippingPlanes,
   origin,
+  modelToComparison,
 }: {
   model: NormalizedModel;
   color: string;
@@ -305,14 +324,15 @@ const ModelMeshes = memo(function ModelMeshes({
   wireframe?: boolean;
   clippingPlanes: Plane[];
   origin: Vector3;
+  modelToComparison: Matrix4;
 }) {
   const instances = useMemo(
     () =>
-      modelInstances(model).map((instance) => ({
+      modelInstances(model, modelToComparison).map((instance) => ({
         ...instance,
         geometry: geometryFor(instance.mesh, instance.matrix, origin),
       })),
-    [model, origin],
+    [model, modelToComparison, origin],
   );
   useEffect(
     () => () => instances.forEach((instance) => instance.geometry.dispose()),
@@ -337,68 +357,152 @@ const ModelMeshes = memo(function ModelMeshes({
   );
 });
 
-function RegionMarkers({
+export function regionSurfaceGeometry(
+  model: NormalizedModel,
+  modelToComparison: Matrix4,
+  triangleIndices: readonly number[],
+  origin: Vector3,
+) {
+  const selected = new Set(triangleIndices);
+  const positions: number[] = [];
+  const point = new Vector3();
+  let triangleIndex = 0;
+  for (const instance of modelInstances(model, modelToComparison)) {
+    const source = instance.mesh.geometry;
+    for (let index = 0; index < source.indices.length; index += 3) {
+      if (selected.has(triangleIndex)) {
+        for (let corner = 0; corner < 3; corner += 1) {
+          const vertex = source.indices[index + corner]! * 3;
+          point
+            .set(
+              source.positions[vertex]!,
+              source.positions[vertex + 1]!,
+              source.positions[vertex + 2]!,
+            )
+            .applyMatrix4(instance.matrix)
+            .sub(origin);
+          positions.push(point.x, point.y, point.z);
+        }
+      }
+      triangleIndex += 1;
+    }
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new BufferAttribute(new Float32Array(positions), 3),
+  );
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  return geometry;
+}
+
+function RegionSurfaces({
   analysis,
+  baseline,
+  candidate,
+  baselineToComparison,
+  candidateToComparison,
   selected,
   select,
   origin,
+  sceneSize,
 }: {
   analysis: AnalysisResult;
+  baseline: NormalizedModel;
+  candidate: NormalizedModel;
+  baselineToComparison: Matrix4;
+  candidateToComparison: Matrix4;
   selected: RegionId | undefined;
   select: (id: RegionId) => void;
   origin: Vector3;
+  sceneSize: number;
 }) {
+  const surfaces = useMemo(() => {
+    if (analysis.outcome.state !== "complete") return [];
+    return analysis.outcome.regions.map((region) => {
+      if (region.geometry === undefined) return { region };
+      const isBaseline = region.geometry.model === "baseline";
+      return {
+        region,
+        geometry: regionSurfaceGeometry(
+          isBaseline ? baseline : candidate,
+          isBaseline ? baselineToComparison : candidateToComparison,
+          region.geometry.triangleIndices,
+          origin,
+        ),
+      };
+    });
+  }, [
+    analysis,
+    baseline,
+    baselineToComparison,
+    candidate,
+    candidateToComparison,
+    origin,
+  ]);
+  useEffect(
+    () => () =>
+      surfaces.forEach((surface) => {
+        surface.geometry?.dispose();
+      }),
+    [surfaces],
+  );
   if (analysis.outcome.state !== "complete") return null;
   return (
     <>
-      {analysis.outcome.regions.map((region) => {
-        const min = new Vector3(...region.bounds.min);
-        const max = new Vector3(...region.bounds.max);
-        const size = max.clone().sub(min);
-        const center = min.add(max).multiplyScalar(0.5).sub(origin);
+      {surfaces.map(({ region, geometry }) => {
         const color = semanticColors[region.category];
         const isSelected = selected === region.id;
+        if (
+          geometry !== undefined &&
+          geometry.getAttribute("position").count > 0
+        ) {
+          return (
+            <mesh
+              key={region.id}
+              geometry={geometry}
+              renderOrder={isSelected ? 4 : 3}
+              onClick={(event) => {
+                event.stopPropagation();
+                select(region.id);
+              }}
+            >
+              <meshStandardMaterial
+                color={color}
+                emissive={color}
+                emissiveIntensity={isSelected ? 0.28 : 0.1}
+                roughness={0.58}
+                metalness={0.04}
+                side={DoubleSide}
+                transparent
+                opacity={isSelected ? 1 : 0.78}
+                polygonOffset
+                polygonOffsetFactor={-1}
+                polygonOffsetUnits={-1}
+              />
+            </mesh>
+          );
+        }
+        const anchor = new Vector3(...region.anchor).sub(origin);
         return (
-          <group
+          <mesh
             key={region.id}
-            position={center}
+            position={anchor}
             onClick={(event) => {
               event.stopPropagation();
               select(region.id);
             }}
           >
-            <mesh>
-              <boxGeometry
-                args={[
-                  Math.max(size.x, 0.001),
-                  Math.max(size.y, 0.001),
-                  Math.max(size.z, 0.001),
-                ]}
-              />
-              <meshBasicMaterial
-                color={color}
-                transparent
-                opacity={isSelected ? 0.28 : 0.08}
-                depthWrite={false}
-              />
-            </mesh>
-            <mesh>
-              <boxGeometry
-                args={[
-                  Math.max(size.x, 0.001),
-                  Math.max(size.y, 0.001),
-                  Math.max(size.z, 0.001),
-                ]}
-              />
-              <meshBasicMaterial
-                color={color}
-                wireframe
-                transparent
-                opacity={isSelected ? 1 : 0.3}
-                depthTest={false}
-              />
-            </mesh>
-          </group>
+            <sphereGeometry
+              args={[
+                Math.max(sceneSize * (isSelected ? 0.018 : 0.012), 0.01),
+                16,
+                12,
+              ]}
+            />
+            <meshBasicMaterial color={color} depthTest={false} />
+          </mesh>
         );
       })}
     </>
@@ -419,6 +523,8 @@ function Scene({
   renderable,
   sceneSize,
   palette,
+  baselineToComparison,
+  candidateToComparison,
 }: WorkbenchProps & {
   kind: ViewKind;
   camera: CameraState;
@@ -430,15 +536,25 @@ function Scene({
   renderable: boolean;
   sceneSize: number;
   palette: (typeof modelPalettes)[ModelPaletteId];
+  baselineToComparison: Matrix4;
+  candidateToComparison: Matrix4;
 }) {
   const [available, setAvailable] = useState(false);
   useEffect(() => setAvailable(hasWebGL()), []);
   const bounds = useMemo(() => {
-    const value = modelBounds(baseline).union(modelBounds(candidate));
+    const value = modelBounds(baseline, baselineToComparison).union(
+      modelBounds(candidate, candidateToComparison),
+    );
     value.min.sub(origin);
     value.max.sub(origin);
     return value;
-  }, [baseline, candidate, origin]);
+  }, [
+    baseline,
+    baselineToComparison,
+    candidate,
+    candidateToComparison,
+    origin,
+  ]);
   const clipPlane = useMemo(() => {
     if (clip >= 100) return [];
     const min = bounds.min.x;
@@ -495,6 +611,7 @@ function Scene({
             color={palette.baseline}
             clippingPlanes={clipPlane}
             origin={origin}
+            modelToComparison={baselineToComparison}
           />
         )}
         {kind === "candidate" && (
@@ -503,6 +620,7 @@ function Scene({
             color={palette.candidate}
             clippingPlanes={clipPlane}
             origin={origin}
+            modelToComparison={candidateToComparison}
           />
         )}
         {kind === "difference" && (
@@ -514,6 +632,7 @@ function Scene({
               wireframe
               clippingPlanes={clipPlane}
               origin={origin}
+              modelToComparison={baselineToComparison}
             />
             <ModelMeshes
               model={candidate}
@@ -521,12 +640,18 @@ function Scene({
               opacity={0.58}
               clippingPlanes={clipPlane}
               origin={origin}
+              modelToComparison={candidateToComparison}
             />
-            <RegionMarkers
+            <RegionSurfaces
               analysis={analysis}
+              baseline={baseline}
+              candidate={candidate}
+              baselineToComparison={baselineToComparison}
+              candidateToComparison={candidateToComparison}
               selected={selected}
               select={select}
               origin={origin}
+              sceneSize={sceneSize}
             />
           </>
         )}
@@ -915,9 +1040,23 @@ export function Workbench({
   variant = "default",
   enableKeyboardShortcuts = true,
 }: WorkbenchProps) {
+  const baselineToComparison = useMemo(
+    () => new Matrix4().fromArray(analysis.baseline.modelToComparison),
+    [analysis.baseline.modelToComparison],
+  );
+  const candidateToComparison = useMemo(
+    () => new Matrix4().fromArray(analysis.candidate.modelToComparison),
+    [analysis.candidate.modelToComparison],
+  );
   const renderFrame = useMemo(
-    () => renderFrameFor(baseline, candidate),
-    [baseline, candidate],
+    () =>
+      renderFrameFor(
+        baseline,
+        candidate,
+        baselineToComparison,
+        candidateToComparison,
+      ),
+    [baseline, baselineToComparison, candidate, candidateToComparison],
   );
   const { origin } = renderFrame;
   const initial = useMemo(
@@ -1036,6 +1175,8 @@ export function Workbench({
           renderable={renderFrame.renderable}
           sceneSize={renderFrame.size}
           palette={modelPalettes[paletteId]}
+          baselineToComparison={baselineToComparison}
+          candidateToComparison={candidateToComparison}
         />
         <span className="canvas-scroll-pad" aria-hidden="true">
           <i />
@@ -1182,6 +1323,12 @@ export function Workbench({
                 {analysis.outcome.reasons.map((reason) => (
                   <p key={reason}>{reason}</p>
                 ))}
+                {analysis.outcome.code === "resource-budget-exceeded" && (
+                  <p>
+                    Start a new comparison and raise the Analysis RAM allowance
+                    if this device has capacity available.
+                  </p>
+                )}
               </div>
             ) : ordered.length === 0 ? (
               <p className="empty-findings">
