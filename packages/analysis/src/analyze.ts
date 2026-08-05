@@ -15,10 +15,10 @@ import type {
 import {
   countExpandedGeometry,
   flattenModel,
-  pointTriangleDistanceSquared,
   triangleCentroid,
 } from "./geometry.js";
 import type { FlatGeometry, Triangle } from "./geometry.js";
+import { TriangleSpatialIndex, type WorkUnitCounter } from "./spatial-index.js";
 
 export interface AnalysisResourceLimits {
   readonly maxExpandedVertices: number;
@@ -176,7 +176,7 @@ function checkResourceBudget(
   if (triangles > ANALYSIS_LIMITS.maxExpandedTriangles) {
     return `Expanded geometry requires ${triangles} triangles; the implementation ceiling is ${ANALYSIS_LIMITS.maxExpandedTriangles}.`;
   }
-  const estimatedMemory = vertices * 24 + triangles * 160;
+  const estimatedMemory = vertices * 24 + triangles * 768;
   const memoryBudget = Math.min(
     ANALYSIS_LIMITS.maxMemoryBytes,
     request.executionBudget?.maxMemoryBytes ?? ANALYSIS_LIMITS.maxMemoryBytes,
@@ -300,30 +300,29 @@ function analyzeSurfaceDistance(
       validation,
     );
   }
-  const workUnits = baseline.triangles.length * candidate.triangles.length * 8;
   const workBudget = Math.min(
     ANALYSIS_LIMITS.maxWorkUnits,
     request.executionBudget?.maxWorkUnits ?? ANALYSIS_LIMITS.maxWorkUnits,
   );
-  if (!Number.isSafeInteger(workUnits) || workUnits > workBudget) {
-    return indeterminate(
-      request,
-      "resource-budget-exceeded",
-      [
-        `Surface sampling requires ${workUnits} point-triangle work units; the active budget is ${workBudget}.`,
-      ],
-      validation,
-    );
-  }
+  const work = new WorkBudget(workBudget);
 
   try {
+    const baselineIndex = new TriangleSpatialIndex(baseline.triangles, work);
+    const candidateIndex = new TriangleSpatialIndex(candidate.triangles, work);
     const removed = directionalRegions(
       baseline,
-      candidate,
+      candidateIndex,
       "removed",
       tolerance,
+      work,
     );
-    const added = directionalRegions(candidate, baseline, "added", tolerance);
+    const added = directionalRegions(
+      candidate,
+      baselineIndex,
+      "added",
+      tolerance,
+      work,
+    );
     const ranked = [...removed, ...added].sort(compareSurfaceRegion);
     const reported = ranked.slice(0, parameterResult.maxRegions);
     const truncated = reported.length !== ranked.length;
@@ -439,6 +438,14 @@ function analyzeSurfaceDistance(
       },
     });
   } catch (error) {
+    if (error instanceof WorkBudgetExceeded) {
+      return indeterminate(
+        request,
+        "resource-budget-exceeded",
+        [error.message],
+        validation,
+      );
+    }
     return indeterminate(
       request,
       "numeric-range-exceeded",
@@ -486,17 +493,22 @@ interface RankedSurfaceRegion {
   readonly triangleCount: number;
 }
 
+const DIRECTIONAL_TRIANGLE_WORK_UNITS = 8;
+
 function directionalRegions(
   source: FlatGeometry,
-  target: FlatGeometry,
+  target: TriangleSpatialIndex,
   category: "added" | "removed",
   tolerance: number,
+  work: WorkUnitCounter,
 ): RankedSurfaceRegion[] {
+  work.charge(source.triangles.length * DIRECTIONAL_TRIANGLE_WORK_UNITS);
   const deviations = source.triangles.map((triangle) => {
     const samples = [...triangle.points, triangleCentroid(triangle)];
-    const distances = samples.map((sample) =>
-      distanceToSurface(sample, target.triangles),
-    );
+    const distances = samples.map((sample) => {
+      work.charge(1);
+      return target.distance(sample, work);
+    });
     return {
       changed: Math.max(...distances) > tolerance,
       maximum: Math.max(...distances),
@@ -603,25 +615,6 @@ function exactEdgeKey(first: Vec3, second: Vec3): string {
     : `${secondKey}|${firstKey}`;
 }
 
-function distanceToSurface(
-  point: Vec3,
-  triangles: readonly Triangle[],
-): number {
-  let minimumSquared = Number.POSITIVE_INFINITY;
-  for (const triangle of triangles) {
-    const [a, b, c] = triangle.points;
-    minimumSquared = Math.min(
-      minimumSquared,
-      pointTriangleDistanceSquared(point, a, b, c),
-    );
-  }
-  const distance = Math.sqrt(minimumSquared);
-  if (!Number.isFinite(distance)) {
-    throw new Error("Surface distance exceeded the supported numeric range.");
-  }
-  return distance;
-}
-
 function compareSurfaceRegion(
   left: RankedSurfaceRegion,
   right: RankedSurfaceRegion,
@@ -633,6 +626,34 @@ function compareSurfaceRegion(
     compareVec3(left.bounds.min, right.bounds.min) ||
     compareText(left.id, right.id)
   );
+}
+
+class WorkBudgetExceeded extends Error {
+  constructor(limit: number, used: number, requested: number) {
+    super(
+      `Surface distance exhausted the active budget of ${limit} work units after ${used} charged units; the next operation required ${requested} more.`,
+    );
+    this.name = "WorkBudgetExceeded";
+  }
+}
+
+class WorkBudget implements WorkUnitCounter {
+  readonly #limit: number;
+  #used = 0;
+
+  constructor(limit: number) {
+    this.#limit = limit;
+  }
+
+  charge(units: number): void {
+    if (!Number.isSafeInteger(units) || units < 0) {
+      throw new WorkBudgetExceeded(this.#limit, this.#used, units);
+    }
+    if (this.#used > this.#limit - units) {
+      throw new WorkBudgetExceeded(this.#limit, this.#used, units);
+    }
+    this.#used += units;
+  }
 }
 
 function analyzeAxisAlignedBoxes(

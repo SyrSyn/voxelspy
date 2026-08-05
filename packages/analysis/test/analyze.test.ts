@@ -203,6 +203,49 @@ describe("approximate surface-distance adapter", () => {
       code: "resource-budget-exceeded",
     });
   });
+
+  it("accelerates a pair that exceeds the former full-scan work estimate", () => {
+    const triangleCount = 600;
+    expect(triangleCount * triangleCount * 8).toBeGreaterThan(
+      ANALYSIS_LIMITS.maxWorkUnits,
+    );
+    const input = {
+      request: request("surface-distance", {
+        candidateTransform: translation(0.5),
+      }),
+      baseline: disconnectedFacetModel("baseline", triangleCount),
+      candidate: disconnectedFacetModel("candidate", triangleCount),
+    };
+
+    const first = analyzeModelPair(input);
+    const second = analyzeModelPair(input);
+
+    expect(first.outcome.state).toBe("complete");
+    expect(second).toEqual(first);
+    if (first.outcome.state !== "complete") return;
+    expect(first.outcome.orderedRegionIds).toEqual(
+      first.outcome.regions.map(({ id }) => id),
+    );
+    expect(first.outcome.orderedRegionIds.length).toBeGreaterThan(0);
+  });
+
+  it("stops accelerated search when its charged work budget is exhausted", () => {
+    const triangleCount = 600;
+    const result = analyzeModelPair({
+      request: request("surface-distance", {
+        candidateTransform: translation(0.5),
+        maxWorkUnits: 30_000,
+      }),
+      baseline: disconnectedFacetModel("baseline", triangleCount),
+      candidate: disconnectedFacetModel("candidate", triangleCount),
+    });
+
+    expect(result.outcome).toMatchObject({
+      state: "indeterminate",
+      code: "resource-budget-exceeded",
+      reasons: [expect.stringMatching(/exhausted the active budget/u)],
+    });
+  });
 });
 
 describe("exact axis-aligned-box adapter", () => {
