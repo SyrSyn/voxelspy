@@ -49,11 +49,11 @@ export function HomeDemoClient() {
   if (error)
     return (
       <section className="sample-error shell" role="alert">
-        <span className="eyebrow">Instant - Local - Open Source</span>
+        <span className="eyebrow">Built-in sample</span>
         <h1>Sample comparison unavailable</h1>
         <p>{error}</p>
         <Link className="button button-primary" to="/compare/">
-          Compare your own models
+          Import models
         </Link>
       </section>
     );
@@ -66,12 +66,12 @@ export function HomeDemoClient() {
       candidate={result.candidate}
       analysis={result.analysis}
       title="A 3D Toolkit, Free Forever."
-      label="Instant - Local - Open Source"
+      label="Built-in sample · approximate surface analysis"
       variant="sample"
       enableKeyboardShortcuts={false}
       headerAction={
         <Link className="button button-primary" to="/compare/">
-          Compare your own models
+          Import Models
         </Link>
       }
     />

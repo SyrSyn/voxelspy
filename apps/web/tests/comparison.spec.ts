@@ -36,7 +36,9 @@ test("opens with a working sample difference above its source models", async ({
   await expect(
     sample.getByRole("heading", { name: "A 3D Toolkit, Free Forever." }),
   ).toBeVisible({ timeout: 20_000 });
-  await expect(sample.getByText("Instant - Local - Open Source")).toBeVisible();
+  await expect(
+    page.locator(".site-header").getByText("Instant - Local - Open Source"),
+  ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "VoxelSpy on GitHub, 0 stars" }),
   ).toHaveAttribute("href", "https://github.com/SyrSyn/voxelspy");
@@ -63,10 +65,83 @@ test("opens with a working sample difference above its source models", async ({
   await sample.getByRole("slider", { name: /Cross section/ }).fill("50");
   await expect(sample.locator(".workbench-toolbar output")).toHaveText("50%");
   await expect(
-    sample.getByRole("link", { name: "Compare your own models" }),
+    sample.getByRole("link", { name: "Import Models" }),
   ).toBeVisible();
   await expect(page.locator("#main-content h1")).toHaveCount(1);
   expect(offOrigin).toEqual([]);
+  expect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth >
+        document.documentElement.clientWidth,
+    ),
+  ).toBe(false);
+});
+
+test("keeps the full comparison legible at desktop splash sizes", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const sample = page.locator(".workbench-sample");
+  await expect(sample.locator("canvas")).toHaveCount(3, { timeout: 20_000 });
+
+  const difference = await sample.locator(".viewport-difference").boundingBox();
+  const rail = await sample.locator(".evidence-rail").boundingBox();
+  expect(difference).not.toBeNull();
+  expect(rail).not.toBeNull();
+  expect(difference!.y + difference!.height).toBeLessThan(660);
+  expect(rail!.x).toBeGreaterThanOrEqual(difference!.x + difference!.width - 1);
+
+  for (const kind of ["baseline", "candidate"]) {
+    const box = await sample.locator(`.viewport-${kind}`).boundingBox();
+    expect(box).not.toBeNull();
+    const visibleHeight =
+      Math.min(box!.y + box!.height, 900) - Math.max(box!.y, 0);
+    expect(visibleHeight).toBeGreaterThan(120);
+  }
+
+  const title = await sample
+    .getByRole("heading", {
+      name: "A 3D Toolkit, Free Forever.",
+    })
+    .boundingBox();
+  const actions = await sample.locator(".workbench-actions").boundingBox();
+  expect(title).not.toBeNull();
+  expect(actions).not.toBeNull();
+  expect(Math.abs(title!.y - actions!.y)).toBeLessThan(40);
+
+  const palette = sample.getByLabel("Model colors");
+  await palette.selectOption("blueprint");
+  await expect(palette).toHaveValue("blueprint");
+  await expect(sample.getByLabel("Difference colors")).toContainText(
+    "Added Removed Shared",
+  );
+
+  const theme = page.locator(".theme-button");
+  await expect(theme).toHaveAttribute(
+    "aria-label",
+    "Theme: system. Change to light.",
+  );
+  await theme.click();
+  await expect(theme).toHaveAttribute(
+    "aria-label",
+    "Theme: light. Change to dark.",
+  );
+  expect((await theme.textContent())?.trim()).toBe("");
+
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await sample.locator(".viewport-difference .canvas-scroll-pad").hover();
+  await page.mouse.wheel(0, 500);
+  await expect
+    .poll(() => page.evaluate(() => window.scrollY))
+    .toBeGreaterThan(0);
+
+  await page.setViewportSize({ width: 1440, height: 1440 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const sourceViews = await sample.locator(".source-views").boundingBox();
+  expect(sourceViews).not.toBeNull();
+  expect(sourceViews!.y + sourceViews!.height).toBeLessThan(1050);
   expect(
     await page.evaluate(
       () =>
@@ -86,6 +161,15 @@ test("imports, analyzes, and opens synchronized comparison views locally", async
   });
   await page.goto("/compare/");
   const cards = page.locator(".source-card");
+  await expect(cards.locator("details")).toHaveCount(2);
+  for (const card of [cards.nth(0), cards.nth(1)]) {
+    await expect(card.locator("details")).not.toHaveAttribute("open", "");
+    await expect(card.locator("summary")).toHaveText("Expert settings");
+    await expect(card.getByLabel("Source unit")).toHaveValue("millimetre");
+    await expect(card.getByLabel("Source up-axis")).toHaveValue(
+      "right-handed-z-up",
+    );
+  }
   await cards
     .nth(0)
     .locator('input[type="file"]')
@@ -102,10 +186,11 @@ test("imports, analyzes, and opens synchronized comparison views locally", async
       mimeType: "model/stl",
       buffer: Buffer.from(candidate),
     });
-  for (const card of [cards.nth(0), cards.nth(1)]) {
-    await card.getByLabel("Source unit").selectOption("millimetre");
-    await card.getByLabel("Source up-axis").selectOption("right-handed-z-up");
-  }
+  await expect(
+    page.getByText(
+      "Ready for local comparison using millimetres and right-handed Z-up.",
+    ),
+  ).toHaveCount(2);
   await expect(
     page.getByRole("button", { name: "Validate and compare" }),
   ).toBeEnabled();
@@ -117,6 +202,12 @@ test("imports, analyzes, and opens synchronized comparison views locally", async
   await expect(
     page.getByRole("heading", { name: "Changed regions" }),
   ).toBeVisible();
+  const analysisSummary = page
+    .locator("details.technical-details > summary")
+    .filter({ hasText: /^Analysis details$/u });
+  const analysisDetails = analysisSummary.locator("..");
+  await expect(analysisDetails).not.toHaveAttribute("open", "");
+  await analysisSummary.click();
   await expect(
     page.getByRole("heading", { name: "Analysis interpretation" }),
   ).toBeVisible();
@@ -124,19 +215,25 @@ test("imports, analyzes, and opens synchronized comparison views locally", async
     page.getByRole("heading", { name: "Approximation and uncertainty" }),
   ).toBeVisible();
   await expect(page.getByText("omittedRegionCount")).toBeVisible();
+  const importSummary = page
+    .locator("details.technical-details > summary")
+    .filter({ hasText: /^Import and provenance details$/u });
+  const importDetails = importSummary.locator("..");
+  await expect(importDetails).not.toHaveAttribute("open", "");
+  await importSummary.click();
   await expect(
     page.getByRole("heading", { name: "Import interpretation" }),
   ).toBeVisible();
   const baselineEvidence = page
     .getByRole("article")
     .filter({ hasText: "Baseline import" });
-  await expect(baselineEvidence.getByText("millimetres · user")).toBeVisible();
   await expect(
-    baselineEvidence.getByText("right-handed, Z up · user"),
+    baselineEvidence.getByText("millimetres · default"),
   ).toBeVisible();
   await expect(
-    baselineEvidence.getByText("user-source-frame", { exact: false }),
+    baselineEvidence.getByText("right-handed, Z up · default"),
   ).toBeVisible();
+  await expect(baselineEvidence.getByText("No import warnings.")).toBeVisible();
   await expect(
     baselineEvidence.getByText("Facet normals are retained neither", {
       exact: false,
@@ -173,22 +270,41 @@ test("keeps capability guidance usable on a compact viewport", async ({
   expect(overflow).toBe(false);
 });
 
-test("requires a fresh source-frame interpretation when a file is replaced", async ({
+test("restores ready source-frame defaults when a file is replaced", async ({
   page,
 }) => {
   await page.goto("/compare/");
-  const baselineCard = page.locator(".source-card").first();
+  const cards = page.locator(".source-card");
+  const baselineCard = cards.first();
+  const candidateCard = cards.nth(1);
   const fileInput = baselineCard.locator('input[type="file"]');
   await fileInput.setInputFiles({
     name: "first.stl",
     mimeType: "model/stl",
     buffer: Buffer.from(baseline),
   });
-  await baselineCard.getByLabel("Source unit").selectOption("millimetre");
+  await candidateCard.locator('input[type="file"]').setInputFiles({
+    name: "candidate.stl",
+    mimeType: "model/stl",
+    buffer: Buffer.from(candidate),
+  });
+  const expertSettings = baselineCard.locator("details");
+  await expertSettings.locator("summary").click();
+  await expect(expertSettings).toHaveAttribute("open", "");
+  await baselineCard.getByLabel("Source unit").selectOption("inch");
   await baselineCard
     .getByLabel("Source up-axis")
-    .selectOption("right-handed-z-up");
-  await expect(baselineCard.getByText("Supported mesh format")).toBeVisible();
+    .selectOption("right-handed-y-up");
+  await expect(
+    baselineCard.getByText(
+      "Ready for local comparison using the selected expert source frame.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Validate and compare" }),
+  ).toBeEnabled();
+  await expertSettings.locator("summary").click();
+  await expect(expertSettings).not.toHaveAttribute("open", "");
 
   await fileInput.setInputFiles({
     name: "replacement.stl",
@@ -196,14 +312,19 @@ test("requires a fresh source-frame interpretation when a file is replaced", asy
     buffer: Buffer.from(candidate),
   });
 
-  await expect(baselineCard.getByLabel("Source unit")).toHaveValue("");
-  await expect(baselineCard.getByLabel("Source up-axis")).toHaveValue("");
+  await expect(baselineCard.getByLabel("Source unit")).toHaveValue(
+    "millimetre",
+  );
+  await expect(baselineCard.getByLabel("Source up-axis")).toHaveValue(
+    "right-handed-z-up",
+  );
+  await expect(expertSettings).not.toHaveAttribute("open", "");
   await expect(
-    baselineCard.getByText("Choose the source unit and up-axis", {
-      exact: false,
-    }),
+    baselineCard.getByText(
+      "Ready for local comparison using millimetres and right-handed Z-up.",
+    ),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Validate and compare" }),
-  ).toBeDisabled();
+  ).toBeEnabled();
 });

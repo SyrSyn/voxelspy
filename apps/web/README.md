@@ -23,9 +23,9 @@ pnpm --filter @voxelspy/web build
 
 Normal model selection and comparison are browser-local. The application does not require hosted identity, storage, telemetry, or a model API. Any future network-backed feature must expose its destination and require a deliberate action.
 
-STL and OBJ import plus sampled surface-distance analysis run in a dedicated browser worker. Because those formats do not authoritatively declare units or an up-axis, comparison remains unavailable until the user explicitly supplies both interpretations for each file.
+STL and OBJ import plus sampled surface-distance analysis run in a dedicated browser worker. Because those formats do not authoritatively declare units or an up-axis, the interface begins with millimetres and right-handed Z-up and exposes alternate interpretations as expert settings.
 
-The workbench keeps the selected source frame, normalization transform, importer provenance, import warnings and notes, analysis warnings, and approximation uncertainty visible alongside the result. Selecting a replacement file clears the previous file's interpretation so the new source must be confirmed independently.
+The workbench keeps the selected source frame, normalization transform, importer provenance, import warnings and notes, analysis warnings, and approximation uncertainty available alongside the result. Selecting a replacement file restores the common source-frame defaults so an expert override cannot accidentally carry to a different model.
 
 Portable report and session contracts exist in the workspace, but browser save and export actions are not connected yet.
 

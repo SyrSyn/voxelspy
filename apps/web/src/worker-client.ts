@@ -23,6 +23,7 @@ export interface ComparisonSource {
   file: File;
   unit: Exclude<SourceUnit, "unknown">;
   axis: Exclude<SourceAxis, "unknown">;
+  frameSource?: "default" | "expert";
 }
 
 export interface CompletedComparison {
@@ -112,8 +113,9 @@ export async function runComparison(
         sourceName: source.file.name,
         bytes,
         options: {
-          userUnit: source.unit,
-          userAxis: source.axis,
+          ...(source.frameSource === "expert"
+            ? { userUnit: source.unit, userAxis: source.axis }
+            : { declaredUnit: source.unit, declaredAxis: source.axis }),
           limits: {
             inputBytes: Math.min(
               32 * 1024 * 1024,

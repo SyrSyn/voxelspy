@@ -51,7 +51,8 @@ const compare = await readFile(
   "utf8",
 );
 assert.match(compare, /Import and analysis run in a dedicated browser worker/);
-assert.match(compare, /units or up-axis/);
+assert.match(compare, /millimetre and right-handed Z-up defaults/);
+assert.match(compare, /Expert settings/);
 assert.match(compare, /disabled=""/);
 const docs = await readFile(path.join(root, "dist/docs/index.html"), "utf8");
 assert.match(docs, /Search documentation/);

@@ -25,6 +25,11 @@ import {
   Vector3,
 } from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
+import {
+  summarizeModelComparison,
+  type ModelComparisonPresentationSummary,
+  type NumericDelta,
+} from "./model-summary";
 
 type ViewKind = "baseline" | "difference" | "candidate";
 type CameraState = {
@@ -53,6 +58,42 @@ export interface WorkbenchProps {
 
 const identity = new Matrix4();
 const MAX_PRECISION_SAFE_RENDER_SPAN_MILLIMETRES = 500_000;
+const semanticColors = {
+  added: "#35d07f",
+  removed: "#ff5a67",
+  deviation: "#c783ff",
+} as const;
+const modelPalettes = {
+  neutral: {
+    label: "Neutral",
+    baseline: "#7e9188",
+    candidate: "#a7b3ad",
+    differenceBaseline: "#87918c",
+    differenceCandidate: "#c0c7c3",
+  },
+  blueprint: {
+    label: "Blueprint",
+    baseline: "#3274c8",
+    candidate: "#78aaf0",
+    differenceBaseline: "#627587",
+    differenceCandidate: "#b1bdc8",
+  },
+  clay: {
+    label: "Warm clay",
+    baseline: "#a96045",
+    candidate: "#dda27f",
+    differenceBaseline: "#806f68",
+    differenceCandidate: "#c7bbb5",
+  },
+  contrast: {
+    label: "High contrast",
+    baseline: "#5d70dd",
+    candidate: "#f1c75b",
+    differenceBaseline: "#69717d",
+    differenceCandidate: "#d5d7db",
+  },
+} as const;
+type ModelPaletteId = keyof typeof modelPalettes;
 
 function modelInstances(model: NormalizedModel) {
   const meshById = new Map(model.meshes.map((mesh) => [mesh.id, mesh]));
@@ -315,37 +356,49 @@ function RegionMarkers({
         const max = new Vector3(...region.bounds.max);
         const size = max.clone().sub(min);
         const center = min.add(max).multiplyScalar(0.5).sub(origin);
-        const color =
-          region.category === "added"
-            ? "#f0ad45"
-            : region.category === "removed"
-              ? "#43c5d4"
-              : "#ed73a5";
+        const color = semanticColors[region.category];
+        const isSelected = selected === region.id;
         return (
-          <mesh
+          <group
             key={region.id}
             position={center}
-            scale={selected === region.id ? 1.08 : 1}
             onClick={(event) => {
               event.stopPropagation();
               select(region.id);
             }}
           >
-            <boxGeometry
-              args={[
-                Math.max(size.x, 0.001),
-                Math.max(size.y, 0.001),
-                Math.max(size.z, 0.001),
-              ]}
-            />
-            <meshBasicMaterial
-              color={color}
-              wireframe
-              transparent
-              opacity={selected === region.id ? 1 : 0.72}
-              depthTest={false}
-            />
-          </mesh>
+            <mesh>
+              <boxGeometry
+                args={[
+                  Math.max(size.x, 0.001),
+                  Math.max(size.y, 0.001),
+                  Math.max(size.z, 0.001),
+                ]}
+              />
+              <meshBasicMaterial
+                color={color}
+                transparent
+                opacity={isSelected ? 0.28 : 0.08}
+                depthWrite={false}
+              />
+            </mesh>
+            <mesh>
+              <boxGeometry
+                args={[
+                  Math.max(size.x, 0.001),
+                  Math.max(size.y, 0.001),
+                  Math.max(size.z, 0.001),
+                ]}
+              />
+              <meshBasicMaterial
+                color={color}
+                wireframe
+                transparent
+                opacity={isSelected ? 1 : 0.3}
+                depthTest={false}
+              />
+            </mesh>
+          </group>
         );
       })}
     </>
@@ -365,6 +418,7 @@ function Scene({
   origin,
   renderable,
   sceneSize,
+  palette,
 }: WorkbenchProps & {
   kind: ViewKind;
   camera: CameraState;
@@ -375,6 +429,7 @@ function Scene({
   origin: Vector3;
   renderable: boolean;
   sceneSize: number;
+  palette: (typeof modelPalettes)[ModelPaletteId];
 }) {
   const [available, setAvailable] = useState(false);
   useEffect(() => setAvailable(hasWebGL()), []);
@@ -437,7 +492,7 @@ function Scene({
         {kind === "baseline" && (
           <ModelMeshes
             model={baseline}
-            color="#7e98a0"
+            color={palette.baseline}
             clippingPlanes={clipPlane}
             origin={origin}
           />
@@ -445,7 +500,7 @@ function Scene({
         {kind === "candidate" && (
           <ModelMeshes
             model={candidate}
-            color="#90a4aa"
+            color={palette.candidate}
             clippingPlanes={clipPlane}
             origin={origin}
           />
@@ -454,16 +509,16 @@ function Scene({
           <>
             <ModelMeshes
               model={baseline}
-              color="#46bdc9"
-              opacity={0.38}
+              color={palette.differenceBaseline}
+              opacity={0.24}
               wireframe
               clippingPlanes={clipPlane}
               origin={origin}
             />
             <ModelMeshes
               model={candidate}
-              color="#e4a84a"
-              opacity={0.65}
+              color={palette.differenceCandidate}
+              opacity={0.58}
               clippingPlanes={clipPlane}
               origin={origin}
             />
@@ -492,6 +547,19 @@ function formatMetric(value: number, unit: string) {
   return `${Number.isInteger(value) ? value : value.toPrecision(4)} ${labels[unit] ?? unit}`.trim();
 }
 
+function formatRegionMetric(metric: AnalysisMetric) {
+  const label = metric.id.endsWith("maximum-distance")
+    ? "Max"
+    : metric.id.endsWith("mean-distance")
+      ? "Mean"
+      : metric.id.endsWith("triangle-count")
+        ? "Triangles"
+        : metric.id.endsWith("area")
+          ? "Area"
+          : "Measure";
+  return `${label} ${formatMetric(metric.value, metric.unit)}`;
+}
+
 function sourceUnitLabel(unit: NormalizedModel["provenance"]["sourceUnit"]) {
   return {
     micrometre: "micrometres",
@@ -509,6 +577,16 @@ function sourceAxisLabel(axis: NormalizedModel["provenance"]["sourceAxis"]) {
     : "right-handed, Y up";
 }
 
+function sourceResolutionLabel(
+  resolution: NormalizedModel["provenance"]["sourceResolution"]["unit"],
+) {
+  return resolution === "declared"
+    ? "default"
+    : resolution === "user"
+      ? "expert selection"
+      : "embedded";
+}
+
 function transformRows(transform: readonly number[]) {
   return [0, 1, 2, 3].map((row) =>
     [0, 1, 2, 3]
@@ -520,6 +598,134 @@ function transformRows(transform: readonly number[]) {
 
 function portableValue(value: unknown) {
   return JSON.stringify(value);
+}
+
+function conciseNumber(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: Math.abs(value) < 10 ? 2 : 1,
+  }).format(value);
+}
+
+function conciseDelta(delta: NumericDelta, unit = "") {
+  if (delta.direction === "unchanged") return "No change";
+  const prefix = delta.difference > 0 ? "+" : "";
+  return `${prefix}${conciseNumber(delta.difference)}${unit}`;
+}
+
+function volumeReasonLabel(reason: string) {
+  return (
+    {
+      "empty-geometry": "empty geometry",
+      "degenerate-triangles": "degenerate triangles",
+      "boundary-edges": "open boundary edges",
+      "non-manifold-edges": "non-manifold edges",
+      "inconsistent-orientation": "inconsistent orientation",
+    }[reason] ?? reason.replaceAll("-", " ")
+  );
+}
+
+function GeometrySummary({
+  summary,
+}: {
+  summary: ModelComparisonPresentationSummary;
+}) {
+  const baselineDimensions = summary.baseline.bounds.available
+    ? summary.baseline.bounds.dimensionsMillimetres
+        .map(conciseNumber)
+        .join(" × ")
+    : "Unavailable";
+  const candidateDimensions = summary.candidate.bounds.available
+    ? summary.candidate.bounds.dimensionsMillimetres
+        .map(conciseNumber)
+        .join(" × ")
+    : "Unavailable";
+  const dimensionDelta = summary.deltas.dimensionsMillimetres.available
+    ? [
+        summary.deltas.dimensionsMillimetres.x,
+        summary.deltas.dimensionsMillimetres.y,
+        summary.deltas.dimensionsMillimetres.z,
+      ].every((delta) => delta.direction === "unchanged")
+      ? "No change"
+      : [
+          summary.deltas.dimensionsMillimetres.x,
+          summary.deltas.dimensionsMillimetres.y,
+          summary.deltas.dimensionsMillimetres.z,
+        ]
+          .map(
+            (delta, index) =>
+              `${["X", "Y", "Z"][index]} ${conciseDelta(delta)}`,
+          )
+          .join(" · ")
+    : "Unavailable";
+  const baselineVolume = summary.baseline.volume.available
+    ? conciseNumber(summary.baseline.volume.absoluteCubicMillimetres)
+    : "Not valid";
+  const candidateVolume = summary.candidate.volume.available
+    ? conciseNumber(summary.candidate.volume.absoluteCubicMillimetres)
+    : "Not valid";
+  const volumeDelta = summary.deltas.absoluteVolumeCubicMillimetres.available
+    ? conciseDelta(summary.deltas.absoluteVolumeCubicMillimetres, " mm³")
+    : "Unavailable";
+  return (
+    <section
+      className="geometry-summary"
+      aria-labelledby="geometry-summary-title"
+    >
+      <h3 id="geometry-summary-title">Geometry</h3>
+      <div className="geometry-table" role="table">
+        <div className="geometry-table-head" role="row">
+          <span role="columnheader">Measure</span>
+          <span role="columnheader">Reference → revision</span>
+          <span role="columnheader">Delta</span>
+        </div>
+        <div role="row">
+          <strong role="rowheader">Size (mm)</strong>
+          <span>
+            {baselineDimensions} → {candidateDimensions}
+          </span>
+          <span>{dimensionDelta}</span>
+        </div>
+        <div role="row">
+          <strong role="rowheader">Triangles</strong>
+          <span>
+            {summary.baseline.triangleCount} → {summary.candidate.triangleCount}
+          </span>
+          <span>{conciseDelta(summary.deltas.triangleCount)}</span>
+        </div>
+        <div role="row">
+          <strong role="rowheader">Area (mm²)</strong>
+          <span>
+            {conciseNumber(summary.baseline.surfaceAreaSquareMillimetres)} →{" "}
+            {conciseNumber(summary.candidate.surfaceAreaSquareMillimetres)}
+          </span>
+          <span>
+            {conciseDelta(summary.deltas.surfaceAreaSquareMillimetres, " mm²")}
+          </span>
+        </div>
+        <div role="row">
+          <strong role="rowheader">Volume (mm³)</strong>
+          <span>
+            {baselineVolume} → {candidateVolume}
+          </span>
+          <span>{volumeDelta}</span>
+        </div>
+      </div>
+      {(!summary.baseline.volume.available ||
+        !summary.candidate.volume.available) && (
+        <p>
+          Volume withheld
+          {!summary.baseline.volume.available &&
+            ` · Ref: ${summary.baseline.volume.reasons
+              .map(volumeReasonLabel)
+              .join(", ")}`}
+          {!summary.candidate.volume.available &&
+            ` · Rev: ${summary.candidate.volume.reasons
+              .map(volumeReasonLabel)
+              .join(", ")}`}
+        </p>
+      )}
+    </section>
+  );
 }
 
 function ModelEvidence({
@@ -539,14 +745,14 @@ function ModelEvidence({
           <dt>Selected source unit</dt>
           <dd>
             {sourceUnitLabel(provenance.sourceUnit)} ·{" "}
-            {provenance.sourceResolution.unit}
+            {sourceResolutionLabel(provenance.sourceResolution.unit)}
           </dd>
         </div>
         <div>
           <dt>Selected source up-axis</dt>
           <dd>
             {sourceAxisLabel(provenance.sourceAxis)} ·{" "}
-            {provenance.sourceResolution.axis}
+            {sourceResolutionLabel(provenance.sourceResolution.axis)}
           </dd>
         </div>
         <div>
@@ -720,6 +926,11 @@ export function Workbench({
   );
   const [camera, setCamera] = useState(initial);
   const [clip, setClip] = useState(100);
+  const [paletteId, setPaletteId] = useState<ModelPaletteId>("neutral");
+  const presentation = useMemo(
+    () => summarizeModelComparison(baseline, candidate, analysis),
+    [analysis, baseline, candidate],
+  );
   const ordered: RegionId[] =
     analysis.outcome.state === "complete"
       ? analysis.outcome.orderedRegionIds
@@ -796,6 +1007,42 @@ export function Workbench({
     analysis.outcome.state === "complete"
       ? analysis.outcome.semantics.replaceAll("-", " ")
       : "indeterminate";
+  const selectedRegion = selected ? regions.get(selected) : undefined;
+  const tolerance = analysis.outcome.requestedTolerance.distanceMillimetres;
+  const renderViewport = (kind: ViewKind) => (
+    <section className={`viewport viewport-${kind}`} key={kind}>
+      <header>
+        <span>
+          {kind === "difference"
+            ? "Analysis"
+            : kind === "baseline"
+              ? "Reference"
+              : "Revision"}
+        </span>
+        <h2>{kind[0]!.toLocaleUpperCase("en-US") + kind.slice(1)}</h2>
+      </header>
+      <div className="viewport-canvas">
+        <Scene
+          kind={kind}
+          baseline={baseline}
+          candidate={candidate}
+          analysis={analysis}
+          camera={camera}
+          clip={clip}
+          selected={selected}
+          publish={publish}
+          select={select}
+          origin={origin}
+          renderable={renderFrame.renderable}
+          sceneSize={renderFrame.size}
+          palette={modelPalettes[paletteId]}
+        />
+        <span className="canvas-scroll-pad" aria-hidden="true">
+          <i />
+        </span>
+      </div>
+    </section>
+  );
   return (
     <section
       className={`workbench workbench-${variant}`}
@@ -819,7 +1066,7 @@ export function Workbench({
               }))
             }
           >
-            Fit all {enableKeyboardShortcuts && <kbd>F</kbd>}
+            Reset camera {enableKeyboardShortcuts && <kbd>F</kbd>}
           </button>
           {onReset && (
             <button
@@ -834,115 +1081,176 @@ export function Workbench({
         </div>
       </header>
       <div className="workbench-toolbar">
-        <label>
-          Cross section{" "}
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={clip}
-            onChange={(event) => setClip(Number(event.currentTarget.value))}
-          />
-          <output>{clip === 100 ? "Off" : `${clip}%`}</output>
-        </label>
+        <div className="toolbar-controls">
+          <label>
+            Cross section{" "}
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={clip}
+              onChange={(event) => setClip(Number(event.currentTarget.value))}
+            />
+            <output>{clip === 100 ? "Off" : `${clip}%`}</output>
+          </label>
+          <label>
+            Model colors
+            <select
+              value={paletteId}
+              onChange={(event) =>
+                setPaletteId(event.currentTarget.value as ModelPaletteId)
+              }
+            >
+              {Object.entries(modelPalettes).map(([id, palette]) => (
+                <option value={id} key={id}>
+                  {palette.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         <span>Orbit, pan, and zoom are synchronized across all views.</span>
       </div>
-      <div className="viewport-grid">
-        {(["difference", "baseline", "candidate"] as const).map((kind) => (
-          <section className={`viewport viewport-${kind}`} key={kind}>
-            <header>
-              <span>
-                {kind === "difference"
-                  ? "Analysis"
-                  : kind === "baseline"
-                    ? "Reference"
-                    : "Revision"}
-              </span>
-              <h2>{kind[0]!.toLocaleUpperCase("en-US") + kind.slice(1)}</h2>
-            </header>
-            <div className="viewport-canvas">
-              <Scene
-                kind={kind}
-                baseline={baseline}
-                candidate={candidate}
-                analysis={analysis}
-                camera={camera}
-                clip={clip}
-                selected={selected}
-                publish={publish}
-                select={select}
-                origin={origin}
-                renderable={renderFrame.renderable}
-                sceneSize={renderFrame.size}
-              />
+      <div className="workbench-stage">
+        {renderViewport("difference")}
+        <aside className="evidence-rail" aria-labelledby="findings-title">
+          <header className="evidence-summary">
+            <span className="eyebrow">Comparison summary</span>
+            <h2>
+              {analysis.outcome.state === "complete"
+                ? "Analyzed"
+                : "Needs attention"}
+            </h2>
+            <p>{semantics}</p>
+          </header>
+          <dl className="analysis-stats">
+            <div>
+              <dt>Method</dt>
+              <dd>{analysis.outcome.requestedMethod.id}</dd>
             </div>
-          </section>
-        ))}
-      </div>
-      <aside className="findings" aria-labelledby="findings-title">
-        <header>
-          <div>
-            <span className="eyebrow">Ranked evidence</span>
-            <h2 id="findings-title">Changed regions</h2>
+            <div>
+              <dt>Tolerance</dt>
+              <dd>
+                {tolerance === undefined ? "Configured" : `${tolerance} mm`}
+              </dd>
+            </div>
+            <div>
+              <dt>Warnings</dt>
+              <dd>{analysis.warnings.length}</dd>
+            </div>
+            <div>
+              <dt>Regions</dt>
+              <dd>{ordered.length}</dd>
+            </div>
+          </dl>
+          <div className="change-legend" aria-label="Difference colors">
+            <span>
+              <i className="legend-added" /> Added
+            </span>
+            <span>
+              <i className="legend-removed" /> Removed
+            </span>
+            <span>
+              <i className="legend-shared" /> Shared
+            </span>
           </div>
-          <strong>{ordered.length}</strong>
-        </header>
-        {analysis.outcome.state === "indeterminate" ? (
-          <div className="indeterminate">
-            <h3>Analysis is indeterminate</h3>
-            {analysis.outcome.reasons.map((reason) => (
-              <p key={reason}>{reason}</p>
-            ))}
+          {selectedRegion && (
+            <div className="selected-region" aria-live="polite">
+              <span>Selected region</span>
+              <strong>{selectedRegion.category}</strong>
+              <small>
+                {selectedRegion.metricIds
+                  .map((metricId) => metrics.get(metricId))
+                  .filter((metric) => metric !== undefined)
+                  .map(formatRegionMetric)
+                  .join(" · ") || "Bounded changed region"}
+              </small>
+            </div>
+          )}
+          <div className="findings">
+            <header>
+              <div>
+                <span className="eyebrow">Ranked evidence</span>
+                <h2 id="findings-title">Changed regions</h2>
+              </div>
+              <strong>{ordered.length}</strong>
+            </header>
+            {analysis.outcome.state === "indeterminate" ? (
+              <div className="indeterminate" role="status">
+                <h3>Region analysis unavailable</h3>
+                <strong>{analysis.outcome.code}</strong>
+                {analysis.outcome.reasons.map((reason) => (
+                  <p key={reason}>{reason}</p>
+                ))}
+              </div>
+            ) : ordered.length === 0 ? (
+              <p className="empty-findings">
+                No bounded regions were emitted at this tolerance. This does not
+                prove the models are equivalent.
+              </p>
+            ) : (
+              <ol>
+                {ordered.map((id, index) => {
+                  const region = regions.get(id)!;
+                  return (
+                    <li key={id}>
+                      <button
+                        type="button"
+                        aria-pressed={selected === id}
+                        onClick={() => select(id)}
+                      >
+                        <span className="finding-rank">
+                          {String(index + 1).padStart(2, "0")}
+                        </span>
+                        <i className={`finding-cue cue-${region.category}`} />
+                        <span>
+                          <strong>{region.category}</strong>
+                          <small>
+                            {region.metricIds
+                              .map((metricId) => metrics.get(metricId))
+                              .filter((metric) => metric !== undefined)
+                              .map(formatRegionMetric)
+                              .join(" · ") || "Bounded changed region"}
+                          </small>
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
           </div>
-        ) : (
-          <ol>
-            {ordered.map((id, index) => {
-              const region = regions.get(id)!;
-              return (
-                <li key={id}>
-                  <button
-                    type="button"
-                    aria-pressed={selected === id}
-                    onClick={() => select(id)}
-                  >
-                    <span className="finding-rank">
-                      {String(index + 1).padStart(2, "0")}
-                    </span>
-                    <i className={`finding-cue cue-${region.category}`} />
-                    <span>
-                      <strong>{region.category}</strong>
-                      <small>
-                        {region.metricIds
-                          .map((metricId) => metrics.get(metricId))
-                          .filter((metric) => metric !== undefined)
-                          .map((metric) =>
-                            formatMetric(metric.value, metric.unit),
-                          )
-                          .join(" · ") || "Bounded changed region"}
-                      </small>
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
-        )}
-      </aside>
-      <AnalysisEvidence analysis={analysis} />
-      <section aria-labelledby="import-evidence-title">
-        <header className="section-heading">
-          <span className="eyebrow">Source evidence</span>
-          <h2 id="import-evidence-title">Import interpretation</h2>
-          <p>
-            Review the source frame, normalization, warnings, and provenance
-            used for this result.
-          </p>
-        </header>
-        <div className="file-grid">
-          <ModelEvidence label="Baseline" model={baseline} />
-          <ModelEvidence label="Candidate" model={candidate} />
+          <GeometrySummary summary={presentation} />
+        </aside>
+        <div className="source-views">
+          {renderViewport("baseline")}
+          {renderViewport("candidate")}
         </div>
-      </section>
+      </div>
+      <a className="details-jump" href="#analysis-details">
+        View analysis details ↓
+      </a>
+      <details className="technical-details" id="analysis-details">
+        <summary>Analysis details</summary>
+        <AnalysisEvidence analysis={analysis} />
+      </details>
+      <details className="technical-details">
+        <summary>Import and provenance details</summary>
+        <section aria-labelledby="import-evidence-title">
+          <header className="section-heading evidence-heading">
+            <span className="eyebrow">Source evidence</span>
+            <h2 id="import-evidence-title">Import interpretation</h2>
+            <p>
+              Source frame, normalization, warnings, and provenance retained for
+              this result.
+            </p>
+          </header>
+          <div className="file-grid">
+            <ModelEvidence label="Baseline" model={baseline} />
+            <ModelEvidence label="Candidate" model={candidate} />
+          </div>
+        </section>
+      </details>
       <footer className="workbench-footer">
         <span>
           <strong>Baseline:</strong> {baseline.provenance.sourceName}

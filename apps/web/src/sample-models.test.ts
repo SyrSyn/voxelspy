@@ -25,8 +25,9 @@ async function importSample(
       sourceName: source.file.name,
       bytes,
       options: {
-        userUnit: source.unit,
-        userAxis: source.axis,
+        ...(source.frameSource === "expert"
+          ? { userUnit: source.unit, userAxis: source.axis }
+          : { declaredUnit: source.unit, declaredAxis: source.axis }),
         limits: { inputBytes: bytes.byteLength, triangleCount: 500 },
       },
     }),

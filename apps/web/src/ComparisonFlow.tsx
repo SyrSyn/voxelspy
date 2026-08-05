@@ -32,9 +32,20 @@ type SourceSelection = {
   file: File | null;
   unit: ResolvedSourceUnit | "";
   axis: ResolvedSourceAxis | "";
+  frameSource: "default" | "expert";
 };
 
-const emptySource = (): SourceSelection => ({ file: null, unit: "", axis: "" });
+const defaultSourceFrame = {
+  unit: "millimetre",
+  axis: "right-handed-z-up",
+  frameSource: "default",
+} as const satisfies Pick<SourceSelection, "unit" | "axis" | "frameSource">;
+
+export function sourceSelectionForFile(file: File | null): SourceSelection {
+  return { file, ...defaultSourceFrame };
+}
+
+const emptySource = (): SourceSelection => sourceSelectionForFile(null);
 
 export function sourceCapability(selection: SourceSelection) {
   if (!selection.file)
@@ -59,7 +70,10 @@ export function sourceCapability(selection: SourceSelection) {
     };
   return {
     ready: true,
-    message: "Supported mesh format with an explicit source frame.",
+    message:
+      selection.frameSource === "default"
+        ? "Ready for local comparison using millimetres and right-handed Z-up."
+        : "Ready for local comparison using the selected expert source frame.",
   };
 }
 
@@ -89,57 +103,62 @@ function SourceCard({
           type="file"
           accept=".stl,.obj"
           onChange={(event) =>
-            update({
-              file: event.currentTarget.files?.[0] ?? null,
-              unit: "",
-              axis: "",
-            })
+            update(
+              sourceSelectionForFile(event.currentTarget.files?.[0] ?? null),
+            )
           }
         />
         <span className="button button-secondary" aria-hidden="true">
           Browse this device
         </span>
       </label>
-      <div className="source-frame">
-        <label>
-          Source unit
-          <select
-            value={selection.unit}
-            onChange={(event) =>
-              update({
-                ...selection,
-                unit: event.currentTarget.value as SourceSelection["unit"],
-              })
-            }
-          >
-            <option value="">Choose unit</option>
-            {units.map((unit) => (
-              <option key={unit.value} value={unit.value}>
-                {unit.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Source up-axis
-          <select
-            value={selection.axis}
-            onChange={(event) =>
-              update({
-                ...selection,
-                axis: event.currentTarget.value as SourceSelection["axis"],
-              })
-            }
-          >
-            <option value="">Choose axis</option>
-            {axes.map((axis) => (
-              <option key={axis.value} value={axis.value}>
-                {axis.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      <details>
+        <summary>Expert settings</summary>
+        <p>
+          Change these only when the source uses a different unit or up-axis.
+          The selected values are recorded with the comparison.
+        </p>
+        <div className="source-frame">
+          <label>
+            Source unit
+            <select
+              value={selection.unit}
+              onChange={(event) =>
+                update({
+                  ...selection,
+                  unit: event.currentTarget.value as SourceSelection["unit"],
+                  frameSource: "expert",
+                })
+              }
+            >
+              {units.map((unit) => (
+                <option key={unit.value} value={unit.value}>
+                  {unit.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Source up-axis
+            <select
+              value={selection.axis}
+              onChange={(event) =>
+                update({
+                  ...selection,
+                  axis: event.currentTarget.value as SourceSelection["axis"],
+                  frameSource: "expert",
+                })
+              }
+            >
+              {axes.map((axis) => (
+                <option key={axis.value} value={axis.value}>
+                  {axis.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </details>
       <p
         className={
           capability.ready ? "capability capability-ready" : "capability"
@@ -233,10 +252,11 @@ export function ComparisonFlow() {
       <section className="comparison-card" aria-labelledby="choose-title">
         <div className="section-heading">
           <span className="step">Step 01</span>
-          <h2 id="choose-title">Choose and interpret source files</h2>
+          <h2 id="choose-title">Choose source files</h2>
           <p>
-            STL and OBJ do not carry authoritative units or up-axis metadata.
-            Confirm both explicitly before analysis.
+            Select two supported files to compare immediately using common
+            millimetre and right-handed Z-up defaults. If a source uses a
+            different frame, adjust its Expert settings first.
           </p>
         </div>
         <div className="file-grid">
@@ -267,7 +287,7 @@ export function ComparisonFlow() {
             {progress?.message ??
               (ready
                 ? "Inputs pass capability preflight"
-                : "Complete both source interpretations")}
+                : "Choose both source files")}
           </span>
           <button
             className="button button-primary"

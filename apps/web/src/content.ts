@@ -18,14 +18,14 @@ export const docs: DocPage[] = [
         title: "Choose a baseline and candidate",
         paragraphs: [
           "The baseline is the model you trust. The candidate is the revision you want to inspect. Choose both from your device; normal comparison keeps their geometry in your browser.",
-          "Use models with known units and coordinate systems. VoxelSpy preserves source meaning instead of silently shifting or resizing either model.",
+          "The import starts with common millimetre and right-handed Z-up settings. If either source uses a different frame, change its Expert settings before comparison; the selected interpretation remains attached to the result.",
         ],
       },
       {
         id: "review-import",
         title: "Review the import",
         paragraphs: [
-          "Confirm units, coordinate transforms, unsupported content, and approximation warnings before interpreting a difference. Corrections are deliberate inputs and remain visible in the result.",
+          "Review the interpreted units, coordinate transforms, unsupported content, and approximation warnings before relying on a difference. Corrections are deliberate inputs and remain visible in the result.",
         ],
       },
       {
