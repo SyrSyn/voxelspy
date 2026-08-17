@@ -1,26 +1,21 @@
-import type { Vec3 } from "@voxelspy/contracts";
-
 import { pointTriangleDistanceSquared } from "./geometry.js";
-import type { Triangle } from "./geometry.js";
+import type { FlatGeometry, WorkUnitCounter } from "./geometry.js";
+
+export type { WorkUnitCounter } from "./geometry.js";
 
 const LEAF_TRIANGLE_COUNT = 8;
 const MORTON_AXIS_SCALE = 1023;
 
-export interface WorkUnitCounter {
-  charge(units: number): void;
+interface Bounds6 {
+  readonly minX: number;
+  readonly minY: number;
+  readonly minZ: number;
+  readonly maxX: number;
+  readonly maxY: number;
+  readonly maxZ: number;
 }
 
-interface TriangleEntry {
-  readonly triangle: Triangle;
-  readonly minimum: Vec3;
-  readonly maximum: Vec3;
-  readonly centroid: Vec3;
-  mortonCode: number;
-}
-
-interface SpatialNode {
-  readonly minimum: Vec3;
-  readonly maximum: Vec3;
+interface SpatialNode extends Bounds6 {
   readonly start: number;
   readonly end: number;
   readonly left?: SpatialNode;
@@ -37,49 +32,161 @@ export function spatialIndexBuildWorkUnits(triangleCount: number): number {
   return triangleCount * (4 + levels * 2);
 }
 
-/** Exact nearest-triangle queries accelerated by a deterministic AABB tree. */
+/**
+ * Exact nearest-triangle queries accelerated by a deterministic AABB tree.
+ *
+ * Holds only a Uint32Array triangle-order permutation and a bounded BVH node
+ * tree; triangle vertex coordinates are read on demand from the source
+ * `FlatGeometry`'s typed arrays rather than duplicated per entry.
+ */
 export class TriangleSpatialIndex {
-  readonly #entries: TriangleEntry[];
+  readonly #geometry: FlatGeometry;
+  readonly #order: Uint32Array;
   readonly #root: SpatialNode;
 
-  constructor(triangles: readonly Triangle[], work: WorkUnitCounter) {
-    work.charge(spatialIndexBuildWorkUnits(triangles.length));
-    this.#entries = triangles.map(triangleEntry);
-    const centroidBounds = boundsOfEntries(this.#entries, true);
-    for (const entry of this.#entries) {
-      entry.mortonCode = mortonCode(entry.centroid, centroidBounds);
+  constructor(geometry: FlatGeometry, work: WorkUnitCounter) {
+    const triangleCount = geometry.triangleCount;
+    work.charge(spatialIndexBuildWorkUnits(triangleCount));
+    if (triangleCount === 0) {
+      throw new Error("Cannot index an empty surface.");
     }
-    this.#entries.sort(
-      (left, right) =>
-        left.mortonCode - right.mortonCode ||
-        left.triangle.index - right.triangle.index,
+    this.#geometry = geometry;
+
+    const minX = new Float64Array(triangleCount);
+    const minY = new Float64Array(triangleCount);
+    const minZ = new Float64Array(triangleCount);
+    const maxX = new Float64Array(triangleCount);
+    const maxY = new Float64Array(triangleCount);
+    const maxZ = new Float64Array(triangleCount);
+    const centroidX = new Float64Array(triangleCount);
+    const centroidY = new Float64Array(triangleCount);
+    const centroidZ = new Float64Array(triangleCount);
+
+    let centroidBoundsMinX = Number.POSITIVE_INFINITY;
+    let centroidBoundsMinY = Number.POSITIVE_INFINITY;
+    let centroidBoundsMinZ = Number.POSITIVE_INFINITY;
+    let centroidBoundsMaxX = Number.NEGATIVE_INFINITY;
+    let centroidBoundsMaxY = Number.NEGATIVE_INFINITY;
+    let centroidBoundsMaxZ = Number.NEGATIVE_INFINITY;
+
+    const positions = geometry.positions;
+    const indices = geometry.indices;
+    for (let triangle = 0; triangle < triangleCount; triangle += 1) {
+      const base = triangle * 3;
+      const ia = indices[base]!;
+      const ib = indices[base + 1]!;
+      const ic = indices[base + 2]!;
+      const ax = positions[ia * 3]!;
+      const ay = positions[ia * 3 + 1]!;
+      const az = positions[ia * 3 + 2]!;
+      const bx = positions[ib * 3]!;
+      const by = positions[ib * 3 + 1]!;
+      const bz = positions[ib * 3 + 2]!;
+      const cx = positions[ic * 3]!;
+      const cy = positions[ic * 3 + 1]!;
+      const cz = positions[ic * 3 + 2]!;
+
+      const mnx = Math.min(ax, bx, cx);
+      const mny = Math.min(ay, by, cy);
+      const mnz = Math.min(az, bz, cz);
+      const mxx = Math.max(ax, bx, cx);
+      const mxy = Math.max(ay, by, cy);
+      const mxz = Math.max(az, bz, cz);
+      minX[triangle] = mnx;
+      minY[triangle] = mny;
+      minZ[triangle] = mnz;
+      maxX[triangle] = mxx;
+      maxY[triangle] = mxy;
+      maxZ[triangle] = mxz;
+
+      const cx2 = (mnx + mxx) / 2;
+      const cy2 = (mny + mxy) / 2;
+      const cz2 = (mnz + mxz) / 2;
+      centroidX[triangle] = cx2;
+      centroidY[triangle] = cy2;
+      centroidZ[triangle] = cz2;
+      if (cx2 < centroidBoundsMinX) centroidBoundsMinX = cx2;
+      if (cy2 < centroidBoundsMinY) centroidBoundsMinY = cy2;
+      if (cz2 < centroidBoundsMinZ) centroidBoundsMinZ = cz2;
+      if (cx2 > centroidBoundsMaxX) centroidBoundsMaxX = cx2;
+      if (cy2 > centroidBoundsMaxY) centroidBoundsMaxY = cy2;
+      if (cz2 > centroidBoundsMaxZ) centroidBoundsMaxZ = cz2;
+    }
+
+    const mortonCodes = new Uint32Array(triangleCount);
+    for (let triangle = 0; triangle < triangleCount; triangle += 1) {
+      mortonCodes[triangle] = mortonCode(
+        centroidX[triangle]!,
+        centroidY[triangle]!,
+        centroidZ[triangle]!,
+        centroidBoundsMinX,
+        centroidBoundsMinY,
+        centroidBoundsMinZ,
+        centroidBoundsMaxX,
+        centroidBoundsMaxY,
+        centroidBoundsMaxZ,
+      );
+    }
+
+    const order = new Uint32Array(triangleCount);
+    for (let triangle = 0; triangle < triangleCount; triangle += 1) {
+      order[triangle] = triangle;
+    }
+    order.sort((left, right) => {
+      const diff = mortonCodes[left]! - mortonCodes[right]!;
+      return diff !== 0 ? diff : left - right;
+    });
+    this.#order = order;
+
+    this.#root = buildNode(
+      order,
+      minX,
+      minY,
+      minZ,
+      maxX,
+      maxY,
+      maxZ,
+      0,
+      triangleCount,
     );
-    this.#root = buildNode(this.#entries, 0, this.#entries.length);
   }
 
-  distance(point: Vec3, work: WorkUnitCounter): number {
+  distance(px: number, py: number, pz: number, work: WorkUnitCounter): number {
+    const geometry = this.#geometry;
+    const order = this.#order;
+    const positions = geometry.positions;
+    const indices = geometry.indices;
     let minimumSquared = Number.POSITIVE_INFINITY;
     const stack: SpatialNode[] = [this.#root];
     while (stack.length > 0) {
       const node = stack.pop()!;
       work.charge(1);
-      if (distanceToBoundsSquared(point, node) > minimumSquared) continue;
+      if (distanceToBoundsSquared(px, py, pz, node) > minimumSquared) continue;
 
       if (node.left === undefined || node.right === undefined) {
         for (let index = node.start; index < node.end; index += 1) {
           work.charge(1);
-          const triangle = this.#entries[index]!.triangle;
-          const [first, second, third] = triangle.points;
-          minimumSquared = Math.min(
-            minimumSquared,
-            pointTriangleDistanceSquared(point, first, second, third),
+          const triangle = order[index]!;
+          const base = triangle * 3;
+          const ia = indices[base]!;
+          const ib = indices[base + 1]!;
+          const ic = indices[base + 2]!;
+          const squared = pointTriangleDistanceSquared(
+            px,
+            py,
+            pz,
+            positions,
+            ia,
+            ib,
+            ic,
           );
+          if (squared < minimumSquared) minimumSquared = squared;
         }
         continue;
       }
 
-      const leftDistance = distanceToBoundsSquared(point, node.left);
-      const rightDistance = distanceToBoundsSquared(point, node.right);
+      const leftDistance = distanceToBoundsSquared(px, py, pz, node.left);
+      const rightDistance = distanceToBoundsSquared(px, py, pz, node.right);
       if (leftDistance <= rightDistance) {
         if (rightDistance <= minimumSquared) stack.push(node.right);
         if (leftDistance <= minimumSquared) stack.push(node.left);
@@ -97,110 +204,122 @@ export class TriangleSpatialIndex {
   }
 }
 
-function triangleEntry(triangle: Triangle): TriangleEntry {
-  const [first, second, third] = triangle.points;
-  const minimum: Vec3 = [
-    Math.min(first[0], second[0], third[0]),
-    Math.min(first[1], second[1], third[1]),
-    Math.min(first[2], second[2], third[2]),
-  ];
-  const maximum: Vec3 = [
-    Math.max(first[0], second[0], third[0]),
-    Math.max(first[1], second[1], third[1]),
-    Math.max(first[2], second[2], third[2]),
-  ];
-  return {
-    triangle,
-    minimum,
-    maximum,
-    centroid: [
-      (minimum[0] + maximum[0]) / 2,
-      (minimum[1] + maximum[1]) / 2,
-      (minimum[2] + maximum[2]) / 2,
-    ],
-    mortonCode: 0,
-  };
-}
-
 function buildNode(
-  entries: readonly TriangleEntry[],
+  order: Uint32Array,
+  minX: Float64Array,
+  minY: Float64Array,
+  minZ: Float64Array,
+  maxX: Float64Array,
+  maxY: Float64Array,
+  maxZ: Float64Array,
   start: number,
   end: number,
 ): SpatialNode {
   if (end - start <= LEAF_TRIANGLE_COUNT) {
-    return { ...boundsOfEntries(entries, false, start, end), start, end };
+    const bounds = boundsOfRange(
+      order,
+      minX,
+      minY,
+      minZ,
+      maxX,
+      maxY,
+      maxZ,
+      start,
+      end,
+    );
+    return { ...bounds, start, end };
   }
   const middle = start + Math.floor((end - start) / 2);
-  const left = buildNode(entries, start, middle);
-  const right = buildNode(entries, middle, end);
-  return {
-    ...mergeBounds(left, right),
+  const left = buildNode(
+    order,
+    minX,
+    minY,
+    minZ,
+    maxX,
+    maxY,
+    maxZ,
     start,
+    middle,
+  );
+  const right = buildNode(
+    order,
+    minX,
+    minY,
+    minZ,
+    maxX,
+    maxY,
+    maxZ,
+    middle,
     end,
-    left,
-    right,
-  };
+  );
+  return { ...mergeBounds(left, right), start, end, left, right };
 }
 
-function mergeBounds(
-  left: { readonly minimum: Vec3; readonly maximum: Vec3 },
-  right: { readonly minimum: Vec3; readonly maximum: Vec3 },
-): { minimum: Vec3; maximum: Vec3 } {
-  return {
-    minimum: [
-      Math.min(left.minimum[0], right.minimum[0]),
-      Math.min(left.minimum[1], right.minimum[1]),
-      Math.min(left.minimum[2], right.minimum[2]),
-    ],
-    maximum: [
-      Math.max(left.maximum[0], right.maximum[0]),
-      Math.max(left.maximum[1], right.maximum[1]),
-      Math.max(left.maximum[2], right.maximum[2]),
-    ],
-  };
-}
-
-function boundsOfEntries(
-  entries: readonly TriangleEntry[],
-  useCentroids: boolean,
-  start = 0,
-  end = entries.length,
-): { minimum: Vec3; maximum: Vec3 } {
-  const first = entries[start];
-  if (first === undefined) throw new Error("Cannot index an empty surface.");
-  const firstMinimum = useCentroids ? first.centroid : first.minimum;
-  const firstMaximum = useCentroids ? first.centroid : first.maximum;
-  const minimum: Vec3 = [...firstMinimum] as Vec3;
-  const maximum: Vec3 = [...firstMaximum] as Vec3;
+function boundsOfRange(
+  order: Uint32Array,
+  minX: Float64Array,
+  minY: Float64Array,
+  minZ: Float64Array,
+  maxX: Float64Array,
+  maxY: Float64Array,
+  maxZ: Float64Array,
+  start: number,
+  end: number,
+): Bounds6 {
+  const first = order[start]!;
+  let mnx = minX[first]!;
+  let mny = minY[first]!;
+  let mnz = minZ[first]!;
+  let mxx = maxX[first]!;
+  let mxy = maxY[first]!;
+  let mxz = maxZ[first]!;
   for (let index = start + 1; index < end; index += 1) {
-    const entry = entries[index]!;
-    const nextMinimum = useCentroids ? entry.centroid : entry.minimum;
-    const nextMaximum = useCentroids ? entry.centroid : entry.maximum;
-    for (let axis = 0; axis < 3; axis += 1) {
-      minimum[axis] = Math.min(minimum[axis]!, nextMinimum[axis]!);
-      maximum[axis] = Math.max(maximum[axis]!, nextMaximum[axis]!);
-    }
+    const triangle = order[index]!;
+    mnx = Math.min(mnx, minX[triangle]!);
+    mny = Math.min(mny, minY[triangle]!);
+    mnz = Math.min(mnz, minZ[triangle]!);
+    mxx = Math.max(mxx, maxX[triangle]!);
+    mxy = Math.max(mxy, maxY[triangle]!);
+    mxz = Math.max(mxz, maxZ[triangle]!);
   }
-  return { minimum, maximum };
+  return { minX: mnx, minY: mny, minZ: mnz, maxX: mxx, maxY: mxy, maxZ: mxz };
+}
+
+function mergeBounds(left: Bounds6, right: Bounds6): Bounds6 {
+  return {
+    minX: Math.min(left.minX, right.minX),
+    minY: Math.min(left.minY, right.minY),
+    minZ: Math.min(left.minZ, right.minZ),
+    maxX: Math.max(left.maxX, right.maxX),
+    maxY: Math.max(left.maxY, right.maxY),
+    maxZ: Math.max(left.maxZ, right.maxZ),
+  };
 }
 
 function mortonCode(
-  point: Vec3,
-  bounds: { readonly minimum: Vec3; readonly maximum: Vec3 },
+  x: number,
+  y: number,
+  z: number,
+  minX: number,
+  minY: number,
+  minZ: number,
+  maxX: number,
+  maxY: number,
+  maxZ: number,
 ): number {
-  const coordinate = (axis: number) => {
-    const span = bounds.maximum[axis]! - bounds.minimum[axis]!;
+  const coordinate = (value: number, minimum: number, maximum: number) => {
+    const span = maximum - minimum;
     if (!(span > 0)) return 0;
-    const normalized = (point[axis]! - bounds.minimum[axis]!) / span;
+    const normalized = (value - minimum) / span;
     return Math.max(
       0,
       Math.min(MORTON_AXIS_SCALE, Math.floor(normalized * MORTON_AXIS_SCALE)),
     );
   };
   return (
-    (expandMortonBits(coordinate(0)) |
-      (expandMortonBits(coordinate(1)) << 1) |
-      (expandMortonBits(coordinate(2)) << 2)) >>>
+    (expandMortonBits(coordinate(x, minX, maxX)) |
+      (expandMortonBits(coordinate(y, minY, maxY)) << 1) |
+      (expandMortonBits(coordinate(z, minZ, maxZ)) << 2)) >>>
     0
   );
 }
@@ -215,19 +334,28 @@ function expandMortonBits(value: number): number {
 }
 
 function distanceToBoundsSquared(
-  point: Vec3,
-  bounds: { readonly minimum: Vec3; readonly maximum: Vec3 },
+  px: number,
+  py: number,
+  pz: number,
+  bounds: Bounds6,
 ): number {
-  let distance = 0;
-  for (let axis = 0; axis < 3; axis += 1) {
-    const value = point[axis]!;
-    const offset =
-      value < bounds.minimum[axis]!
-        ? bounds.minimum[axis]! - value
-        : value > bounds.maximum[axis]!
-          ? value - bounds.maximum[axis]!
-          : 0;
-    distance += offset * offset;
-  }
-  return distance;
+  const dx =
+    px < bounds.minX
+      ? bounds.minX - px
+      : px > bounds.maxX
+        ? px - bounds.maxX
+        : 0;
+  const dy =
+    py < bounds.minY
+      ? bounds.minY - py
+      : py > bounds.maxY
+        ? py - bounds.maxY
+        : 0;
+  const dz =
+    pz < bounds.minZ
+      ? bounds.minZ - pz
+      : pz > bounds.maxZ
+        ? pz - bounds.maxZ
+        : 0;
+  return dx * dx + dy * dy + dz * dz;
 }

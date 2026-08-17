@@ -6,19 +6,41 @@ import type {
   Vec3,
 } from "@voxelspy/contracts";
 
-export interface Triangle {
-  readonly index: number;
-  readonly vertices: readonly [number, number, number];
-  readonly points: readonly [Vec3, Vec3, Vec3];
-  readonly area: number;
+/** A charge-before-work budget shared by preprocessing and analysis phases. */
+export interface WorkUnitCounter {
+  charge(units: number): void;
 }
 
+/**
+ * Flattened comparison-frame geometry backed by typed arrays.
+ *
+ * `positions` packs one Float64 triple per vertex (`[x0,y0,z0,x1,y1,z1,...]`,
+ * length `vertexCount * 3`). `indices` packs one Uint32 triple per triangle
+ * (`[a0,b0,c0,a1,b1,c1,...]`, length `triangleCount * 3`), each entry a
+ * vertex index into `positions`. Neither array is ever copied into
+ * per-vertex or per-triangle JS objects; downstream consumers read
+ * coordinates directly by index.
+ */
 export interface FlatGeometry {
-  readonly points: readonly Vec3[];
-  readonly triangles: readonly Triangle[];
+  readonly positions: Float64Array;
+  readonly indices: Uint32Array;
+  readonly vertexCount: number;
+  readonly triangleCount: number;
 }
 
 const IDENTITY: Mat4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+/** Charged per vertex streamed through the comparison transform. */
+const FLATTEN_VERTEX_WORK_UNITS = 2;
+/** Charged per triangle whose indices are copied into the flattened buffer. */
+const FLATTEN_TRIANGLE_WORK_UNITS = 1;
+/**
+ * Preprocessing charges are applied in chunks of this many elements rather
+ * than per element (to avoid millions of `charge` calls) or as one lump sum
+ * for the whole model (so a budget too small to finish flattening still
+ * fails before finishing it, not merely before starting).
+ */
+const PREPROCESSING_CHUNK_ELEMENTS = 1024;
 
 export function countExpandedGeometry(model: NormalizedModel): {
   vertices: number;
@@ -38,54 +60,45 @@ export function countExpandedGeometry(model: NormalizedModel): {
   return { vertices, triangles };
 }
 
+interface QueuedInstance {
+  readonly meshId: string;
+  readonly transform: AffineTransform;
+}
+
+/**
+ * Flattens a model's mesh instances into one comparison-frame typed-array
+ * buffer. The mesh-instance walk itself is O(instances): mesh sizes come
+ * from typed-array `.length`, never per-element iteration. The O(vertices +
+ * triangles) work is the transform-and-copy fill pass below, which charges
+ * `work` in chunks before touching each chunk so an insufficient budget
+ * fails closed before most (in the worst case, before any) of that work
+ * runs.
+ */
 export function flattenModel(
   model: NormalizedModel,
   modelToComparison: RigidTransform,
+  work: WorkUnitCounter,
 ): FlatGeometry {
   const meshes = new Map<string, NormalizedModel["meshes"][number]>(
     model.meshes.map((mesh) => [mesh.id, mesh]),
   );
-  const points: Vec3[] = [];
-  const triangleIndices: Array<[number, number, number]> = [];
+  const instances: QueuedInstance[] = [];
 
-  const appendInstance = (meshId: string, instanceToModel: AffineTransform) => {
-    const mesh = meshes.get(meshId);
-    if (mesh === undefined) return;
-    const transform = multiply(modelToComparison, instanceToModel);
-    const offset = points.length;
-    for (
-      let positionIndex = 0;
-      positionIndex < mesh.geometry.positions.length;
-      positionIndex += 3
-    ) {
-      const transformed = transformPoint(transform, [
-        mesh.geometry.positions[positionIndex] ?? 0,
-        mesh.geometry.positions[positionIndex + 1] ?? 0,
-        mesh.geometry.positions[positionIndex + 2] ?? 0,
-      ]);
-      if (!transformed.every(Number.isFinite)) {
-        throw new Error(
-          "A comparison transform produced non-finite coordinates",
-        );
-      }
-      points.push(transformed);
-    }
-    for (let index = 0; index < mesh.geometry.indices.length; index += 3) {
-      triangleIndices.push([
-        offset + (mesh.geometry.indices[index] ?? 0),
-        offset + (mesh.geometry.indices[index + 1] ?? 0),
-        offset + (mesh.geometry.indices[index + 2] ?? 0),
-      ]);
-    }
+  const queueInstance = (meshId: string, instanceToModel: AffineTransform) => {
+    if (!meshes.has(meshId)) return;
+    instances.push({
+      meshId,
+      transform: multiply(modelToComparison, instanceToModel),
+    });
   };
 
   if (model.placement.kind === "flat") {
     for (const instance of model.placement.instances) {
-      appendInstance(instance.meshId, instance.meshToModel);
+      queueInstance(instance.meshId, instance.meshToModel);
     }
   } else {
     const nodes = new Map(model.placement.nodes.map((node) => [node.id, node]));
-    const instances = new Map(
+    const nodeInstances = new Map(
       model.placement.instances.map((instance) => [instance.id, instance]),
     );
     const stack = [...model.placement.rootIds]
@@ -98,9 +111,9 @@ export function flattenModel(
       if (node === undefined) continue;
       const nodeToModel = multiply(current.parentToModel, node.localToParent);
       for (const instanceId of node.instanceIds) {
-        const instance = instances.get(instanceId);
+        const instance = nodeInstances.get(instanceId);
         if (instance !== undefined) {
-          appendInstance(
+          queueInstance(
             instance.meshId,
             multiply(nodeToModel, instance.meshToNode),
           );
@@ -115,18 +128,97 @@ export function flattenModel(
     }
   }
 
-  const triangles = triangleIndices.map((vertices, index): Triangle => {
-    const first = points[vertices[0]]!;
-    const second = points[vertices[1]]!;
-    const third = points[vertices[2]]!;
-    return {
-      index,
-      vertices,
-      points: [first, second, third],
-      area: triangleArea(first, second, third),
-    };
-  });
-  return { points, triangles };
+  let vertexCount = 0;
+  let triangleCount = 0;
+  for (const instance of instances) {
+    const mesh = meshes.get(instance.meshId)!;
+    vertexCount += mesh.geometry.positions.length / 3;
+    triangleCount += mesh.geometry.indices.length / 3;
+  }
+
+  const positions = new Float64Array(vertexCount * 3);
+  const indices = new Uint32Array(triangleCount * 3);
+
+  let vertexOffset = 0;
+  let triangleOffset = 0;
+  for (const instance of instances) {
+    const mesh = meshes.get(instance.meshId)!;
+    const transform = instance.transform;
+    const meshPositions = mesh.geometry.positions;
+    const meshIndices = mesh.geometry.indices;
+    const baseVertex = vertexOffset;
+    const meshVertexCount = meshPositions.length / 3;
+    const meshTriangleCount = meshIndices.length / 3;
+
+    for (
+      let chunkStart = 0;
+      chunkStart < meshVertexCount;
+      chunkStart += PREPROCESSING_CHUNK_ELEMENTS
+    ) {
+      const chunkEnd = Math.min(
+        chunkStart + PREPROCESSING_CHUNK_ELEMENTS,
+        meshVertexCount,
+      );
+      work.charge((chunkEnd - chunkStart) * FLATTEN_VERTEX_WORK_UNITS);
+      for (let vertex = chunkStart; vertex < chunkEnd; vertex += 1) {
+        const px = meshPositions[vertex * 3] ?? 0;
+        const py = meshPositions[vertex * 3 + 1] ?? 0;
+        const pz = meshPositions[vertex * 3 + 2] ?? 0;
+        const tx =
+          (transform[0] ?? 0) * px +
+          (transform[4] ?? 0) * py +
+          (transform[8] ?? 0) * pz +
+          (transform[12] ?? 0);
+        const ty =
+          (transform[1] ?? 0) * px +
+          (transform[5] ?? 0) * py +
+          (transform[9] ?? 0) * pz +
+          (transform[13] ?? 0);
+        const tz =
+          (transform[2] ?? 0) * px +
+          (transform[6] ?? 0) * py +
+          (transform[10] ?? 0) * pz +
+          (transform[14] ?? 0);
+        if (
+          !Number.isFinite(tx) ||
+          !Number.isFinite(ty) ||
+          !Number.isFinite(tz)
+        ) {
+          throw new Error(
+            "A comparison transform produced non-finite coordinates",
+          );
+        }
+        const outBase = vertexOffset * 3;
+        positions[outBase] = tx;
+        positions[outBase + 1] = ty;
+        positions[outBase + 2] = tz;
+        vertexOffset += 1;
+      }
+    }
+
+    for (
+      let chunkStart = 0;
+      chunkStart < meshTriangleCount;
+      chunkStart += PREPROCESSING_CHUNK_ELEMENTS
+    ) {
+      const chunkEnd = Math.min(
+        chunkStart + PREPROCESSING_CHUNK_ELEMENTS,
+        meshTriangleCount,
+      );
+      work.charge((chunkEnd - chunkStart) * FLATTEN_TRIANGLE_WORK_UNITS);
+      for (let triangle = chunkStart; triangle < chunkEnd; triangle += 1) {
+        const outBase = triangleOffset * 3;
+        indices[outBase] = baseVertex + (meshIndices[triangle * 3] ?? 0);
+        indices[outBase + 1] =
+          baseVertex + (meshIndices[triangle * 3 + 1] ?? 0);
+        indices[outBase + 2] =
+          baseVertex + (meshIndices[triangle * 3 + 2] ?? 0);
+        triangleOffset += 1;
+      }
+    }
+  }
+
+  return { positions, indices, vertexCount, triangleCount };
 }
 
 export function multiply(
@@ -147,119 +239,144 @@ export function multiply(
   return output as AffineTransform;
 }
 
-export function transformPoint(matrix: readonly number[], point: Vec3): Vec3 {
-  return [
-    (matrix[0] ?? 0) * point[0] +
-      (matrix[4] ?? 0) * point[1] +
-      (matrix[8] ?? 0) * point[2] +
-      (matrix[12] ?? 0),
-    (matrix[1] ?? 0) * point[0] +
-      (matrix[5] ?? 0) * point[1] +
-      (matrix[9] ?? 0) * point[2] +
-      (matrix[13] ?? 0),
-    (matrix[2] ?? 0) * point[0] +
-      (matrix[6] ?? 0) * point[1] +
-      (matrix[10] ?? 0) * point[2] +
-      (matrix[14] ?? 0),
-  ];
-}
-
-export function triangleArea(first: Vec3, second: Vec3, third: Vec3): number {
-  const ab = subtract(second, first);
-  const ac = subtract(third, first);
-  return Math.hypot(...cross(ab, ac)) / 2;
-}
-
-export function triangleCentroid(triangle: Triangle): Vec3 {
-  const [a, b, c] = triangle.points;
-  return [
-    (a[0] + b[0] + c[0]) / 3,
-    (a[1] + b[1] + c[1]) / 3,
-    (a[2] + b[2] + c[2]) / 3,
-  ];
-}
-
-export function pointTriangleDistanceSquared(
-  point: Vec3,
-  first: Vec3,
-  second: Vec3,
-  third: Vec3,
+/** Triangle area at `triangleIndex`, read directly from typed-array storage. */
+export function triangleAreaAt(
+  geometry: FlatGeometry,
+  triangleIndex: number,
 ): number {
-  const ab = subtract(second, first);
-  const ac = subtract(third, first);
-  const ap = subtract(point, first);
-  const d1 = dot(ab, ap);
-  const d2 = dot(ac, ap);
-  if (d1 <= 0 && d2 <= 0) return squaredLength(ap);
+  const base = triangleIndex * 3;
+  const ia = geometry.indices[base]!;
+  const ib = geometry.indices[base + 1]!;
+  const ic = geometry.indices[base + 2]!;
+  const positions = geometry.positions;
+  const ax = positions[ia * 3]!;
+  const ay = positions[ia * 3 + 1]!;
+  const az = positions[ia * 3 + 2]!;
+  const abx = positions[ib * 3]! - ax;
+  const aby = positions[ib * 3 + 1]! - ay;
+  const abz = positions[ib * 3 + 2]! - az;
+  const acx = positions[ic * 3]! - ax;
+  const acy = positions[ic * 3 + 1]! - ay;
+  const acz = positions[ic * 3 + 2]! - az;
+  const crossX = aby * acz - abz * acy;
+  const crossY = abz * acx - abx * acz;
+  const crossZ = abx * acy - aby * acx;
+  return Math.hypot(crossX, crossY, crossZ) / 2;
+}
 
-  const bp = subtract(point, second);
-  const d3 = dot(ab, bp);
-  const d4 = dot(ac, bp);
-  if (d3 >= 0 && d4 <= d3) return squaredLength(bp);
+/** Triangle centroid at `triangleIndex`. Bounded region-count call sites only. */
+export function triangleCentroidAt(
+  geometry: FlatGeometry,
+  triangleIndex: number,
+): Vec3 {
+  const base = triangleIndex * 3;
+  const ia = geometry.indices[base]!;
+  const ib = geometry.indices[base + 1]!;
+  const ic = geometry.indices[base + 2]!;
+  const positions = geometry.positions;
+  return [
+    (positions[ia * 3]! + positions[ib * 3]! + positions[ic * 3]!) / 3,
+    (positions[ia * 3 + 1]! + positions[ib * 3 + 1]! + positions[ic * 3 + 1]!) /
+      3,
+    (positions[ia * 3 + 2]! + positions[ib * 3 + 2]! + positions[ic * 3 + 2]!) /
+      3,
+  ];
+}
+
+/**
+ * Squared distance from point `(px, py, pz)` to the triangle whose vertex
+ * indices are `ia`, `ib`, `ic` in `positions`. Uses plain scalar arithmetic
+ * throughout -- no intermediate Vec3 allocation -- since this is invoked
+ * once per leaf-triangle candidate per sample point, i.e. potentially
+ * hundreds of millions of times for large comparisons.
+ */
+export function pointTriangleDistanceSquared(
+  px: number,
+  py: number,
+  pz: number,
+  positions: Float64Array,
+  ia: number,
+  ib: number,
+  ic: number,
+): number {
+  const ax = positions[ia * 3]!;
+  const ay = positions[ia * 3 + 1]!;
+  const az = positions[ia * 3 + 2]!;
+  const bx = positions[ib * 3]!;
+  const by = positions[ib * 3 + 1]!;
+  const bz = positions[ib * 3 + 2]!;
+  const cx = positions[ic * 3]!;
+  const cy = positions[ic * 3 + 1]!;
+  const cz = positions[ic * 3 + 2]!;
+
+  const abx = bx - ax;
+  const aby = by - ay;
+  const abz = bz - az;
+  const acx = cx - ax;
+  const acy = cy - ay;
+  const acz = cz - az;
+  const apx = px - ax;
+  const apy = py - ay;
+  const apz = pz - az;
+  const d1 = abx * apx + aby * apy + abz * apz;
+  const d2 = acx * apx + acy * apy + acz * apz;
+  if (d1 <= 0 && d2 <= 0) {
+    return apx * apx + apy * apy + apz * apz;
+  }
+
+  const bpx = px - bx;
+  const bpy = py - by;
+  const bpz = pz - bz;
+  const d3 = abx * bpx + aby * bpy + abz * bpz;
+  const d4 = acx * bpx + acy * bpy + acz * bpz;
+  if (d3 >= 0 && d4 <= d3) {
+    return bpx * bpx + bpy * bpy + bpz * bpz;
+  }
 
   const vc = d1 * d4 - d3 * d2;
   if (vc <= 0 && d1 >= 0 && d3 <= 0) {
-    return squaredLength(
-      subtract(point, add(first, scale(ab, d1 / (d1 - d3)))),
-    );
+    const v = d1 / (d1 - d3);
+    const dx = px - (ax + abx * v);
+    const dy = py - (ay + aby * v);
+    const dz = pz - (az + abz * v);
+    return dx * dx + dy * dy + dz * dz;
   }
 
-  const cp = subtract(point, third);
-  const d5 = dot(ab, cp);
-  const d6 = dot(ac, cp);
-  if (d6 >= 0 && d5 <= d6) return squaredLength(cp);
+  const cpx = px - cx;
+  const cpy = py - cy;
+  const cpz = pz - cz;
+  const d5 = abx * cpx + aby * cpy + abz * cpz;
+  const d6 = acx * cpx + acy * cpy + acz * cpz;
+  if (d6 >= 0 && d5 <= d6) {
+    return cpx * cpx + cpy * cpy + cpz * cpz;
+  }
 
   const vb = d5 * d2 - d1 * d6;
   if (vb <= 0 && d2 >= 0 && d6 <= 0) {
-    return squaredLength(
-      subtract(point, add(first, scale(ac, d2 / (d2 - d6)))),
-    );
+    const w = d2 / (d2 - d6);
+    const dx = px - (ax + acx * w);
+    const dy = py - (ay + acy * w);
+    const dz = pz - (az + acz * w);
+    return dx * dx + dy * dy + dz * dz;
   }
 
   const va = d3 * d6 - d5 * d4;
   if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) {
-    const edge = subtract(third, second);
-    return squaredLength(
-      subtract(
-        point,
-        add(second, scale(edge, (d4 - d3) / (d4 - d3 + d5 - d6))),
-      ),
-    );
+    const edgex = cx - bx;
+    const edgey = cy - by;
+    const edgez = cz - bz;
+    const w = (d4 - d3) / (d4 - d3 + (d5 - d6));
+    const dx = px - (bx + edgex * w);
+    const dy = py - (by + edgey * w);
+    const dz = pz - (bz + edgez * w);
+    return dx * dx + dy * dy + dz * dz;
   }
 
   const denominator = 1 / (va + vb + vc);
-  return squaredLength(
-    subtract(
-      point,
-      add(first, add(scale(ab, vb * denominator), scale(ac, vc * denominator))),
-    ),
-  );
-}
-
-function subtract(left: Vec3, right: Vec3): Vec3 {
-  return [left[0] - right[0], left[1] - right[1], left[2] - right[2]];
-}
-
-function add(left: Vec3, right: Vec3): Vec3 {
-  return [left[0] + right[0], left[1] + right[1], left[2] + right[2]];
-}
-
-function scale(value: Vec3, factor: number): Vec3 {
-  return [value[0] * factor, value[1] * factor, value[2] * factor];
-}
-
-function dot(left: Vec3, right: Vec3): number {
-  return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
-}
-
-function cross(left: Vec3, right: Vec3): Vec3 {
-  return [
-    left[1] * right[2] - left[2] * right[1],
-    left[2] * right[0] - left[0] * right[2],
-    left[0] * right[1] - left[1] * right[0],
-  ];
-}
-
-function squaredLength(value: Vec3): number {
-  return dot(value, value);
+  const v = vb * denominator;
+  const w = vc * denominator;
+  const dx = px - (ax + abx * v + acx * w);
+  const dy = py - (ay + aby * v + acy * w);
+  const dz = pz - (az + abz * v + acz * w);
+  return dx * dx + dy * dy + dz * dz;
 }

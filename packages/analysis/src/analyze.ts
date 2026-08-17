@@ -15,10 +15,11 @@ import type {
 import {
   countExpandedGeometry,
   flattenModel,
-  triangleCentroid,
+  triangleAreaAt,
+  triangleCentroidAt,
 } from "./geometry.js";
-import type { FlatGeometry, Triangle } from "./geometry.js";
-import { TriangleSpatialIndex, type WorkUnitCounter } from "./spatial-index.js";
+import type { FlatGeometry, WorkUnitCounter } from "./geometry.js";
+import { TriangleSpatialIndex } from "./spatial-index.js";
 
 export interface AnalysisResourceLimits {
   readonly maxExpandedVertices: number;
@@ -36,6 +37,33 @@ export const ANALYSIS_LIMITS: AnalysisResourceLimits = Object.freeze({
   maxMemoryBytes: 768 * 1024 * 1024,
   maxReportedRegions: 2_048,
 });
+
+/**
+ * Conservative per-element memory accounting for the flattened comparison
+ * frame and the working structures built from it, used only to reject
+ * requests before allocating anything. `checkResourceBudget` applies this to
+ * the combined baseline + candidate vertex and triangle counts.
+ *
+ *  - 24 bytes/vertex: Float64Array positions (3 * 8 bytes), exact.
+ *  - 12 bytes/triangle: Uint32Array indices (3 * 4 bytes), exact.
+ *  - ~48 bytes/triangle: TriangleSpatialIndex construction-time working
+ *    arrays (per-triangle AABB, centroid, Morton code, and sort-order
+ *    typed arrays) -- transient, freed once the index is built.
+ *  - ~48 bytes/triangle: BVH node storage (roughly one node per
+ *    LEAF_TRIANGLE_COUNT triangles at the leaves, doubling for internal
+ *    nodes, each node six bounds numbers plus bookkeeping).
+ *  - ~24 bytes/triangle: directional deviation tracking (a changed flag
+ *    plus maximum/mean distance per triangle, held as typed arrays for one
+ *    directional pass).
+ *  - ~168 bytes/triangle: worst-case string-keyed edge maps -- up to three
+ *    Map entries per triangle across assessGeometry's manifold census and
+ *    the ranking phase's exact-edge connectivity map, each entry costing a
+ *    JS string key, a small value object, and V8 Map bucket overhead.
+ *
+ * Total: 24 bytes/vertex + 300 bytes/triangle (12 + 48 + 48 + 24 + 168).
+ */
+const BYTES_PER_VERTEX = 24;
+const BYTES_PER_TRIANGLE = 300;
 
 export const SURFACE_DISTANCE_METHOD = Object.freeze({
   id: "surface-distance",
@@ -123,27 +151,45 @@ export function analyzeModelPair(input: AnalysisInput): AnalysisResult {
     return indeterminate(request, "resource-budget-exceeded", [budgetProblem]);
   }
 
+  // Construct the work budget before any O(vertices + triangles)
+  // preprocessing runs, and charge flattening and the manifold edge census
+  // to it below, so a caller-supplied budget too small for that
+  // preprocessing fails closed before it runs rather than after.
+  const workLimit = Math.min(
+    ANALYSIS_LIMITS.maxWorkUnits,
+    request.executionBudget?.maxWorkUnits ?? ANALYSIS_LIMITS.maxWorkUnits,
+  );
+  const work = new WorkBudget(workLimit);
+
   let baselineGeometry: FlatGeometry;
   let candidateGeometry: FlatGeometry;
+  let validation: readonly [MeshAssessment, MeshAssessment];
   try {
     baselineGeometry = flattenModel(
       baseline,
       request.baseline.modelToComparison,
+      work,
     );
     candidateGeometry = flattenModel(
       candidate,
       request.candidate.modelToComparison,
+      work,
     );
+    validation = [
+      assessGeometry(baseline.id, baselineGeometry, work),
+      assessGeometry(candidate.id, candidateGeometry, work),
+    ];
   } catch (error) {
+    if (error instanceof WorkBudgetExceeded) {
+      return indeterminate(request, "resource-budget-exceeded", [
+        error.message,
+      ]);
+    }
+    if (error instanceof WorkBudgetInternalError) throw error;
     return indeterminate(request, "comparison-transform-failed", [
       error instanceof Error ? error.message : "Comparison transform failed.",
     ]);
   }
-
-  const validation = [
-    assessGeometry(baseline.id, baselineGeometry),
-    assessGeometry(candidate.id, candidateGeometry),
-  ] as const;
 
   if (capability.id === SURFACE_DISTANCE_METHOD.id) {
     return analyzeSurfaceDistance(
@@ -151,6 +197,7 @@ export function analyzeModelPair(input: AnalysisInput): AnalysisResult {
       baselineGeometry,
       candidateGeometry,
       validation,
+      work,
     );
   }
   return analyzeAxisAlignedBoxes(
@@ -176,7 +223,8 @@ function checkResourceBudget(
   if (triangles > ANALYSIS_LIMITS.maxExpandedTriangles) {
     return `Expanded geometry requires ${triangles} triangles; the implementation ceiling is ${ANALYSIS_LIMITS.maxExpandedTriangles}.`;
   }
-  const estimatedMemory = vertices * 24 + triangles * 768;
+  const estimatedMemory =
+    vertices * BYTES_PER_VERTEX + triangles * BYTES_PER_TRIANGLE;
   const memoryBudget = Math.min(
     ANALYSIS_LIMITS.maxMemoryBytes,
     request.executionBudget?.maxMemoryBytes ?? ANALYSIS_LIMITS.maxMemoryBytes,
@@ -190,20 +238,48 @@ function checkResourceBudget(
   return undefined;
 }
 
+/** Charged per triangle in the edge census below (three Map lookups/writes). */
+const EDGE_CENSUS_TRIANGLE_WORK_UNITS = 6;
+/**
+ * Preprocessing charges (here and in `flattenModel`) are applied in chunks
+ * of this many elements, not per element (millions of `charge` calls would
+ * add overhead) and not as one lump sum for the whole geometry (a budget
+ * that can only cover part of the census should still fail partway through
+ * rather than after the fact).
+ */
+const PREPROCESSING_CHUNK_ELEMENTS = 1024;
+
 function assessGeometry(
   modelId: NormalizedModel["id"],
   geometry: FlatGeometry,
+  work: WorkUnitCounter,
 ): MeshAssessment {
   const edges = new Map<string, { forward: number; reverse: number }>();
   let degenerateTriangleCount = 0;
-  for (const triangle of geometry.triangles) {
-    if (!(triangle.area > 0) || !Number.isFinite(triangle.area)) {
-      degenerateTriangleCount += 1;
+  const triangleCount = geometry.triangleCount;
+  for (
+    let chunkStart = 0;
+    chunkStart < triangleCount;
+    chunkStart += PREPROCESSING_CHUNK_ELEMENTS
+  ) {
+    const chunkEnd = Math.min(
+      chunkStart + PREPROCESSING_CHUNK_ELEMENTS,
+      triangleCount,
+    );
+    work.charge((chunkEnd - chunkStart) * EDGE_CENSUS_TRIANGLE_WORK_UNITS);
+    for (let triangle = chunkStart; triangle < chunkEnd; triangle += 1) {
+      const area = triangleAreaAt(geometry, triangle);
+      if (!(area > 0) || !Number.isFinite(area)) {
+        degenerateTriangleCount += 1;
+      }
+      const base = triangle * 3;
+      const a = geometry.indices[base]!;
+      const b = geometry.indices[base + 1]!;
+      const c = geometry.indices[base + 2]!;
+      addEdge(edges, a, b);
+      addEdge(edges, b, c);
+      addEdge(edges, c, a);
     }
-    const [a, b, c] = triangle.vertices;
-    addEdge(edges, a, b);
-    addEdge(edges, b, c);
-    addEdge(edges, c, a);
   }
   let boundaryEdgeCount = 0;
   let nonManifoldEdgeCount = 0;
@@ -222,7 +298,7 @@ function assessGeometry(
     passed: true;
     details?: Record<string, number>;
   }> = [];
-  if (geometry.triangles.length === 0) reasons.push("empty-geometry");
+  if (geometry.triangleCount === 0) reasons.push("empty-geometry");
   else preconditions.push({ id: "non-empty-triangles", passed: true });
   if (degenerateTriangleCount > 0) reasons.push("degenerate-triangles");
   else preconditions.push({ id: "non-degenerate-triangles", passed: true });
@@ -267,6 +343,7 @@ function analyzeSurfaceDistance(
   baseline: FlatGeometry,
   candidate: FlatGeometry,
   validation: readonly [MeshAssessment, MeshAssessment],
+  work: WorkUnitCounter,
 ): AnalysisResult {
   const parameterResult = surfaceParameters(request.method.parameters);
   if (typeof parameterResult === "string") {
@@ -300,15 +377,9 @@ function analyzeSurfaceDistance(
       validation,
     );
   }
-  const workBudget = Math.min(
-    ANALYSIS_LIMITS.maxWorkUnits,
-    request.executionBudget?.maxWorkUnits ?? ANALYSIS_LIMITS.maxWorkUnits,
-  );
-  const work = new WorkBudget(workBudget);
-
   try {
-    const baselineIndex = new TriangleSpatialIndex(baseline.triangles, work);
-    const candidateIndex = new TriangleSpatialIndex(candidate.triangles, work);
+    const baselineIndex = new TriangleSpatialIndex(baseline, work);
+    const candidateIndex = new TriangleSpatialIndex(candidate, work);
     const removed = directionalRegions(
       baseline,
       candidateIndex,
@@ -451,6 +522,7 @@ function analyzeSurfaceDistance(
         validation,
       );
     }
+    if (error instanceof WorkBudgetInternalError) throw error;
     return indeterminate(
       request,
       "numeric-range-exceeded",
@@ -508,42 +580,87 @@ function directionalRegions(
   tolerance: number,
   work: WorkUnitCounter,
 ): RankedSurfaceRegion[] {
-  work.charge(source.triangles.length * DIRECTIONAL_TRIANGLE_WORK_UNITS);
-  const deviations = source.triangles.map((triangle) => {
-    const samples = [...triangle.points, triangleCentroid(triangle)];
-    const distances = samples.map((sample) => {
-      work.charge(1);
-      return target.distance(sample, work);
-    });
-    return {
-      changed: Math.max(...distances) > tolerance,
-      maximum: Math.max(...distances),
-      mean: distances.reduce((sum, value) => sum + value, 0) / distances.length,
-    };
-  });
-  const connectivity = new DisjointSet(source.triangles.length);
+  const triangleCount = source.triangleCount;
+  work.charge(triangleCount * DIRECTIONAL_TRIANGLE_WORK_UNITS);
+
+  // Structure-of-arrays deviation tracking instead of one small object per
+  // triangle: a changed flag plus the maximum and mean sampled distance,
+  // computed from the triangle's three vertices and centroid.
+  const changed = new Uint8Array(triangleCount);
+  const maximumDistance = new Float64Array(triangleCount);
+  const meanDistance = new Float64Array(triangleCount);
+
+  const positions = source.positions;
+  const indices = source.indices;
+  for (let triangle = 0; triangle < triangleCount; triangle += 1) {
+    const base = triangle * 3;
+    const ia = indices[base]!;
+    const ib = indices[base + 1]!;
+    const ic = indices[base + 2]!;
+    const ax = positions[ia * 3]!;
+    const ay = positions[ia * 3 + 1]!;
+    const az = positions[ia * 3 + 2]!;
+    const bx = positions[ib * 3]!;
+    const by = positions[ib * 3 + 1]!;
+    const bz = positions[ib * 3 + 2]!;
+    const cx = positions[ic * 3]!;
+    const cy = positions[ic * 3 + 1]!;
+    const cz = positions[ic * 3 + 2]!;
+    const centroidX = (ax + bx + cx) / 3;
+    const centroidY = (ay + by + cy) / 3;
+    const centroidZ = (az + bz + cz) / 3;
+
+    work.charge(1);
+    const distanceA = target.distance(ax, ay, az, work);
+    work.charge(1);
+    const distanceB = target.distance(bx, by, bz, work);
+    work.charge(1);
+    const distanceC = target.distance(cx, cy, cz, work);
+    work.charge(1);
+    const distanceCentroid = target.distance(
+      centroidX,
+      centroidY,
+      centroidZ,
+      work,
+    );
+
+    let maximum = distanceA;
+    if (distanceB > maximum) maximum = distanceB;
+    if (distanceC > maximum) maximum = distanceC;
+    if (distanceCentroid > maximum) maximum = distanceCentroid;
+
+    maximumDistance[triangle] = maximum;
+    meanDistance[triangle] =
+      (distanceA + distanceB + distanceC + distanceCentroid) / 4;
+    changed[triangle] = maximum > tolerance ? 1 : 0;
+  }
+
+  const connectivity = new DisjointSet(triangleCount);
   const firstTriangleByEdge = new Map<string, number>();
-  for (const triangle of source.triangles) {
-    if (!deviations[triangle.index]?.changed) continue;
-    const [first, second, third] = triangle.points;
+  for (let triangle = 0; triangle < triangleCount; triangle += 1) {
+    if (changed[triangle] === 0) continue;
+    const base = triangle * 3;
+    const a = indices[base]!;
+    const b = indices[base + 1]!;
+    const c = indices[base + 2]!;
     for (const edge of [
-      exactEdgeKey(first, second),
-      exactEdgeKey(second, third),
-      exactEdgeKey(third, first),
+      exactEdgeKeyAt(source, a, b),
+      exactEdgeKeyAt(source, b, c),
+      exactEdgeKeyAt(source, c, a),
     ]) {
       const neighbor = firstTriangleByEdge.get(edge);
       if (neighbor === undefined) {
-        firstTriangleByEdge.set(edge, triangle.index);
+        firstTriangleByEdge.set(edge, triangle);
       } else {
-        connectivity.union(triangle.index, neighbor);
+        connectivity.union(triangle, neighbor);
       }
     }
   }
 
-  const components = new Map<number, Triangle[]>();
-  for (const triangle of source.triangles) {
-    if (!deviations[triangle.index]?.changed) continue;
-    const root = connectivity.find(triangle.index);
+  const components = new Map<number, number[]>();
+  for (let triangle = 0; triangle < triangleCount; triangle += 1) {
+    if (changed[triangle] === 0) continue;
+    const root = connectivity.find(triangle);
     const component = components.get(root) ?? [];
     component.push(triangle);
     components.set(root, component);
@@ -551,30 +668,33 @@ function directionalRegions(
 
   const regions: RankedSurfaceRegion[] = [];
   for (const component of components.values()) {
-    const componentDeviations = component.map(
-      (triangle) => deviations[triangle.index]!,
-    );
-    const bounds = boundsOf(component.flatMap(({ points }) => points));
-    const anchorTriangle = component.reduce((best, triangle) =>
-      deviations[triangle.index]!.maximum > deviations[best.index]!.maximum
-        ? triangle
-        : best,
-    );
-    const serial = String(component[0]!.index).padStart(6, "0");
+    const bounds = boundsOfTriangles(source, component);
+    let anchorTriangle = component[0]!;
+    for (const triangle of component) {
+      if (maximumDistance[triangle]! > maximumDistance[anchorTriangle]!) {
+        anchorTriangle = triangle;
+      }
+    }
+    const serial = String(component[0]!).padStart(6, "0");
+    let maximum = maximumDistance[component[0]!]!;
+    let meanSum = 0;
+    let areaSum = 0;
+    for (const triangle of component) {
+      const value = maximumDistance[triangle]!;
+      if (value > maximum) maximum = value;
+      meanSum += meanDistance[triangle]!;
+      areaSum += triangleAreaAt(source, triangle);
+    }
     regions.push({
       id: `region.surface.${category}.${serial}`,
       category,
       bounds,
-      anchor: triangleCentroid(anchorTriangle),
-      maximumDistance: Math.max(
-        ...componentDeviations.map(({ maximum }) => maximum),
-      ),
-      meanDistance:
-        componentDeviations.reduce((sum, value) => sum + value.mean, 0) /
-        componentDeviations.length,
-      area: component.reduce((sum, triangle) => sum + triangle.area, 0),
+      anchor: triangleCentroidAt(source, anchorTriangle),
+      maximumDistance: maximum,
+      meanDistance: meanSum / component.length,
+      area: areaSum,
       triangleCount: component.length,
-      triangleIndices: component.map(({ index }) => index),
+      triangleIndices: component,
     });
   }
   return regions;
@@ -614,9 +734,19 @@ class DisjointSet {
   }
 }
 
-function exactEdgeKey(first: Vec3, second: Vec3): string {
-  const firstKey = pointKey(first);
-  const secondKey = pointKey(second);
+function pointKeyAt(geometry: FlatGeometry, vertexIndex: number): string {
+  const base = vertexIndex * 3;
+  const positions = geometry.positions;
+  return `${positions[base]},${positions[base + 1]},${positions[base + 2]}`;
+}
+
+function exactEdgeKeyAt(
+  geometry: FlatGeometry,
+  firstVertex: number,
+  secondVertex: number,
+): string {
+  const firstKey = pointKeyAt(geometry, firstVertex);
+  const secondKey = pointKeyAt(geometry, secondVertex);
   return compareText(firstKey, secondKey) <= 0
     ? `${firstKey}|${secondKey}`
     : `${secondKey}|${firstKey}`;
@@ -635,16 +765,35 @@ function compareSurfaceRegion(
   );
 }
 
-class WorkBudgetExceeded extends Error {
+/** Legitimate, expected fail-closed outcome: the active budget ran out. */
+export class WorkBudgetExceeded extends Error {
   constructor(limit: number, used: number, requested: number) {
     super(
-      `Surface distance exhausted the active budget of ${limit} work units after ${used} charged units; the next operation required ${requested} more.`,
+      `Analysis exhausted the active budget of ${limit} work units after ${used} charged units; the next operation required ${requested} more.`,
     );
     this.name = "WorkBudgetExceeded";
   }
 }
 
-class WorkBudget implements WorkUnitCounter {
+/**
+ * A programming error, not an expected outcome: some call site tried to
+ * charge a negative or non-integer number of work units. This is kept
+ * distinct from `WorkBudgetExceeded` so it is never reported to a caller as
+ * an ordinary "resource-budget-exceeded" result -- callers that catch only
+ * `WorkBudgetExceeded` let this propagate, which still fails closed (no
+ * result is returned) but surfaces the bug instead of masking it as a
+ * routine budget exhaustion.
+ */
+export class WorkBudgetInternalError extends Error {
+  constructor(units: number) {
+    super(
+      `WorkBudget.charge received invalid units (${String(units)}); charge amounts must be non-negative safe integers. This indicates an internal bug, not caller-supplied input.`,
+    );
+    this.name = "WorkBudgetInternalError";
+  }
+}
+
+export class WorkBudget implements WorkUnitCounter {
   readonly #limit: number;
   #used = 0;
 
@@ -654,7 +803,7 @@ class WorkBudget implements WorkUnitCounter {
 
   charge(units: number): void {
     if (!Number.isSafeInteger(units) || units < 0) {
-      throw new WorkBudgetExceeded(this.#limit, this.#used, units);
+      throw new WorkBudgetInternalError(units);
     }
     if (this.#used > this.#limit - units) {
       throw new WorkBudgetExceeded(this.#limit, this.#used, units);
@@ -824,15 +973,15 @@ function validatedAxisAlignedBox(
   assessment: MeshAssessment,
 ): Bounds | undefined {
   if (
-    geometry.points.length !== 8 ||
-    geometry.triangles.length !== 12 ||
+    geometry.vertexCount !== 8 ||
+    geometry.triangleCount !== 12 ||
     !assessment.closed ||
     !assessment.consistentlyOriented ||
     assessment.degenerateTriangleCount !== 0
   ) {
     return undefined;
   }
-  const bounds = boundsOf(geometry.points);
+  const bounds = boundsOfPositions(geometry.positions, geometry.vertexCount);
   if (bounds.min.some((value, axis) => value === bounds.max[axis])) {
     return undefined;
   }
@@ -844,7 +993,10 @@ function validatedAxisAlignedBox(
       }
     }
   }
-  const actual = new Set(geometry.points.map(pointKey));
+  const actual = new Set<string>();
+  for (let vertex = 0; vertex < geometry.vertexCount; vertex += 1) {
+    actual.add(pointKeyAt(geometry, vertex));
+  }
   if (actual.size !== 8 || [...actual].some((point) => !expected.has(point))) {
     return undefined;
   }
@@ -932,17 +1084,70 @@ function midpoint(bounds: Bounds): Vec3 {
   ];
 }
 
-function boundsOf(points: readonly Vec3[]): Bounds {
-  if (points.length === 0) throw new Error("Cannot bound empty geometry.");
-  const minimum: Vec3 = [...points[0]!] as Vec3;
-  const maximum: Vec3 = [...points[0]!] as Vec3;
-  for (const point of points.slice(1)) {
-    for (let axis = 0; axis < 3; axis += 1) {
-      minimum[axis] = Math.min(minimum[axis]!, point[axis]!);
-      maximum[axis] = Math.max(maximum[axis]!, point[axis]!);
+/** Bounds over every vertex in `positions`, reading the typed array in place. */
+function boundsOfPositions(
+  positions: Float64Array,
+  vertexCount: number,
+): Bounds {
+  if (vertexCount === 0) throw new Error("Cannot bound empty geometry.");
+  let minX = positions[0]!;
+  let minY = positions[1]!;
+  let minZ = positions[2]!;
+  let maxX = minX;
+  let maxY = minY;
+  let maxZ = minZ;
+  for (let vertex = 1; vertex < vertexCount; vertex += 1) {
+    const base = vertex * 3;
+    const x = positions[base]!;
+    const y = positions[base + 1]!;
+    const z = positions[base + 2]!;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    minZ = Math.min(minZ, z);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+    maxZ = Math.max(maxZ, z);
+  }
+  return { min: [minX, minY, minZ], max: [maxX, maxY, maxZ] };
+}
+
+/**
+ * Bounds over the vertices touched by `triangleIndices`, reading geometry
+ * positions directly instead of materializing a Vec3 array of the region's
+ * (possibly duplicated) triangle corners.
+ */
+function boundsOfTriangles(
+  geometry: FlatGeometry,
+  triangleIndices: readonly number[],
+): Bounds {
+  if (triangleIndices.length === 0) {
+    throw new Error("Cannot bound empty geometry.");
+  }
+  const positions = geometry.positions;
+  const indices = geometry.indices;
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let minZ = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  let maxZ = Number.NEGATIVE_INFINITY;
+  for (const triangleIndex of triangleIndices) {
+    const base = triangleIndex * 3;
+    for (let corner = 0; corner < 3; corner += 1) {
+      const vertex = indices[base + corner]!;
+      const vertexBase = vertex * 3;
+      const x = positions[vertexBase]!;
+      const y = positions[vertexBase + 1]!;
+      const z = positions[vertexBase + 2]!;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      minZ = Math.min(minZ, z);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+      maxZ = Math.max(maxZ, z);
     }
   }
-  return { min: minimum, max: maximum };
+  return { min: [minX, minY, minZ], max: [maxX, maxY, maxZ] };
 }
 
 function pointKey(point: Vec3): string {

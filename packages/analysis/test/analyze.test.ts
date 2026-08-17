@@ -224,6 +224,31 @@ describe("approximate surface-distance adapter", () => {
     });
   });
 
+  it("fails closed before O(vertices + triangles) preprocessing work runs on a large pair", () => {
+    // A tiny box (used above) can't distinguish "the budget is checked
+    // before preprocessing" from "the budget is checked before sampling":
+    // both fail immediately either way. Use a model large enough that
+    // flattening and the manifold edge census would be real, measurable
+    // work if they ran unguarded, and assert directly on the charged-work
+    // accounting -- not on timing -- that zero units were charged before
+    // the budget failed. That proves no O(vertices + triangles) work ran.
+    const triangleCount = 200_000;
+    const result = analyzeModelPair({
+      request: request("surface-distance", {
+        maxWorkUnits: 1,
+        maxMemoryBytes: 256 * 1024 * 1024,
+      }),
+      baseline: disconnectedFacetModel("baseline", triangleCount),
+      candidate: disconnectedFacetModel("candidate", triangleCount),
+    });
+    expect(result.outcome).toMatchObject({
+      state: "indeterminate",
+      code: "resource-budget-exceeded",
+    });
+    if (result.outcome.state !== "indeterminate") return;
+    expect(result.outcome.reasons[0]).toMatch(/after 0 charged units/u);
+  });
+
   it("accelerates a pair that exceeds the former full-scan work estimate", () => {
     const triangleCount = 600;
     expect(triangleCount * triangleCount * 8).toBeGreaterThan(2_000_000);
