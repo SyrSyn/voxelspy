@@ -215,7 +215,7 @@ describe("model presentation summaries", () => {
       state: "indeterminate",
       code: "summary-test.indeterminate",
       reasons: ["The selected method could not produce a result."],
-      warningCount: 0,
+      warningCount: indeterminate.warnings.length,
       methodId: "surface-distance",
       methodVersion: "1.0.0",
     });

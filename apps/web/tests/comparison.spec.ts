@@ -76,6 +76,11 @@ test("opens with a working sample difference above its source models", async ({
         document.documentElement.clientWidth,
     ),
   ).toBe(false);
+  // Mobile emulation grows the layout viewport itself when content cannot
+  // fit the device width, which the scrollWidth check above cannot see.
+  expect(await page.evaluate(() => window.innerWidth)).toBe(
+    page.viewportSize()?.width,
+  );
 });
 
 test("keeps the full comparison legible at desktop splash sizes", async ({
@@ -149,6 +154,11 @@ test("keeps the full comparison legible at desktop splash sizes", async ({
         document.documentElement.clientWidth,
     ),
   ).toBe(false);
+  // Mobile emulation grows the layout viewport itself when content cannot
+  // fit the device width, which the scrollWidth check above cannot see.
+  expect(await page.evaluate(() => window.innerWidth)).toBe(
+    page.viewportSize()?.width,
+  );
 });
 
 test("imports, analyzes, and opens synchronized comparison views locally", async ({

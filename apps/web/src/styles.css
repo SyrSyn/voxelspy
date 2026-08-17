@@ -1077,6 +1077,9 @@ main {
 }
 .technical-details > section {
   padding: 1rem;
+  /* Long unbroken technical tokens (digests, serialized warning details)
+     must wrap instead of widening the mobile layout viewport. */
+  overflow-wrap: anywhere;
 }
 .evidence-heading h2 {
   font-size: clamp(1.7rem, 3vw, 2.5rem);
