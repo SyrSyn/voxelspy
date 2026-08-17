@@ -1123,6 +1123,11 @@ export function Workbench({
       if (
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLButtonElement ||
+        event.target instanceof HTMLSelectElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        event.target instanceof HTMLAnchorElement ||
+        (event.target instanceof HTMLElement &&
+          event.target.tagName === "SUMMARY") ||
         ordered.length === 0
       )
         return;
@@ -1293,6 +1298,9 @@ export function Workbench({
             </span>
             <span>
               <i className="legend-shared" /> Shared
+            </span>
+            <span>
+              <i className="legend-deviation" /> Deviation
             </span>
           </div>
           {selectedRegion && (

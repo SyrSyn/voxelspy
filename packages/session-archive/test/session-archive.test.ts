@@ -168,6 +168,16 @@ describe("portable session archive", () => {
     ).toThrow(/Invalid JSON/u);
   });
 
+  it("distinguishes a structurally valid non-session archive from a genuine resource-limit violation", () => {
+    const notASessionArchive = createStoredZip(
+      new Map([["report.json", new Uint8Array([1, 2, 3])]]),
+    );
+    expectCode(
+      () => inspectSessionArchive(request(notASessionArchive)),
+      "INVALID_MANIFEST",
+    );
+  });
+
   it("enforces archive, count, entry, aggregate, and structured limits", async () => {
     const fixture = await createSessionFixture();
     const created = await createSessionArchive({

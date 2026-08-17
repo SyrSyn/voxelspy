@@ -18,6 +18,17 @@ export function parseStl(
   if (isExactBinaryStl(bytes)) {
     return parseBinaryStl(bytes, triangleLimit, safetyTriangleLimit);
   }
+  const mismatch = binaryLengthMismatch(bytes);
+  if (mismatch !== undefined) {
+    const expectedLength = bytes.byteLength - mismatch;
+    const detail =
+      mismatch > 0
+        ? `${mismatch} unexpected trailing byte(s)`
+        : `${-mismatch} byte(s) short (truncated)`;
+    throw new TypeError(
+      `Binary STL header declares a facet count that requires exactly ${expectedLength} byte(s), but the input is ${bytes.byteLength} byte(s): ${detail}.`,
+    );
+  }
   return parseAsciiStl(
     decodeUtf8(bytes, "ASCII STL"),
     triangleLimit,
@@ -25,11 +36,33 @@ export function parseStl(
   );
 }
 
-function isExactBinaryStl(bytes: Uint8Array): boolean {
-  if (bytes.byteLength < BINARY_HEADER_BYTES) return false;
+function expectedBinaryLength(bytes: Uint8Array): number {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const count = view.getUint32(80, true);
-  return BINARY_HEADER_BYTES + count * BINARY_FACET_BYTES === bytes.byteLength;
+  return BINARY_HEADER_BYTES + count * BINARY_FACET_BYTES;
+}
+
+function isExactBinaryStl(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < BINARY_HEADER_BYTES) return false;
+  return expectedBinaryLength(bytes) === bytes.byteLength;
+}
+
+// Detects input that is very likely a binary STL whose declared facet count
+// implies a size within a single facet's width of the actual input length
+// (e.g. one trailing newline byte, or a truncated download). Falling through
+// to the ASCII parser for this input produces a misleading
+// "not valid UTF-8" diagnostic instead of the real, more actionable cause.
+// The window is intentionally tight (narrower than one facet) so ordinary
+// ASCII STL text — whose bytes 80..83 are arbitrary and produce wildly
+// different expected lengths — is never misclassified.
+function binaryLengthMismatch(bytes: Uint8Array): number | undefined {
+  if (bytes.byteLength < BINARY_HEADER_BYTES) return undefined;
+  const expectedLength = expectedBinaryLength(bytes);
+  const difference = bytes.byteLength - expectedLength;
+  if (difference === 0 || Math.abs(difference) >= BINARY_FACET_BYTES) {
+    return undefined;
+  }
+  return difference;
 }
 
 function parseBinaryStl(
@@ -83,6 +116,7 @@ function parseAsciiStl(
   let verticesInFacet = 0;
   let triangleCount = 0;
   let lineIndex = -1;
+  let solidBlockCount = 0;
 
   for (const rawLine of linesOf(text)) {
     lineIndex += 1;
@@ -96,6 +130,7 @@ function parseAsciiStl(
     if (/^(?:solid|endsolid)(?:\s|$)/iu.test(line)) {
       if (state !== "outside")
         failAscii(lineIndex, "unexpected solid boundary");
+      if (/^solid(?:\s|$)/iu.test(line)) solidBlockCount += 1;
       continue;
     }
     const fields = line.split(/\s+/u);
@@ -178,6 +213,7 @@ function parseAsciiStl(
     notes: [
       "Facet normals are retained neither as geometry nor as proof of orientation.",
     ],
+    mergedSolidCount: solidBlockCount,
   };
 }
 

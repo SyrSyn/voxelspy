@@ -267,13 +267,6 @@ const normalizedModelShape = z.strictObject({
   provenance: geometryProvenanceSchema,
 });
 
-function duplicate(values: readonly string[]): string | undefined {
-  const seen = new Set<string>();
-  return values.find((value) =>
-    seen.has(value) ? true : (seen.add(value), false),
-  );
-}
-
 function validateModel(
   model: z.infer<typeof normalizedModelShape>,
   context: z.RefinementCtx,
@@ -291,9 +284,6 @@ function validateModel(
   }
   const meshIds = new Set(model.meshes.map(({ id }) => id));
   const instanceIds = new Set(model.placement.instances.map(({ id }) => id));
-  const instanceDuplicate = duplicate(
-    model.placement.instances.map(({ id }) => id),
-  );
   if (meshIds.size !== model.meshes.length) {
     context.addIssue({
       code: "custom",
@@ -301,10 +291,7 @@ function validateModel(
       message: "Mesh IDs must be unique",
     });
   }
-  if (
-    instanceIds.size !== model.placement.instances.length ||
-    instanceDuplicate
-  ) {
+  if (instanceIds.size !== model.placement.instances.length) {
     context.addIssue({
       code: "custom",
       path: ["placement", "instances"],

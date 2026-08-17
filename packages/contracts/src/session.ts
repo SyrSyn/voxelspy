@@ -377,10 +377,18 @@ export const sessionArchiveExchangeSchema = z
         path: ["verifiedResources"],
         message: "Verified resources must exactly cover the archive contents",
       });
+    // Keep the first match per path (matching the .find() semantics this
+    // replaces) in case duplicate paths ever reach this refinement.
+    const preflightByPath = new Map<string, (typeof preflight.entries)[number]>();
+    for (const entry of preflight.entries)
+      if (!preflightByPath.has(entry.path))
+        preflightByPath.set(entry.path, entry);
+    const verifiedByPath = new Map<string, (typeof verifiedResources)[number]>();
+    for (const verified of verifiedResources)
+      if (!verifiedByPath.has(verified.path))
+        verifiedByPath.set(verified.path, verified);
     verifiedResources.forEach((verified, index) => {
-      const observed = preflight.entries.find(
-        ({ path }) => path === verified.path,
-      );
+      const observed = preflightByPath.get(verified.path);
       if (!observed || observed.expandedBytes !== verified.bytes)
         context.addIssue({
           code: "custom",
@@ -388,9 +396,7 @@ export const sessionArchiveExchangeSchema = z
           message: "Verified resource bytes must match archive observations",
         });
     });
-    const verifiedManifest = verifiedResources.find(
-      ({ path }) => path === "manifest.json",
-    );
+    const verifiedManifest = verifiedByPath.get("manifest.json");
     if (
       !verifiedManifest ||
       verifiedManifest.digest.value !== bundle.manifestDigest.value
@@ -402,18 +408,14 @@ export const sessionArchiveExchangeSchema = z
           "Parsed manifest provenance must match verified manifest bytes",
       });
     bundle.manifest.entries.forEach((entry, index) => {
-      const observed = preflight.entries.find(
-        ({ path }) => path === entry.path,
-      );
+      const observed = preflightByPath.get(entry.path);
       if (!observed || observed.expandedBytes !== entry.bytes)
         context.addIssue({
           code: "custom",
           path: ["bundle", "manifest", "entries", index, "bytes"],
           message: "Manifest byte counts must match archive observations",
         });
-      const verified = verifiedResources.find(
-        ({ path }) => path === entry.path,
-      );
+      const verified = verifiedByPath.get(entry.path);
       if (
         !verified ||
         verified.bytes !== entry.bytes ||

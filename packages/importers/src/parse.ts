@@ -4,6 +4,7 @@ export interface ParsedMesh {
   readonly notes: string[];
   readonly polygonCount?: number;
   readonly ignoredDirectives?: readonly string[];
+  readonly mergedSolidCount?: number;
 }
 
 const DECIMAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/u;

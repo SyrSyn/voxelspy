@@ -181,6 +181,64 @@ endsolid generated`);
     );
   });
 
+  it("warns when an ASCII STL merges multiple solid blocks into one mesh", async () => {
+    const source = encoder.encode(`solid first
+facet normal 0 0 1
+outer loop
+vertex 0 0 0
+vertex 1 0 0
+vertex 0 1 0
+endloop
+endfacet
+endsolid first
+solid second
+facet normal 0 0 1
+outer loop
+vertex 2 2 2
+vertex 3 2 2
+vertex 2 3 2
+endloop
+endfacet
+endsolid second
+`);
+    const result = await importModel(request("stl", source));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.model.meshes[0]!.geometry.indices.length).toBe(6);
+    expect(result.model.warnings).toContainEqual(
+      expect.objectContaining({
+        code: "stl-multiple-solids-merged",
+        details: { count: 2 },
+      }),
+    );
+  });
+
+  it("does not warn about merged solids for a single-solid ASCII STL", async () => {
+    const result = await importModel(request("stl", asciiStl()));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.model.warnings.some(
+        (candidate) => candidate.code === "stl-multiple-solids-merged",
+      ),
+    ).toBe(false);
+  });
+
+  it("reports a length-mismatch diagnostic for a binary STL with trailing bytes, instead of a misleading UTF-8 error", async () => {
+    const binary = binaryStl(1);
+    const withTrailingByte = new Uint8Array(binary.byteLength + 1);
+    withTrailingByte.set(binary);
+    withTrailingByte[binary.byteLength] = 0x0a;
+    const result = await importModel(request("stl", withTrailingByte));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid-input");
+    expect(result.message).not.toContain("not valid UTF-8");
+    expect(result.message).toMatch(/byte/iu);
+    expect(result.message).toContain(`${binary.byteLength}`);
+    expect(result.message).toContain(`${withTrailingByte.byteLength}`);
+  });
+
   it("returns contract-valid unsupported outcomes and exposes deterministic discovery", async () => {
     const unsupported = await importModel(
       request("step", encoder.encode("STEP")),

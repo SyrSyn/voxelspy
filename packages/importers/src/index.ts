@@ -207,6 +207,16 @@ async function createModel(
       }),
     );
   }
+  if ((parsed.mergedSolidCount ?? 0) > 1) {
+    warnings.push(
+      warning({
+        code: "stl-multiple-solids-merged",
+        severity: "info",
+        message: `${parsed.mergedSolidCount} STL solid blocks were merged into a single mesh.`,
+        details: { count: parsed.mergedSolidCount ?? 0 },
+      }),
+    );
+  }
   if (frame.unitOrigin === "user" || frame.axisOrigin === "user") {
     warnings.push(
       warning({

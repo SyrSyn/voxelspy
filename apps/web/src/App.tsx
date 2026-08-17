@@ -133,10 +133,9 @@ function Header() {
             href="https://github.com/SyrSyn/voxelspy"
             target="_blank"
             rel="noreferrer"
-            aria-label="VoxelSpy on GitHub, 0 stars"
+            aria-label="VoxelSpy on GitHub"
           >
             <span className="github-label">GitHub</span>
-            <span aria-hidden="true">★ 0</span>
           </a>
           <ThemeButton />
           <button

@@ -879,6 +879,9 @@ main {
 .cue-removed {
   background: #ff5a67;
 }
+.change-legend .legend-deviation {
+  background: #c783ff;
+}
 .geometry-summary {
   margin-top: 1rem;
   padding-top: 0.8rem;

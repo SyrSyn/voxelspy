@@ -241,6 +241,30 @@ describe("geometry and import contracts", () => {
     ).toThrow();
   });
 
+  it("rejects duplicate flat instance IDs", () => {
+    expect(() =>
+      normalizedModelSchema.parse(
+        model({
+          placement: {
+            kind: "flat",
+            instances: [
+              {
+                id: "instance.body",
+                meshId: "mesh.body",
+                meshToModel: IDENTITY_MAT4,
+              },
+              {
+                id: "instance.body",
+                meshId: "mesh.body",
+                meshToModel: IDENTITY_MAT4,
+              },
+            ],
+          },
+        }),
+      ),
+    ).toThrow();
+  });
+
   it("enforces one rooted tree and one attachment per hierarchical instance", () => {
     const hierarchy = {
       kind: "hierarchy",
@@ -879,6 +903,61 @@ describe("analysis contracts", () => {
               ...base.regions[0],
               metricIds: ["metric.distance", "metric.distance"],
             },
+          ],
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it("validates a full-size orderedRegionIds permutation without quadratic blowup, and rejects an unknown id", () => {
+    const regionCount = 100_000;
+    const regions = Array.from({ length: regionCount }, (_, index) => ({
+      id: `region.${index}`,
+      frame: "comparison" as const,
+      category: "deviation" as const,
+      bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+      anchor: [0.5, 0.5, 0.5],
+      metricIds: [],
+      warningCodes: [],
+    }));
+    const orderedRegionIds = regions.map(({ id }) => id).reverse();
+    const outcome = {
+      state: "complete" as const,
+      semantics: "approximate" as const,
+      requestedMethod: method,
+      effectiveMethod: method,
+      requestedTolerance: tolerance,
+      effectiveTolerance: tolerance,
+      validation: [assessment("model.baseline"), assessment("model.candidate")],
+      metrics: [],
+      regions,
+      orderedRegionIds,
+      adjustments: [],
+      uncertainty: { description: "Bench uncertainty", parameters: {} },
+    };
+    const envelope = (nextOutcome: unknown) => ({
+      contractVersion: 1,
+      requestId: request.requestId,
+      baseline: request.baseline,
+      candidate: request.candidate,
+      warnings: [],
+      outcome: nextOutcome,
+    });
+    const started = performance.now();
+    expect(analysisResultSchema.parse(envelope(outcome))).toBeTruthy();
+    const elapsed = performance.now() - started;
+    // A quadratic `.includes()` membership check over 100,000 orderedRegionIds
+    // entries takes tens of seconds; the Set-based check should finish in a
+    // small fraction of a second even on slow CI hardware.
+    expect(elapsed).toBeLessThan(5_000);
+
+    expect(() =>
+      analysisResultSchema.parse(
+        envelope({
+          ...outcome,
+          orderedRegionIds: [
+            ...orderedRegionIds.slice(1),
+            "region.unknown",
           ],
         }),
       ),

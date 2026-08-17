@@ -253,11 +253,24 @@ export function inspectStoredZip(
     limits,
     preflight,
   });
-  if (!policy.success)
+  if (!policy.success) {
+    // A structurally valid ZIP that never had a manifest.json entry is not a
+    // session archive at all — that is a different, non-limit failure from a
+    // session archive that legitimately exceeds the caller's resource
+    // limits, and callers should be able to tell the two apart.
+    const hasSingleManifest =
+      preflight.entries.filter((entry) => entry.path === "manifest.json")
+        .length === 1;
+    if (!hasSingleManifest)
+      fail(
+        "INVALID_MANIFEST",
+        "Archive does not contain a single session manifest.json entry",
+      );
     fail(
       "ARCHIVE_LIMIT",
       "Session archive does not satisfy the supplied resource limits",
     );
+  }
   return { preflight, entries };
 }
 

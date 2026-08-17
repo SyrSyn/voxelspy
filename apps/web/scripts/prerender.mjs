@@ -31,18 +31,22 @@ for (const route of routes) {
     `<meta property="og:description" content="${escapeAttribute(metadata.description)}">`,
   ].join("\n    ");
   const output = template
-    .replace("<!--app-head-->", head)
-    .replace("<!--app-html-->", html);
+    .replace("<!--app-head-->", () => head)
+    .replace("<!--app-html-->", () => html);
   const directory = route === "/" ? dist : path.join(dist, route.slice(1));
   await mkdir(directory, { recursive: true });
   await writeFile(path.join(directory, "index.html"), output);
 }
 
+const notFoundHtml = render("/not-found/").html;
 await writeFile(
   path.join(dist, "404.html"),
   template
-    .replace("<!--app-head-->", "<title>Page not found — VoxelSpy</title>")
-    .replace("<!--app-html-->", render("/not-found/").html),
+    .replace(
+      "<!--app-head-->",
+      () => "<title>Page not found — VoxelSpy</title>",
+    )
+    .replace("<!--app-html-->", () => notFoundHtml),
 );
 await rm(path.join(root, ".ssr"), { recursive: true, force: true });
 console.log(`Prerendered ${routes.length} routes and a static 404 page.`);

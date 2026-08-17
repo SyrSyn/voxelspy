@@ -334,10 +334,11 @@ export const analysisResultSchema = z
         message: "Model, metric, and region IDs must not collide",
       });
     }
+    const regionIdSet = new Set(regionIds);
     if (
       new Set(result.outcome.orderedRegionIds).size !== regionIds.length ||
       result.outcome.orderedRegionIds.length !== regionIds.length ||
-      result.outcome.orderedRegionIds.some((id) => !regionIds.includes(id))
+      result.outcome.orderedRegionIds.some((id) => !regionIdSet.has(id))
     ) {
       context.addIssue({
         code: "custom",

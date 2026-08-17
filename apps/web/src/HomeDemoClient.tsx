@@ -11,6 +11,39 @@ import {
 
 const sample = createBuiltInSamplePair();
 let comparisonPromise: Promise<CompletedComparison> | undefined;
+const progressListeners = new Set<(value: ComparisonProgress) => void>();
+
+function broadcastProgress(next: ComparisonProgress) {
+  for (const listener of progressListeners) listener(next);
+}
+
+function getComparisonPromise(): Promise<CompletedComparison> {
+  comparisonPromise ??= runComparison(
+    sample.baseline,
+    sample.candidate,
+    broadcastProgress,
+  ).catch((reason: unknown) => {
+    // Do not cache a failed comparison forever: let the next subscriber retry.
+    comparisonPromise = undefined;
+    throw reason;
+  });
+  return comparisonPromise;
+}
+
+// Exposed for regression tests covering the module-level cache/broadcast
+// behavior without requiring a DOM/React rendering environment. Not used by
+// the component itself.
+export const __testing = {
+  getComparisonPromise,
+  subscribeProgress(listener: (value: ComparisonProgress) => void): () => void {
+    progressListeners.add(listener);
+    return () => progressListeners.delete(listener);
+  },
+  resetCache(): void {
+    comparisonPromise = undefined;
+    progressListeners.clear();
+  },
+};
 
 export function HomeDemoClient() {
   const [progress, setProgress] = useState<ComparisonProgress>({
@@ -22,14 +55,11 @@ export function HomeDemoClient() {
 
   useEffect(() => {
     let active = true;
-    comparisonPromise ??= runComparison(
-      sample.baseline,
-      sample.candidate,
-      (next) => {
-        if (active) setProgress(next);
-      },
-    );
-    void comparisonPromise
+    const listener = (next: ComparisonProgress) => {
+      if (active) setProgress(next);
+    };
+    progressListeners.add(listener);
+    void getComparisonPromise()
       .then((next) => {
         if (active) setResult(next);
       })
@@ -43,6 +73,7 @@ export function HomeDemoClient() {
       });
     return () => {
       active = false;
+      progressListeners.delete(listener);
     };
   }, []);
 

@@ -40,7 +40,7 @@ test("opens with a working sample difference above its source models", async ({
     page.locator(".site-header").getByText("Instant - Local - Open Source"),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "VoxelSpy on GitHub, 0 stars" }),
+    page.getByRole("link", { name: "VoxelSpy on GitHub" }),
   ).toHaveAttribute("href", "https://github.com/SyrSyn/voxelspy");
   await expect(sample.locator("canvas")).toHaveCount(3);
 
@@ -115,7 +115,7 @@ test("keeps the full comparison legible at desktop splash sizes", async ({
   await palette.selectOption("blueprint");
   await expect(palette).toHaveValue("blueprint");
   await expect(sample.getByLabel("Difference colors")).toContainText(
-    "Added Removed Shared",
+    "Added Removed Shared Deviation",
   );
 
   const theme = page.locator(".theme-button");
@@ -246,6 +246,13 @@ test("imports, analyzes, and opens synchronized comparison views locally", async
     page.getByText("Model data remains in this browser."),
   ).toBeVisible();
   expect(offOrigin).toEqual([]);
+
+  const palette = page.getByLabel("Model colors");
+  await expect(palette).toHaveValue("neutral");
+  await palette.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(palette).toHaveValue("blueprint");
+
   await page.screenshot({ path: "test-results/workbench.png", fullPage: true });
 });
 
