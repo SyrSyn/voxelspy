@@ -3,6 +3,21 @@ import type { FlatGeometry, WorkUnitCounter } from "./geometry.js";
 
 export type { WorkUnitCounter } from "./geometry.js";
 
+/**
+ * A genuine, code-detected numeric-range failure: a computed distance was
+ * not finite (e.g. coordinates so large that squaring them overflows to
+ * `Infinity`). Kept distinct from ordinary `Error` so callers can map only
+ * this class to the `numeric-range-exceeded` outcome code and let any other,
+ * truly unexpected exception surface as `internal-error` instead of being
+ * silently relabelled as a range failure it did not detect.
+ */
+export class NumericRangeExceededError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NumericRangeExceededError";
+  }
+}
+
 const LEAF_TRIANGLE_COUNT = 8;
 const MORTON_AXIS_SCALE = 1023;
 
@@ -198,7 +213,9 @@ export class TriangleSpatialIndex {
 
     const distance = Math.sqrt(minimumSquared);
     if (!Number.isFinite(distance)) {
-      throw new Error("Surface distance exceeded the supported numeric range.");
+      throw new NumericRangeExceededError(
+        "Surface distance exceeded the supported numeric range.",
+      );
     }
     return distance;
   }

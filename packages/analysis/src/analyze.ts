@@ -19,7 +19,10 @@ import {
   triangleCentroidAt,
 } from "./geometry.js";
 import type { FlatGeometry, WorkUnitCounter } from "./geometry.js";
-import { TriangleSpatialIndex } from "./spatial-index.js";
+import {
+  NumericRangeExceededError,
+  TriangleSpatialIndex,
+} from "./spatial-index.js";
 
 export interface AnalysisResourceLimits {
   readonly maxExpandedVertices: number;
@@ -380,36 +383,75 @@ function analyzeSurfaceDistance(
   try {
     const baselineIndex = new TriangleSpatialIndex(baseline, work);
     const candidateIndex = new TriangleSpatialIndex(candidate, work);
-    const removed = directionalRegions(
+    const removedPass = directionalRegions(
       baseline,
       candidateIndex,
       "removed",
       tolerance,
       work,
     );
-    const added = directionalRegions(
+    const addedPass = directionalRegions(
       candidate,
       baselineIndex,
       "added",
       tolerance,
       work,
     );
+    const removed = removedPass.regions;
+    const added = addedPass.regions;
     const ranked = [...removed, ...added].sort(compareSurfaceRegion);
     const reported = ranked.slice(0, parameterResult.maxRegions);
     const truncated = reported.length !== ranked.length;
-    const warnings = truncated
-      ? [
-          {
-            code: "analysis.region-limit",
-            severity: "warning" as const,
-            message: `${ranked.length - reported.length} lower-ranked changed regions were omitted by the requested region limit.`,
-            details: {
-              detectedRegionCount: ranked.length,
-              reportedRegionCount: reported.length,
+
+    // Worst-case distance from any point on an analyzed triangle to the
+    // nearest of its four samples (three vertices plus centroid), derived
+    // from that triangle's longest edge -- see `SAMPLE_SPACING_EDGE_FACTOR`.
+    // Reported per model (the pass over each model's own triangles already
+    // ran above for sampling, so this piggybacks on it rather than adding a
+    // new full pass) and as the pair maximum used for the undersampled
+    // check, since either direction's blind spot is governed by its own
+    // source model's tessellation.
+    const baselineMaxSampleSpacing =
+      removedPass.maxLongestEdge * SAMPLE_SPACING_EDGE_FACTOR;
+    const candidateMaxSampleSpacing =
+      addedPass.maxLongestEdge * SAMPLE_SPACING_EDGE_FACTOR;
+    const maxSampleSpacing = Math.max(
+      baselineMaxSampleSpacing,
+      candidateMaxSampleSpacing,
+    );
+    const undersampled = maxSampleSpacing > tolerance;
+
+    const warnings = [
+      ...(truncated
+        ? [
+            {
+              code: "analysis.region-limit",
+              severity: "warning" as const,
+              message: `${ranked.length - reported.length} lower-ranked changed regions were omitted by the requested region limit.`,
+              details: {
+                detectedRegionCount: ranked.length,
+                reportedRegionCount: reported.length,
+              },
             },
-          },
-        ]
-      : [];
+          ]
+        : []),
+      ...(undersampled
+        ? [
+            {
+              code: "analysis.surface-distance-undersampled",
+              severity: "warning" as const,
+              message: `The sample spacing bound (${maxSampleSpacing} mm, derived from the coarsest analyzed triangle edges) exceeds the requested distance tolerance (${tolerance} mm); features entirely interior to a coarse triangle can be missed without being reported as a region.`,
+              details: {
+                maxSampleSpacingMillimetres: maxSampleSpacing,
+                baselineMaxSampleSpacingMillimetres: baselineMaxSampleSpacing,
+                candidateMaxSampleSpacingMillimetres:
+                  candidateMaxSampleSpacing,
+                toleranceMillimetres: tolerance,
+              },
+            },
+          ]
+        : []),
+    ];
     const metrics: Array<{
       id: string;
       value: number;
@@ -503,12 +545,17 @@ function analyzeSurfaceDistance(
         adjustments: [],
         uncertainty: {
           description:
-            "Distances use finite vertex and triangle-centroid samples against the opposite tessellated surface. Extrema between samples can be missed, and results depend on tessellation.",
+            "Distances use finite vertex and triangle-centroid samples against the opposite tessellated surface. Extrema between samples can be missed, and results depend on tessellation. For each analyzed triangle, the farthest point on that triangle from its nearest sample is at most two-thirds of that triangle's longest edge; the largest such bound across each model's triangles is reported below as its sample spacing. When that spacing exceeds the requested tolerance, features confined to a single coarse triangle's interior can be missed entirely, with no reported region and no defect in the tolerance value itself.",
           parameters: {
             sampling: "vertices-and-triangle-centroids",
             distanceToleranceMillimetres: tolerance,
             maxRegions: parameterResult.maxRegions,
             omittedRegionCount: ranked.length - reported.length,
+            maxSampleSpacingMillimetres: maxSampleSpacing,
+            baselineMaxSampleSpacingMillimetres: baselineMaxSampleSpacing,
+            candidateMaxSampleSpacingMillimetres: candidateMaxSampleSpacing,
+            toleranceMillimetres: tolerance,
+            undersampled,
           },
         },
       },
@@ -523,13 +570,27 @@ function analyzeSurfaceDistance(
       );
     }
     if (error instanceof WorkBudgetInternalError) throw error;
+    if (error instanceof NumericRangeExceededError) {
+      return indeterminate(
+        request,
+        "numeric-range-exceeded",
+        [error.message.slice(0, 950)],
+        validation,
+      );
+    }
+    // Any other exception here is not a numeric-range failure the code
+    // detected -- it is an unexpected defect (a reachable invariant
+    // violation, a bug in a dependency, and so on). Reporting it as
+    // `numeric-range-exceeded` would misattribute the cause to input
+    // magnitude and hide the real problem, so it gets a distinct code
+    // instead while still failing closed with no result.
     return indeterminate(
       request,
-      "numeric-range-exceeded",
+      "internal-error",
       [
         error instanceof Error
           ? error.message.slice(0, 950)
-          : "Surface distance exceeded the supported numeric range.",
+          : "Surface distance failed with an unexpected error.",
       ],
       validation,
     );
@@ -573,13 +634,44 @@ interface RankedSurfaceRegion {
 
 const DIRECTIONAL_TRIANGLE_WORK_UNITS = 8;
 
+/**
+ * Bounds the worst-case distance from any point on a triangle to the
+ * nearest of its four samples (three vertices plus the centroid), as a
+ * fraction of that triangle's longest edge `L`.
+ *
+ * Derivation: the centroid `G` is always inside the (closed, convex)
+ * triangle. Distance from the fixed point `G` to a point constrained to a
+ * convex region is a convex function of that point, so its maximum over the
+ * triangle is attained at one of the three vertices -- i.e. the farthest any
+ * point on the triangle can be from the centroid is
+ * `max(|GA|, |GB|, |GC|)`. Each of those is two-thirds of the corresponding
+ * median (the centroid divides every median 2:1 from the vertex), and every
+ * median of a triangle is at most its longest edge: for the median from
+ * vertex A, `m_a = sqrt(2b^2 + 2c^2 - a^2) / 2 <= sqrt(2b^2 + 2c^2) / 2 <=
+ * sqrt(4L^2) / 2 = L` since the two sides `b`, `c` adjacent to A are each at
+ * most `L`, and symmetrically for the medians from B and C. So
+ * `max(|GA|, |GB|, |GC|) <= (2/3) * L`, and therefore every point on the
+ * triangle is within `(2/3) * L` of the centroid sample alone. Sampling the
+ * three vertices in addition can only tighten this, never loosen it, so
+ * `(2/3) * L` remains a true (if conservative -- the tight bound is smaller
+ * for typical triangle shapes) upper bound on the distance from any point on
+ * the triangle to its nearest sample.
+ */
+export const SAMPLE_SPACING_EDGE_FACTOR = 2 / 3;
+
+interface DirectionalPassResult {
+  readonly regions: RankedSurfaceRegion[];
+  /** Longest edge length among this pass's source triangles, in millimetres. */
+  readonly maxLongestEdge: number;
+}
+
 function directionalRegions(
   source: FlatGeometry,
   target: TriangleSpatialIndex,
   category: "added" | "removed",
   tolerance: number,
   work: WorkUnitCounter,
-): RankedSurfaceRegion[] {
+): DirectionalPassResult {
   const triangleCount = source.triangleCount;
   work.charge(triangleCount * DIRECTIONAL_TRIANGLE_WORK_UNITS);
 
@@ -592,6 +684,7 @@ function directionalRegions(
 
   const positions = source.positions;
   const indices = source.indices;
+  let maxLongestEdge = 0;
   for (let triangle = 0; triangle < triangleCount; triangle += 1) {
     const base = triangle * 3;
     const ia = indices[base]!;
@@ -609,6 +702,15 @@ function directionalRegions(
     const centroidX = (ax + bx + cx) / 3;
     const centroidY = (ay + by + cy) / 3;
     const centroidZ = (az + bz + cz) / 3;
+
+    // Piggybacks on this existing per-triangle pass instead of adding one:
+    // the vertex coordinates needed for edge lengths are already loaded
+    // above for sampling.
+    const edgeAB = Math.hypot(bx - ax, by - ay, bz - az);
+    const edgeBC = Math.hypot(cx - bx, cy - by, cz - bz);
+    const edgeCA = Math.hypot(ax - cx, ay - cy, az - cz);
+    const longestEdge = Math.max(edgeAB, edgeBC, edgeCA);
+    if (longestEdge > maxLongestEdge) maxLongestEdge = longestEdge;
 
     work.charge(1);
     const distanceA = target.distance(ax, ay, az, work);
@@ -697,7 +799,7 @@ function directionalRegions(
       triangleIndices: component,
     });
   }
-  return regions;
+  return { regions, maxLongestEdge };
 }
 
 class DisjointSet {

@@ -1,15 +1,19 @@
 import { analysisResultSchema } from "@voxelspy/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   ANALYSIS_LIMITS,
+  SAMPLE_SPACING_EDGE_FACTOR,
   analyzeModelPair,
   supportedAnalysisMethods,
 } from "../src/index.js";
+import { NumericRangeExceededError, TriangleSpatialIndex } from "../src/spatial-index.js";
 import {
   boxModel,
+  coarsePanelModel,
   disconnectedFacetModel,
   facetLocalSquareModel,
+  panelWithInteriorHoleModel,
   request,
   translation,
   triangleModel,
@@ -150,7 +154,16 @@ describe("approximate surface-distance adapter", () => {
 
   it("retains explicit detected and reported counts when regions truncate", () => {
     const result = analyzeModelPair({
-      request: request("surface-distance", { parameters: { maxRegions: 2 } }),
+      // A tolerance above these triangles' ~0.94mm sample-spacing bound
+      // (two-thirds of their ~1.41mm longest edge) keeps this assertion
+      // scoped to region-limit truncation: it is unaffected either way by
+      // the ~9-39mm differences under test, but without it an
+      // `analysis.surface-distance-undersampled` warning would also appear
+      // below and break the exact single-warning assertion.
+      request: request("surface-distance", {
+        parameters: { maxRegions: 2 },
+        toleranceMillimetres: 1.5,
+      }),
       baseline: disconnectedFacetModel("baseline", 5),
       candidate: disconnectedFacetModel("candidate", 1),
     });
@@ -181,6 +194,91 @@ describe("approximate surface-distance adapter", () => {
     if (result.outcome.semantics === "approximate") {
       expect(result.outcome.uncertainty.parameters).toMatchObject({
         omittedRegionCount: 2,
+      });
+    }
+  });
+
+  it("reports a true miss honestly: a hole confined to a coarse triangle's interior is undetected but flagged undersampled", () => {
+    // baseline: one large flat panel with no gap, tessellated into just two
+    // huge triangles (longest edge ~141.42mm). candidate: the same
+    // footprint finely gridded, with one interior 25x25mm cell entirely
+    // omitted -- a genuine hole -- but that cell's four corners remain
+    // referenced by neighboring cells, so the hole introduces no vertex or
+    // centroid sample anywhere near its own boundary or center that isn't
+    // already coincident with the (gapless) baseline plane. Every one of
+    // baseline's six samples (four corners plus two triangle centroids)
+    // lands outside the hole footprint, and every one of candidate's own
+    // samples lands on baseline's full coverage, so both directional passes
+    // report zero changed triangles even though the hole is real and far
+    // larger than the requested tolerance -- exactly the false negative the
+    // uncertainty bound exists to disclose.
+    const tolerance = 0.001;
+    const result = analyzeModelPair({
+      request: request("surface-distance", { toleranceMillimetres: tolerance }),
+      baseline: coarsePanelModel("baseline"),
+      candidate: panelWithInteriorHoleModel("candidate"),
+    });
+    expect(result.outcome.state).toBe("complete");
+    if (result.outcome.state !== "complete") return;
+    expect(result.outcome.regions).toEqual([]);
+    expect(result.outcome.orderedRegionIds).toEqual([]);
+
+    const baselineLongestEdge = Math.hypot(100, 100);
+    const expectedMaxSampleSpacing =
+      baselineLongestEdge * SAMPLE_SPACING_EDGE_FACTOR;
+    expect(expectedMaxSampleSpacing).toBeGreaterThan(tolerance);
+
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "analysis.surface-distance-undersampled",
+          severity: "warning",
+          details: expect.objectContaining({
+            toleranceMillimetres: tolerance,
+          }),
+        }),
+      ]),
+    );
+    const undersampledWarning = result.warnings.find(
+      ({ code }) => code === "analysis.surface-distance-undersampled",
+    );
+    expect(undersampledWarning?.details?.maxSampleSpacingMillimetres).toBe(
+      expectedMaxSampleSpacing,
+    );
+
+    if (result.outcome.semantics === "approximate") {
+      expect(result.outcome.uncertainty.parameters).toMatchObject({
+        undersampled: true,
+        toleranceMillimetres: tolerance,
+        maxSampleSpacingMillimetres: expectedMaxSampleSpacing,
+      });
+      expect(result.outcome.uncertainty.description).toMatch(
+        /two-thirds of that triangle's longest edge/u,
+      );
+    }
+  });
+
+  it("does not warn or flag undersampling when the tolerance covers the sample spacing", () => {
+    const baselineLongestEdge = Math.hypot(100, 100);
+    const wellSampledTolerance =
+      baselineLongestEdge * SAMPLE_SPACING_EDGE_FACTOR + 1;
+    const result = analyzeModelPair({
+      request: request("surface-distance", {
+        toleranceMillimetres: wellSampledTolerance,
+      }),
+      baseline: coarsePanelModel("baseline"),
+      candidate: panelWithInteriorHoleModel("candidate"),
+    });
+    expect(result.outcome.state).toBe("complete");
+    if (result.outcome.state !== "complete") return;
+    expect(
+      result.warnings.some(
+        ({ code }) => code === "analysis.surface-distance-undersampled",
+      ),
+    ).toBe(false);
+    if (result.outcome.semantics === "approximate") {
+      expect(result.outcome.uncertainty.parameters).toMatchObject({
+        undersampled: false,
       });
     }
   });
@@ -405,5 +503,78 @@ describe("hostile input boundaries", () => {
       state: "indeterminate",
       code: "numeric-range-exceeded",
     });
+  });
+});
+
+describe("surface-distance error classification", () => {
+  it("distinguishes a genuine numeric-range failure from other spatial-index errors by class", () => {
+    // `NumericRangeExceededError` is what `analyzeSurfaceDistance`'s catch
+    // uses to decide a failure is a genuine, code-detected numeric-range
+    // problem (mapped to `numeric-range-exceeded`). Any other error --
+    // including the defensive "Cannot index an empty surface" guard, which
+    // the public `analyzeModelPair` entry point should never itself
+    // reach, since the empty-geometry precondition check already rejects
+    // that case earlier -- must remain a plain `Error` so it is not
+    // misattributed to numeric range and instead surfaces as
+    // `internal-error`.
+    const emptyGeometry = {
+      positions: new Float64Array(0),
+      indices: new Uint32Array(0),
+      vertexCount: 0,
+      triangleCount: 0,
+    };
+    let caught: unknown;
+    try {
+      new TriangleSpatialIndex(emptyGeometry, { charge: () => undefined });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBeInstanceOf(NumericRangeExceededError);
+  });
+
+  it("maps an unexpected exception during surface-distance analysis to internal-error, not numeric-range-exceeded", () => {
+    const distanceSpy = vi
+      .spyOn(TriangleSpatialIndex.prototype, "distance")
+      .mockImplementationOnce(() => {
+        throw new Error("Simulated unexpected defect, not a range failure.");
+      });
+    try {
+      const result = analyzeModelPair({
+        request: request("surface-distance"),
+        baseline: boxModel("baseline"),
+        candidate: boxModel("candidate"),
+      });
+      expect(result.outcome).toMatchObject({
+        state: "indeterminate",
+        code: "internal-error",
+        reasons: [expect.stringMatching(/Simulated unexpected defect/u)],
+      });
+    } finally {
+      distanceSpy.mockRestore();
+    }
+  });
+
+  it("still maps a real numeric-range failure to numeric-range-exceeded, not internal-error", () => {
+    const distanceSpy = vi
+      .spyOn(TriangleSpatialIndex.prototype, "distance")
+      .mockImplementationOnce(() => {
+        throw new NumericRangeExceededError(
+          "Surface distance exceeded the supported numeric range.",
+        );
+      });
+    try {
+      const result = analyzeModelPair({
+        request: request("surface-distance"),
+        baseline: boxModel("baseline"),
+        candidate: boxModel("candidate"),
+      });
+      expect(result.outcome).toMatchObject({
+        state: "indeterminate",
+        code: "numeric-range-exceeded",
+      });
+    } finally {
+      distanceSpy.mockRestore();
+    }
   });
 });
