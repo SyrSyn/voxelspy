@@ -7,7 +7,10 @@ import {
   analyzeModelPair,
   supportedAnalysisMethods,
 } from "../src/index.js";
-import { NumericRangeExceededError, TriangleSpatialIndex } from "../src/spatial-index.js";
+import {
+  NumericRangeExceededError,
+  TriangleSpatialIndex,
+} from "../src/spatial-index.js";
 import {
   boxModel,
   coarsePanelModel,

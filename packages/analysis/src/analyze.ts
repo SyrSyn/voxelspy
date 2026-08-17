@@ -444,8 +444,7 @@ function analyzeSurfaceDistance(
               details: {
                 maxSampleSpacingMillimetres: maxSampleSpacing,
                 baselineMaxSampleSpacingMillimetres: baselineMaxSampleSpacing,
-                candidateMaxSampleSpacingMillimetres:
-                  candidateMaxSampleSpacing,
+                candidateMaxSampleSpacingMillimetres: candidateMaxSampleSpacing,
                 toleranceMillimetres: tolerance,
               },
             },

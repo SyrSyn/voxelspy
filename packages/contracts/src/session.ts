@@ -379,11 +379,17 @@ export const sessionArchiveExchangeSchema = z
       });
     // Keep the first match per path (matching the .find() semantics this
     // replaces) in case duplicate paths ever reach this refinement.
-    const preflightByPath = new Map<string, (typeof preflight.entries)[number]>();
+    const preflightByPath = new Map<
+      string,
+      (typeof preflight.entries)[number]
+    >();
     for (const entry of preflight.entries)
       if (!preflightByPath.has(entry.path))
         preflightByPath.set(entry.path, entry);
-    const verifiedByPath = new Map<string, (typeof verifiedResources)[number]>();
+    const verifiedByPath = new Map<
+      string,
+      (typeof verifiedResources)[number]
+    >();
     for (const verified of verifiedResources)
       if (!verifiedByPath.has(verified.path))
         verifiedByPath.set(verified.path, verified);

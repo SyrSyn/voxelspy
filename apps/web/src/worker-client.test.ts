@@ -31,7 +31,10 @@ class FakeWorker {
     FakeWorker.instances.push(this);
   }
 
-  addEventListener(type: "message" | "error", listener: Listener | (() => void)) {
+  addEventListener(
+    type: "message" | "error",
+    listener: Listener | (() => void),
+  ) {
     if (type === "message") this.messageListeners.push(listener as Listener);
     else this.errorListeners.push(listener as () => void);
   }
@@ -40,7 +43,8 @@ class FakeWorker {
     type: "message" | "error",
     listener: Listener | (() => void),
   ) {
-    const list = type === "message" ? this.messageListeners : this.errorListeners;
+    const list =
+      type === "message" ? this.messageListeners : this.errorListeners;
     const index = list.indexOf(listener as never);
     if (index >= 0) list.splice(index, 1);
   }
@@ -224,7 +228,9 @@ describe("runComparison cancellation", () => {
     await expect(runPromise).rejects.toBeInstanceOf(ComparisonCancelledError);
     expect(worker.terminated).toBe(true);
     expect(
-      worker.posted.some((message) => (message as { type: string }).type === "cancel"),
+      worker.posted.some(
+        (message) => (message as { type: string }).type === "cancel",
+      ),
     ).toBe(false);
   });
 
@@ -287,6 +293,8 @@ describe("runComparison cancellation", () => {
 
 describe("requestIdSchema sanity", () => {
   it("accepts the synthesized cancel request id shape used by the client", () => {
-    expect(() => requestIdSchema.parse("cancel.import.baseline.1")).not.toThrow();
+    expect(() =>
+      requestIdSchema.parse("cancel.import.baseline.1"),
+    ).not.toThrow();
   });
 });

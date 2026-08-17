@@ -146,7 +146,10 @@ export async function runComparison(
       // Progress updates are informational only; consume them immediately so
       // they never pile up in the queue waiting for a predicate that will
       // never match them.
-    } else if (parsed.data.type === "error" && parsed.data.requestId === undefined) {
+    } else if (
+      parsed.data.type === "error" &&
+      parsed.data.requestId === undefined
+    ) {
       // Protocol-level errors (invalid message, duplicate request ID, ...)
       // carry no request ID, so no `next()` predicate below would ever match
       // them. Fail the in-flight wait immediately instead of queuing forever.

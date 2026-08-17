@@ -955,10 +955,7 @@ describe("analysis contracts", () => {
       analysisResultSchema.parse(
         envelope({
           ...outcome,
-          orderedRegionIds: [
-            ...orderedRegionIds.slice(1),
-            "region.unknown",
-          ],
+          orderedRegionIds: [...orderedRegionIds.slice(1), "region.unknown"],
         }),
       ),
     ).toThrow();
