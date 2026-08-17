@@ -1,9 +1,10 @@
 import type { SourceAxis, SourceUnit } from "@voxelspy/contracts";
-import { lazy, Suspense, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   ANALYSIS_MEMORY_MAX_MIB,
   ANALYSIS_MEMORY_MIN_MIB,
   ANALYSIS_MEMORY_STEP_MIB,
+  ComparisonCancelledError,
   DEFAULT_ANALYSIS_MEMORY_MIB,
   runComparison,
   type ComparisonProgress,
@@ -180,10 +181,12 @@ export function ComparisonFlow() {
   const [candidate, setCandidate] = useState(emptySource);
   const [progress, setProgress] = useState<ComparisonProgress>();
   const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
   const [result, setResult] = useState<CompletedComparison>();
   const [analysisMemoryMiB, setAnalysisMemoryMiB] = useState(
     DEFAULT_ANALYSIS_MEMORY_MIB,
   );
+  const activeRunRef = useRef<AbortController | null>(null);
   const baselineCapability = useMemo(
     () => sourceCapability(baseline),
     [baseline],
@@ -194,6 +197,12 @@ export function ComparisonFlow() {
   );
   const ready =
     baselineCapability.ready && candidateCapability.ready && !progress;
+
+  useEffect(() => {
+    return () => {
+      activeRunRef.current?.abort();
+    };
+  }, []);
 
   const compare = async () => {
     if (
@@ -206,7 +215,12 @@ export function ComparisonFlow() {
       !candidate.axis
     )
       return;
+    // A new run replaces any in-flight one; make sure it is stopped first.
+    activeRunRef.current?.abort();
+    const controller = new AbortController();
+    activeRunRef.current = controller;
     setError(undefined);
+    setNotice(undefined);
     setProgress({ stage: "starting", message: "Starting local comparison" });
     try {
       const next = await runComparison(
@@ -214,15 +228,27 @@ export function ComparisonFlow() {
         candidate as ComparisonSource,
         setProgress,
         analysisMemoryMiB,
+        controller.signal,
       );
       setResult(next);
     } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Comparison failed safely.",
-      );
+      if (reason instanceof ComparisonCancelledError) {
+        setNotice("Comparison cancelled.");
+      } else {
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "Comparison failed safely.",
+        );
+      }
     } finally {
       setProgress(undefined);
+      if (activeRunRef.current === controller) activeRunRef.current = null;
     }
+  };
+
+  const cancel = () => {
+    activeRunRef.current?.abort();
   };
 
   if (result)
@@ -241,6 +267,7 @@ export function ComparisonFlow() {
           onReset={() => {
             setResult(undefined);
             setError(undefined);
+            setNotice(undefined);
           }}
         />
       </Suspense>
@@ -316,18 +343,30 @@ export function ComparisonFlow() {
         <div className="comparison-status" aria-live="polite">
           <span className={ready ? "status-ready" : ""}>
             {progress?.message ??
+              notice ??
               (ready
                 ? "Inputs pass capability preflight"
                 : "Choose both source files")}
           </span>
-          <button
-            className="button button-primary"
-            type="button"
-            disabled={!ready}
-            onClick={() => void compare()}
-          >
-            {progress ? "Comparing locally…" : "Validate and compare"}
-          </button>
+          <div className="actions">
+            {progress && (
+              <button
+                className="button button-secondary"
+                type="button"
+                onClick={cancel}
+              >
+                Cancel comparison
+              </button>
+            )}
+            <button
+              className="button button-primary"
+              type="button"
+              disabled={!ready}
+              onClick={() => void compare()}
+            >
+              {progress ? "Comparing locally…" : "Validate and compare"}
+            </button>
+          </div>
         </div>
         {error && (
           <div className="comparison-error" role="alert">

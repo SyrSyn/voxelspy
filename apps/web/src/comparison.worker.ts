@@ -173,7 +173,13 @@ function handle(value: unknown) {
 }
 
 async function execute(message: WorkerExecuteMessage) {
+  // True mid-computation interruption of importModel/analyzeModelPair is not
+  // possible: both are synchronous library calls once entered. This worker
+  // is honest about that limit and only checks for a received cancellation
+  // at stage boundaries (immediately before and after each such call); the
+  // client covers the rest by terminating the worker outright on abort.
   if (message.operation === "import") {
+    if (finishCancellation(message.requestId)) return;
     try {
       const result = await importModel(message.request);
       if (finishCancellation(message.requestId)) return;
@@ -222,6 +228,7 @@ async function execute(message: WorkerExecuteMessage) {
     );
     return;
   }
+  if (finishCancellation(message.requestId)) return;
   try {
     const result = analyzeModelPair({
       request: message.request,

@@ -13,6 +13,7 @@ import {
   type AnalysisResult,
   type ImportResult,
   type NormalizedModel,
+  type RequestId,
   type SourceAxis,
   type SourceUnit,
   type WorkerOutboundMessage,
@@ -44,6 +45,37 @@ export const DEFAULT_ANALYSIS_MEMORY_MIB = 256;
 export const MAX_CHANGED_REGIONS = 24;
 const WORK_UNITS_PER_MIB = 100_000;
 
+/** Grace period given to the worker to acknowledge cancellation before it is terminated. */
+export const CANCEL_GRACE_PERIOD_MS = 500;
+/** No message of any kind (including progress) for this long is treated as a stalled worker. */
+export const INACTIVITY_TIMEOUT_MS = 120_000;
+
+/**
+ * Raised when a comparison run is stopped because its AbortSignal fired.
+ * Distinct from `Error` subclasses used for genuine failures so callers can
+ * tell "the user cancelled" apart from "the comparison failed".
+ */
+export class ComparisonCancelledError extends Error {
+  constructor(message = "Comparison cancelled.") {
+    super(message);
+    this.name = "ComparisonCancelledError";
+  }
+}
+
+/**
+ * A structured failure surfaced by the worker protocol itself rather than by
+ * geometry import or analysis: an invalid/unversioned message, a duplicate
+ * request ID, or a worker that stopped responding entirely.
+ */
+export class ComparisonProtocolError extends Error {
+  readonly code: string | undefined;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = "ComparisonProtocolError";
+    this.code = code;
+  }
+}
+
 export function analysisExecutionBudget(memoryMiB: number) {
   if (
     !Number.isInteger(memoryMiB) ||
@@ -72,6 +104,7 @@ export async function runComparison(
   candidateSource: ComparisonSource,
   progress: (value: ComparisonProgress) => void,
   analysisMemoryMiB = DEFAULT_ANALYSIS_MEMORY_MIB,
+  signal?: AbortSignal,
 ): Promise<CompletedComparison> {
   const worker = new Worker(
     new URL("./comparison.worker.ts", import.meta.url),
@@ -80,24 +113,64 @@ export async function runComparison(
   const queue: WorkerOutboundMessage[] = [];
   let wake: (() => void) | undefined;
   let failure: Error | undefined;
-  worker.addEventListener("message", (event: MessageEvent<unknown>) => {
-    const parsed = workerOutboundMessageSchema.safeParse(event.data);
-    if (!parsed.success)
-      failure = new Error("Comparison worker returned an invalid message.");
-    else queue.push(parsed.data);
+  let cancelledError: ComparisonCancelledError | undefined;
+  let currentRequestId: RequestId | undefined;
+  let cancelRequested = false;
+  let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const wakeWaiters = () => {
     wake?.();
     wake = undefined;
+  };
+
+  const resetInactivityTimer = () => {
+    if (inactivityTimer !== undefined) clearTimeout(inactivityTimer);
+    inactivityTimer = setTimeout(() => {
+      failure = new ComparisonProtocolError(
+        "Comparison worker was inactive for too long and was terminated.",
+        "inactivity-timeout",
+      );
+      worker.terminate();
+      wakeWaiters();
+    }, INACTIVITY_TIMEOUT_MS);
+  };
+
+  worker.addEventListener("message", (event: MessageEvent<unknown>) => {
+    resetInactivityTimer();
+    const parsed = workerOutboundMessageSchema.safeParse(event.data);
+    if (!parsed.success) {
+      failure = new ComparisonProtocolError(
+        "Comparison worker returned an invalid message.",
+      );
+    } else if (parsed.data.type === "progress") {
+      // Progress updates are informational only; consume them immediately so
+      // they never pile up in the queue waiting for a predicate that will
+      // never match them.
+    } else if (parsed.data.type === "error" && parsed.data.requestId === undefined) {
+      // Protocol-level errors (invalid message, duplicate request ID, ...)
+      // carry no request ID, so no `next()` predicate below would ever match
+      // them. Fail the in-flight wait immediately instead of queuing forever.
+      failure = new ComparisonProtocolError(
+        parsed.data.error.message,
+        parsed.data.error.code,
+      );
+    } else {
+      queue.push(parsed.data);
+    }
+    wakeWaiters();
   });
   worker.addEventListener("error", () => {
-    failure = new Error("Comparison worker stopped unexpectedly.");
-    wake?.();
-    wake = undefined;
+    failure = new ComparisonProtocolError(
+      "Comparison worker stopped unexpectedly.",
+    );
+    wakeWaiters();
   });
 
   const next = async (
     predicate: (message: WorkerOutboundMessage) => boolean,
   ) => {
     while (true) {
+      if (cancelledError) throw cancelledError;
       if (failure) throw failure;
       const index = queue.findIndex(predicate);
       if (index >= 0) return queue.splice(index, 1)[0]!;
@@ -108,6 +181,37 @@ export async function runComparison(
   };
   const post = (message: Parameters<typeof getWorkerMessageTransferList>[0]) =>
     worker.postMessage(message, getWorkerMessageTransferList(message));
+
+  const triggerCancel = () => {
+    if (cancelRequested) return;
+    cancelRequested = true;
+    void (async () => {
+      const targetRequestId = currentRequestId;
+      if (targetRequestId) {
+        try {
+          const cancelId = requestIdSchema.parse(`cancel.${targetRequestId}`);
+          post({
+            protocolVersion: 1,
+            type: "cancel",
+            requestId: cancelId,
+            targetRequestId,
+          });
+        } catch {
+          // Fall through to termination even if the cancel message itself
+          // could not be constructed or sent.
+        }
+        await new Promise<void>((resolve) =>
+          setTimeout(resolve, CANCEL_GRACE_PERIOD_MS),
+        );
+      }
+      cancelledError = new ComparisonCancelledError();
+      worker.terminate();
+      wakeWaiters();
+    })();
+  };
+  signal?.addEventListener("abort", triggerCancel);
+  if (signal?.aborted) triggerCancel();
+  resetInactivityTimer();
   try {
     await next((message) => message.type === "ready");
     progress({
@@ -157,6 +261,7 @@ export async function runComparison(
         },
       });
       const validationRequest = structuredClone(request);
+      currentRequestId = requestId;
       post({
         protocolVersion: 1,
         type: "execute",
@@ -169,6 +274,7 @@ export async function runComparison(
           (message.type === "result" || message.type === "error") &&
           message.requestId === requestId,
       );
+      currentRequestId = undefined;
       if (response.type === "error") throw new Error(response.error.message);
       if (response.type !== "result" || response.operation !== "import")
         throw new Error(
@@ -199,6 +305,7 @@ export async function runComparison(
       tolerance: { distanceMillimetres: 0.1 },
       executionBudget: analysisExecutionBudget(analysisMemoryMiB),
     });
+    currentRequestId = analysisId;
     post({
       protocolVersion: 1,
       type: "execute",
@@ -211,6 +318,7 @@ export async function runComparison(
         (message.type === "result" || message.type === "error") &&
         message.requestId === analysisId,
     );
+    currentRequestId = undefined;
     if (response.type === "error") throw new Error(response.error.message);
     if (response.type !== "result" || response.operation !== "analysis")
       throw new Error("Comparison worker returned the wrong result type.");
@@ -220,6 +328,8 @@ export async function runComparison(
     }).result;
     return { baseline, candidate, analysis };
   } finally {
+    if (inactivityTimer !== undefined) clearTimeout(inactivityTimer);
+    signal?.removeEventListener("abort", triggerCancel);
     worker.terminate();
   }
 }
