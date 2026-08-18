@@ -20,7 +20,20 @@ The result is **exact within those validated preconditions**. Other closed solid
 
 ## Topology semantics
 
-Closedness, orientation consistency, non-manifold detection, and region connectivity all key triangle edges by exact vertex **coordinate**, never by raw vertex index: two triangle corners are treated as the same point, and their shared edge as connected, only when their coordinates are bit-for-bit identical. No tolerance-based welding happens anywhere in this package. This is uniform across `MeshAssessment` (the `assessGeometry` step behind every `validation` entry on an `AnalysisResult`), the `surface-distance` method's exact-edge region connectivity, and `summarizeModelGeometry`'s topology and volume evidence, so a facet-local mesh -- one private vertex copy per triangle corner, the representation binary STL import commonly produces -- that is geometrically watertight is recognized as closed consistently by all three. Index-level topology (whether two triangles happen to reuse the same vertex index) is not what validation, connectivity, or the summary report.
+Closedness, orientation consistency, non-manifold detection, and region connectivity all key triangle edges by exact vertex **coordinate**, never by raw vertex index: two triangle corners are treated as the same point, and their shared edge as connected, only when their coordinates are bit-for-bit identical. No tolerance-based welding happens anywhere in this package. This is uniform across `MeshAssessment` (the `assessGeometry` step behind every `validation` entry on an `AnalysisResult`), the `surface-distance` method's exact-edge region connectivity, `summarizeModelGeometry`'s topology and volume evidence, and `inspectModel`'s topology findings and watertightness verdict (below), so a facet-local mesh -- one private vertex copy per triangle corner, the representation binary STL import commonly produces -- that is geometrically watertight is recognized as closed consistently by all four. Index-level topology (whether two triangles happen to reuse the same vertex index) is not what validation, connectivity, the summary, or the inspection report report.
+
+## Single-model inspection
+
+`inspectModel(model, options?)` builds a self-contained `InspectionResult` for one model -- vertex/triangle/mesh/instance/component counts, bounds, surface area, and volume (via `summarizeModelGeometry`, reused unmodified rather than reimplemented), plus:
+
+- **`topologyFindings`**: one entry per topology issue kind actually present (`boundary-edges`, `non-manifold-edges`, `inconsistent-orientation`, `degenerate-triangles`), each with a stable `id`/`kind`, a `count`, a human-readable `summary`, and up to `maxTopologyExamples` bounded, deterministically ordered representative `examples` (an edge midpoint or triangle centroid plus the contributing triangle indices), with `examplesTruncated` set whenever `count` exceeds the number of examples returned -- including when `maxTopologyExamples` is `0`. `boundary-edges` is reported at `info` severity (an open surface is often an intentionally open sheet or panel, not damaged geometry); the other three kinds are `warning`, since each makes the surface itself unreliable for area, volume, or normal-based interpretation. Findings and their examples are omitted, never invented, for issue kinds with a zero count.
+- **`watertightness`**: `{ state: "closed" }`, `{ state: "not-closed", reasons }`, or `{ state: "indeterminate", reasons: ["empty-geometry"] }`. This verdict reuses exactly the same two topology counts `summarizeModelGeometry` already uses to decide volume availability -- closed if and only if `topology.boundaryEdgeCount === 0 && topology.nonManifoldEdgeCount === 0`, matching `MeshAssessment.closed` in `analyze.ts` -- so this package never expresses two conflicting notions of "closed." Inconsistent orientation does not affect this verdict (a mesh can be topologically closed while inconsistently wound); it still surfaces separately as its own `topologyFindings` entry and still withholds volume, exactly as `summarizeModelGeometry` already does. `indeterminate` documents the empty-geometry case defensively and is not reachable through `inspectModel` itself today, because the contracts mesh-buffer schema requires a nonzero-byte-length buffer for both `positions` and `indices`, so a schema-valid mesh always contributes at least one triangle.
+- **`meshBreakdown`**: `{ meshId, triangleCount, vertexCount }` per mesh record, in `model.meshes` order, bounded by `maxMeshBreakdownEntries` with `truncated`/`totalMeshCount` recorded.
+- **`frame`** and **`provenance`** are echoed from the input model unchanged -- never reinterpreted, recentered, or repaired.
+
+`inspectModel` fails closed on hostile input: it validates `model` against `normalizedModelSchema` first (throwing the same way `analyzeModelPair` does on an invalid contract), then checks expanded vertex/triangle counts against this package's existing `ANALYSIS_LIMITS.maxExpandedVertices`/`maxExpandedTriangles` ceilings (the same ceilings `analyzeModelPair` enforces) before any O(vertices + triangles) work runs, throwing `InspectionResourceLimitError` if either is exceeded. `InspectOptions.maxTopologyExamples` (default `DEFAULT_MAX_TOPOLOGY_EXAMPLES` = 5, ceiling `MAX_TOPOLOGY_EXAMPLES` = 50) and `maxMeshBreakdownEntries` (default `DEFAULT_MAX_MESH_BREAKDOWN_ENTRIES` = 200, ceiling `MAX_MESH_BREAKDOWN_ENTRIES` = 2,000) are the only bounds this module adds beyond the package's existing ceilings; an out-of-range value throws `RangeError` rather than being silently clamped. The result is deterministic: identical input, including identical option values, produces a deeply equal `InspectionResult` every time, because example selection walks the model's own mesh/placement traversal order and `Map` insertion order, never object identity or iteration timing.
+
+`inspectModel` adds no new geometry math beyond bounded example-location collection: internally it calls the same triangle/edge walk `summarizeModelGeometry` uses (see `summarizeModelGeometryWithEvidence` in `src/summary.ts`) so the two can never diverge on counts, and is a reporting layer over those measurements, not a second geometry pipeline -- intended so a UI "Inspect" view stays a thin presentation layer over this package's existing analysis, rather than a place where new geometry logic accumulates.
 
 ## Resource behavior
 
@@ -74,5 +87,15 @@ if (result.outcome.state === "complete") {
     // Regions are already ranked deterministically.
     console.log(regionId);
   }
+}
+```
+
+```ts
+import { inspectModel } from "@voxelspy/analysis";
+
+const inspection = inspectModel(model);
+console.log(inspection.watertightness); // { state: "closed" } | { state: "not-closed", reasons: [...] } | ...
+for (const finding of inspection.topologyFindings) {
+  console.log(finding.severity, finding.summary, finding.examples);
 }
 ```

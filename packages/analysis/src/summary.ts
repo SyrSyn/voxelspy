@@ -44,6 +44,20 @@ export interface TopologySummary {
   readonly degenerateTriangleCount: number;
 }
 
+/**
+ * A bounded, representative location for one instance of a topology issue,
+ * in the same comparison-frame Float64 coordinates as the rest of this
+ * module's output. `triangleIndices` are ordinal positions in the walk
+ * order this module builds from the model's own mesh/placement traversal
+ * (deterministic for a given model, but not necessarily the indexing any
+ * particular renderer or importer uses) -- one index for a degenerate
+ * triangle, or every triangle usage that shares the located edge.
+ */
+export interface TopologyExampleLocation {
+  readonly positionMillimetres: Vec3;
+  readonly triangleIndices: readonly number[];
+}
+
 export type ModelVolumeSummary =
   | {
       readonly available: true;
@@ -137,23 +151,43 @@ interface EdgeRecord {
   forward: number;
   reverse: number;
   readonly triangleIndices: number[];
+  /** The two endpoint points as first encountered; identical on every later hit, since this key is exact-coordinate. */
+  readonly samplePoints: readonly [Vec3, Vec3];
+}
+
+interface PlacedGeometry {
+  readonly positions: Vec3[];
+  readonly triangles: TriangleRecord[];
+  readonly vertexCount: number;
+  readonly triangleCount: number;
+}
+
+export interface TopologyComputation {
+  readonly area: number;
+  readonly signedVolume: number;
+  readonly componentCount: number;
+  readonly degenerateTriangleCount: number;
+  readonly boundaryEdgeCount: number;
+  readonly nonManifoldEdgeCount: number;
+  readonly inconsistentEdgeCount: number;
+  readonly boundaryEdgeExamples: readonly TopologyExampleLocation[];
+  readonly nonManifoldEdgeExamples: readonly TopologyExampleLocation[];
+  readonly inconsistentEdgeExamples: readonly TopologyExampleLocation[];
+  readonly degenerateTriangleExamples: readonly TopologyExampleLocation[];
 }
 
 /**
- * Summarizes placed model geometry in the supplied comparison frame.
- *
- * Calculations retain Float64 coordinates throughout. No recentering, repair,
- * tolerance welding, or printability interpretation is performed.
- *
- * This walks the model's own mesh/placement graph directly (rather than
- * `flattenModel`'s typed-array flattening) because it also needs exact
- * shared-edge topology keyed per placed instance, which is summary-specific
- * and not part of the shared flattening path.
+ * Walks the model's own mesh/placement graph directly (rather than
+ * `flattenModel`'s typed-array flattening) because the topology census below
+ * needs exact shared-edge keys per placed instance, which is summary-specific
+ * and not part of the shared flattening path. Shared by `summarizeModelGeometry`
+ * and `summarizeModelGeometryWithEvidence` so there is exactly one
+ * implementation of this walk.
  */
-export function summarizeModelGeometry(
+function collectPlacedGeometry(
   model: NormalizedModel,
-  modelToComparison: Mat4 = IDENTITY_MAT4,
-): ModelPresentationSummary {
+  modelToComparison: Mat4,
+): PlacedGeometry {
   const meshes = new Map(model.meshes.map((mesh) => [mesh.id, mesh]));
   const positions: Vec3[] = [];
   const triangles: TriangleRecord[] = [];
@@ -234,12 +268,31 @@ export function summarizeModelGeometry(
     }
   }
 
-  const bounds = summarizeBounds(positions);
+  return { positions, triangles, vertexCount, triangleCount };
+}
+
+/**
+ * Computes area, signed volume, connected components, and the topology
+ * census (boundary/non-manifold/inconsistent edges, degenerate triangles)
+ * from an already-placed triangle list. `maxExamplesPerKind` bounds how many
+ * representative example locations are collected per issue kind (pass `0`
+ * to collect none, as `summarizeModelGeometry` does); example collection
+ * never changes any count, only how much of it is illustrated.
+ *
+ * Example ordering is deterministic: triangles are walked in `triangles`'
+ * own (already-deterministic) order, and edges are walked in `Map`
+ * insertion order, which is fixed by that same triangle walk.
+ */
+function computeTopology(
+  triangles: readonly TriangleRecord[],
+  maxExamplesPerKind: number,
+): TopologyComputation {
   const edges = new Map<string, EdgeRecord>();
   const components = new DisjointSet(triangles.length);
   const area = new CompensatedSum();
   const signedVolume = new CompensatedSum();
   let degenerateTriangleCount = 0;
+  const degenerateTriangleExamples: TopologyExampleLocation[] = [];
 
   triangles.forEach((triangle, triangleIndex) => {
     const [first, second, third] = triangle.points;
@@ -247,17 +300,26 @@ export function summarizeModelGeometry(
     area.add(triangleArea);
     if (!(triangleArea > 0) || !Number.isFinite(triangleArea)) {
       degenerateTriangleCount += 1;
+      pushExample(
+        degenerateTriangleExamples,
+        maxExamplesPerKind,
+        centroidOf(first, second, third),
+        [triangleIndex],
+      );
     }
     signedVolume.add(dot(first, cross(second, third)) / 6);
     const [firstKey, secondKey, thirdKey] = triangle.vertexKeys;
-    addEdge(edges, firstKey, secondKey, triangleIndex);
-    addEdge(edges, secondKey, thirdKey, triangleIndex);
-    addEdge(edges, thirdKey, firstKey, triangleIndex);
+    addEdge(edges, firstKey, secondKey, triangleIndex, first, second);
+    addEdge(edges, secondKey, thirdKey, triangleIndex, second, third);
+    addEdge(edges, thirdKey, firstKey, triangleIndex, third, first);
   });
 
   let boundaryEdgeCount = 0;
   let nonManifoldEdgeCount = 0;
   let inconsistentEdgeCount = 0;
+  const boundaryEdgeExamples: TopologyExampleLocation[] = [];
+  const nonManifoldEdgeExamples: TopologyExampleLocation[] = [];
+  const inconsistentEdgeExamples: TopologyExampleLocation[] = [];
   for (const edge of edges.values()) {
     const [firstTriangle, ...neighbors] = edge.triangleIndices;
     if (firstTriangle !== undefined) {
@@ -266,36 +328,81 @@ export function summarizeModelGeometry(
       }
     }
     const total = edge.forward + edge.reverse;
-    if (total === 1) boundaryEdgeCount += 1;
-    else if (total > 2) nonManifoldEdgeCount += 1;
-    else if (edge.forward !== 1 || edge.reverse !== 1) {
+    if (total === 1) {
+      boundaryEdgeCount += 1;
+      pushExample(
+        boundaryEdgeExamples,
+        maxExamplesPerKind,
+        midpointOf(edge.samplePoints[0], edge.samplePoints[1]),
+        edge.triangleIndices,
+      );
+    } else if (total > 2) {
+      nonManifoldEdgeCount += 1;
+      pushExample(
+        nonManifoldEdgeExamples,
+        maxExamplesPerKind,
+        midpointOf(edge.samplePoints[0], edge.samplePoints[1]),
+        edge.triangleIndices,
+      );
+    } else if (edge.forward !== 1 || edge.reverse !== 1) {
       inconsistentEdgeCount += 1;
+      pushExample(
+        inconsistentEdgeExamples,
+        maxExamplesPerKind,
+        midpointOf(edge.samplePoints[0], edge.samplePoints[1]),
+        edge.triangleIndices,
+      );
     }
   }
 
-  const topology: TopologySummary = {
+  return {
+    area: area.value(),
+    signedVolume: signedVolume.value(),
+    componentCount: components.count(),
+    degenerateTriangleCount,
     boundaryEdgeCount,
     nonManifoldEdgeCount,
     inconsistentEdgeCount,
-    degenerateTriangleCount,
+    boundaryEdgeExamples,
+    nonManifoldEdgeExamples,
+    inconsistentEdgeExamples,
+    degenerateTriangleExamples,
+  };
+}
+
+function buildPresentationSummary(
+  model: NormalizedModel,
+  placed: PlacedGeometry,
+  topo: TopologyComputation,
+): ModelPresentationSummary {
+  const bounds = summarizeBounds(placed.positions);
+  const topology: TopologySummary = {
+    boundaryEdgeCount: topo.boundaryEdgeCount,
+    nonManifoldEdgeCount: topo.nonManifoldEdgeCount,
+    inconsistentEdgeCount: topo.inconsistentEdgeCount,
+    degenerateTriangleCount: topo.degenerateTriangleCount,
   };
   const volumeReasons: VolumeUnavailableReason[] = [];
-  if (triangles.length === 0) volumeReasons.push("empty-geometry");
-  if (degenerateTriangleCount > 0) volumeReasons.push("degenerate-triangles");
-  if (boundaryEdgeCount > 0) volumeReasons.push("boundary-edges");
-  if (nonManifoldEdgeCount > 0) volumeReasons.push("non-manifold-edges");
-  if (inconsistentEdgeCount > 0) volumeReasons.push("inconsistent-orientation");
+  if (placed.triangles.length === 0) volumeReasons.push("empty-geometry");
+  if (topo.degenerateTriangleCount > 0) {
+    volumeReasons.push("degenerate-triangles");
+  }
+  if (topo.boundaryEdgeCount > 0) volumeReasons.push("boundary-edges");
+  if (topo.nonManifoldEdgeCount > 0) volumeReasons.push("non-manifold-edges");
+  if (topo.inconsistentEdgeCount > 0) {
+    volumeReasons.push("inconsistent-orientation");
+  }
 
-  const signedCubicMillimetres = normalizeZero(signedVolume.value());
+  const signedCubicMillimetres = normalizeZero(topo.signedVolume);
   return {
     modelId: model.id,
-    vertexCount,
-    triangleCount,
+    vertexCount: placed.vertexCount,
+    triangleCount: placed.triangleCount,
     meshCount: model.meshes.length,
     instanceCount: model.placement.instances.length,
-    componentCount: components.count(),
+    componentCount: topo.componentCount,
     bounds,
-    surfaceAreaSquareMillimetres: normalizeZero(area.value()),
+    surfaceAreaSquareMillimetres: normalizeZero(topo.area),
     volume:
       volumeReasons.length === 0
         ? {
@@ -305,6 +412,45 @@ export function summarizeModelGeometry(
             topology,
           }
         : { available: false, reasons: volumeReasons, topology },
+  };
+}
+
+/**
+ * Summarizes placed model geometry in the supplied comparison frame.
+ *
+ * Calculations retain Float64 coordinates throughout. No recentering, repair,
+ * tolerance welding, or printability interpretation is performed.
+ */
+export function summarizeModelGeometry(
+  model: NormalizedModel,
+  modelToComparison: Mat4 = IDENTITY_MAT4,
+): ModelPresentationSummary {
+  const placed = collectPlacedGeometry(model, modelToComparison);
+  const topo = computeTopology(placed.triangles, 0);
+  return buildPresentationSummary(model, placed, topo);
+}
+
+/**
+ * Same computation as `summarizeModelGeometry` -- this performs exactly one
+ * walk of the model's placed geometry, not a second implementation of the
+ * edge census -- additionally returning bounded, deterministic example
+ * locations for each topology issue kind. Not part of the package's public
+ * surface: intended for `inspectModel` (see `src/inspect.ts`) so the two
+ * never diverge.
+ */
+export function summarizeModelGeometryWithEvidence(
+  model: NormalizedModel,
+  modelToComparison: Mat4,
+  maxExamplesPerKind: number,
+): {
+  readonly summary: ModelPresentationSummary;
+  readonly evidence: TopologyComputation;
+} {
+  const placed = collectPlacedGeometry(model, modelToComparison);
+  const topo = computeTopology(placed.triangles, maxExamplesPerKind);
+  return {
+    summary: buildPresentationSummary(model, placed, topo),
+    evidence: topo,
   };
 }
 
@@ -510,6 +656,8 @@ function addEdge(
   from: string,
   to: string,
   triangleIndex: number,
+  fromPoint: Vec3,
+  toPoint: Vec3,
 ): void {
   const forward = from <= to;
   const key = forward ? `${from}|${to}` : `${to}|${from}`;
@@ -517,11 +665,39 @@ function addEdge(
     forward: 0,
     reverse: 0,
     triangleIndices: [],
+    samplePoints: forward ? [fromPoint, toPoint] : [toPoint, fromPoint],
   };
   if (forward) edge.forward += 1;
   else edge.reverse += 1;
   edge.triangleIndices.push(triangleIndex);
   edges.set(key, edge);
+}
+
+/** Appends one bounded, deterministic example; a no-op once `max` is reached. */
+function pushExample(
+  bucket: TopologyExampleLocation[],
+  max: number,
+  positionMillimetres: Vec3,
+  triangleIndices: readonly number[],
+): void {
+  if (bucket.length >= max) return;
+  bucket.push({ positionMillimetres, triangleIndices: [...triangleIndices] });
+}
+
+function midpointOf(first: Vec3, second: Vec3): Vec3 {
+  return [
+    normalizeZero((first[0] + second[0]) / 2),
+    normalizeZero((first[1] + second[1]) / 2),
+    normalizeZero((first[2] + second[2]) / 2),
+  ];
+}
+
+function centroidOf(first: Vec3, second: Vec3, third: Vec3): Vec3 {
+  return [
+    normalizeZero((first[0] + second[0] + third[0]) / 3),
+    normalizeZero((first[1] + second[1] + third[1]) / 3),
+    normalizeZero((first[2] + second[2] + third[2]) / 3),
+  ];
 }
 
 function normalizeZero(value: number): number {

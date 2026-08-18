@@ -21,7 +21,26 @@ export type {
   ModelPresentationSummary,
   ModelVolumeSummary,
   NumericDelta,
+  TopologyExampleLocation,
   TopologySummary,
   VolumeDelta,
   VolumeUnavailableReason,
 } from "./summary.js";
+export {
+  DEFAULT_MAX_MESH_BREAKDOWN_ENTRIES,
+  DEFAULT_MAX_TOPOLOGY_EXAMPLES,
+  InspectionResourceLimitError,
+  MAX_MESH_BREAKDOWN_ENTRIES,
+  MAX_TOPOLOGY_EXAMPLES,
+  inspectModel,
+} from "./inspect.js";
+export type {
+  InspectOptions,
+  InspectionResult,
+  MeshBreakdown,
+  MeshBreakdownEntry,
+  TopologyFinding,
+  TopologyFindingKind,
+  WatertightnessReason,
+  WatertightnessVerdict,
+} from "./inspect.js";
