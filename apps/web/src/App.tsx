@@ -3,10 +3,12 @@ import { Link, NavLink, Route, Routes, useLocation } from "react-router";
 import { Wordmark } from "./Brand";
 import { ClearanceFlow } from "./ClearanceFlow";
 import { ComparisonFlow } from "./ComparisonFlow";
+import { ConvertFlow } from "./ConvertFlow";
 import { ForensicsFlow } from "./ForensicsFlow";
 import { HomeDemo } from "./HomeDemo";
 import { InspectFlow } from "./InspectFlow";
 import { MeasureSectionFlow } from "./MeasureSectionFlow";
+import { PrintabilityFlow } from "./PrintabilityFlow";
 import {
   docs,
   inspectFocusPages,
@@ -53,6 +55,16 @@ const baseMetadata = {
     title: "Measure & Section — VoxelSpy",
     description:
       "Click-to-measure and cross-section one local model: exact point-to-point distances with axis deltas, and section-plane loops with perimeter and area.",
+  },
+  "/tools/printability/": {
+    title: "Printability — VoxelSpy",
+    description:
+      "Get local evidence for one model -- wall thickness, overhangs, disconnected islands, and build-volume fit -- for you to weigh against your slicer, material, and printer. Never a printability verdict.",
+  },
+  "/tools/convert/": {
+    title: "Convert a model — VoxelSpy",
+    description:
+      "Simplify one local model toward a triangle-count or reduction-ratio target with a certified, measured deviation, then export it to binary STL, ASCII STL, or OBJ in a unit and axis you choose explicitly.",
   },
   "/docs/": {
     title: "Documentation — VoxelSpy",
@@ -494,6 +506,8 @@ export function App() {
             path="/tools/measure-section/"
             element={<MeasureSectionFlow />}
           />
+          <Route path="/tools/printability/" element={<PrintabilityFlow />} />
+          <Route path="/tools/convert/" element={<ConvertFlow />} />
           <Route path="/docs/" element={<DocsIndex />} />
           {docs.map((doc) => (
             <Route

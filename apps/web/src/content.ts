@@ -223,6 +223,22 @@ export const docs: DocPage[] = [
         ],
       },
       {
+        id: "printability",
+        title: "Checking printability evidence",
+        paragraphs: [
+          "Printability (/tools/printability/) reports evidence for a human decision, never a print/no-print verdict: approximate directional wall-thickness findings, exact overhang region area, exact disconnected-island evidence, and axis-aligned build-volume fit across every orientation. Slicer settings, material, and printer calibration decide whether a model actually prints, and this tool has no access to any of them -- every result it returns carries an explicit disclaimer saying so.",
+          "Its checks carry different kinds of precision and are never combined into one badge. Wall thickness is sampled and directional: it probes a bounded set of triangles along each one's own inward normal, so it reports a sample-spacing bound, an unsampled-triangle count, and a missed-probe count alongside every finding, and a thin feature outside that coverage goes unreported rather than being assumed absent. Overhang area and island connectivity are exact for the tessellated mesh, the same exact-coordinate connectivity Inspect's watertightness and Clearance & Fit's region grouping already use. Build-volume fit checks only the six axis-order permutations of the model's own bounding box, never an arbitrary rotation search, so a model that fits only when reoriented is reported as such rather than as a plain failure.",
+        ],
+      },
+      {
+        id: "convert",
+        title: "Simplifying and exporting a model",
+        paragraphs: [
+          "Convert (/tools/convert/) composes two steps against one loaded model: an optional simplification (`simplifyModel`, @voxelspy/analysis) to a triangle-count or reduction-ratio target, and an export (`exportModel`, @voxelspy/importers) to binary STL, ASCII STL, or OBJ. Simplification's own point is not the decimation -- a commodity -- but the certified, measured deviation it reports: the maximum and mean sampled distance between the original and simplified surfaces, in both directions, always shown next to its disclaimer rather than as a bare number, with `targetReached: false` reported plainly rather than hidden when the requested target could not be fully reached.",
+          "Export never guesses a unit or axis: format, output unit, and output up-axis are all explicit choices with no default, because neither STL nor OBJ can declare a unit or axis inside the file itself -- every export states that plainly, alongside the exact interpretation a later re-import must declare to recover equivalent geometry. Binary STL's coordinates are IEEE-754 float32, so its round trip is bounded by float32 precision regardless of unit; the text formats (ASCII STL, OBJ) round-trip exactly at millimetre and to ordinary floating-point tolerance at any other unit.",
+        ],
+      },
+      {
         id: "evidence",
         title: "Prefer reproducible evidence",
         paragraphs: [
@@ -336,11 +352,11 @@ export const tools: Tool[] = [
     id: "printability",
     path: "/tools/printability/",
     name: "Printability",
-    description: "Check a model against practical 3D-printing constraints.",
+    description: "Get local evidence for wall thickness, overhangs, and fit.",
     summary:
-      "Evaluate wall thickness, overhang angles, and unsupported spans against limits for a given process, before committing material and time to a print. Printability is not built yet.",
-    status: "planned",
-    question: "Will this actually print the way I expect?",
+      "Open a single local model and get evidence, not a verdict: approximate directional wall-thickness findings, exact overhang regions and their area, exact disconnected-island evidence, and axis-aligned build-volume fit across every orientation -- with the sampling bounds, truncation counts, and disclaimer shown next to each check. Runs entirely in your browser.",
+    status: "available",
+    question: "What does this model's surface actually measure like?",
   },
   {
     id: "file-forensics",
@@ -351,6 +367,17 @@ export const tools: Tool[] = [
       "Open a single STL or OBJ file from your device and see what this importer actually saw: the detected format, byte size against its declared ceilings, content digest, mesh and instance structure, the declared-vs-resolved unit and axis with the exact applied transform, and every warning, note, and refused input. Runs entirely in your browser.",
     status: "available",
     question: "What is this file actually telling me, and can I trust it?",
+  },
+  {
+    id: "convert",
+    path: "/tools/convert/",
+    name: "Convert",
+    description: "Simplify a model with a certified deviation, then export it.",
+    summary:
+      "Load a single local model, optionally simplify it toward a triangle-count or reduction-ratio target with a measured, disclaimed certification of how far the result deviates from the original, then export the result (or the untouched original) to binary STL, ASCII STL, or OBJ in a unit and axis you choose explicitly. Runs entirely in your browser.",
+    status: "available",
+    question:
+      "How do I simplify or convert this model, and how far off is the result?",
   },
 ];
 
@@ -363,6 +390,8 @@ export const routes = [
   "/tools/file-forensics/",
   "/tools/clearance-fit/",
   "/tools/measure-section/",
+  "/tools/printability/",
+  "/tools/convert/",
   "/docs/",
   ...docs.map((doc) => doc.path),
 ];

@@ -46,8 +46,8 @@ test("planned tools render as non-link cards with a text status, not just color"
   const plannedCount = await plannedCards.count();
   expect(
     plannedCount,
-    "the seeded catalog must list more than one planned tool",
-  ).toBeGreaterThan(1);
+    "the seeded catalog must list at least one honestly planned tool",
+  ).toBeGreaterThan(0);
 
   for (let index = 0; index < plannedCount; index += 1) {
     const card = plannedCards.nth(index);

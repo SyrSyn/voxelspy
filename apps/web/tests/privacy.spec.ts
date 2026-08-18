@@ -35,6 +35,8 @@ const ROUTES = [
   "/tools/file-forensics/",
   "/tools/clearance-fit/",
   "/tools/measure-section/",
+  "/tools/printability/",
+  "/tools/convert/",
   "/docs/",
   "/docs/getting-started/",
   "/docs/privacy/",

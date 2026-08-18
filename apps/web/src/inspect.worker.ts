@@ -1,6 +1,10 @@
 /// <reference lib="webworker" />
 
-import { diagnoseMeshHealth, inspectModel } from "@voxelspy/analysis";
+import {
+  assessPrintability,
+  diagnoseMeshHealth,
+  inspectModel,
+} from "@voxelspy/analysis";
 import {
   importRequestSchema,
   modelIdSchema,
@@ -65,12 +69,54 @@ async function handle(data: InspectWorkerRequest) {
         ok: true,
         outcome: { model: imported.model, diagnosis },
       };
-    } else {
+    } else if (kind === "forensics") {
       response = {
         requestId,
         kind,
         ok: true,
         outcome: buildForensicsOutcome(imported.model),
+      };
+    } else {
+      // `AssessPrintabilityOptions`'s leaves are all optional-but-not-
+      // `| undefined` (`exactOptionalPropertyTypes` forbids assigning an
+      // explicit `undefined` to those), so each maybe-present field below is
+      // spread in only when actually supplied, rather than set to
+      // `undefined` -- omitting a field here is exactly "use
+      // `assessPrintability`'s own documented default", never a duplicated
+      // client-side default.
+      const options = data.assessmentOptions ?? {};
+      const assessment = assessPrintability(imported.model, {
+        ...(options.thinThresholdMillimetres === undefined
+          ? {}
+          : {
+              wallThickness: {
+                thinThresholdMillimetres: options.thinThresholdMillimetres,
+              },
+            }),
+        overhang: {
+          ...(options.buildDirection === undefined
+            ? {}
+            : { buildDirection: options.buildDirection }),
+          ...(options.overhangThresholdDegreesFromVertical === undefined
+            ? {}
+            : {
+                thresholdDegreesFromVertical:
+                  options.overhangThresholdDegreesFromVertical,
+              }),
+        },
+        ...(options.buildVolumeDimensionsMillimetres === undefined
+          ? {}
+          : {
+              buildVolume: {
+                dimensionsMillimetres: options.buildVolumeDimensionsMillimetres,
+              },
+            }),
+      });
+      response = {
+        requestId,
+        kind,
+        ok: true,
+        outcome: { model: imported.model, assessment },
       };
     }
   } catch (error) {

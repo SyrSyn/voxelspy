@@ -1,10 +1,15 @@
-import type { InspectionResult, MeshHealthDiagnosis } from "@voxelspy/analysis";
+import type {
+  InspectionResult,
+  MeshHealthDiagnosis,
+  PrintabilityAssessment,
+} from "@voxelspy/analysis";
 import type {
   ContractWarning,
   GeometryProvenance,
   NormalizedModel,
   SourceAxis,
   SourceUnit,
+  Vec3,
 } from "@voxelspy/contracts";
 import { inferFormat } from "@voxelspy/importers";
 
@@ -32,18 +37,32 @@ export interface InspectSource {
  * `worker-client.ts`'s stateful one.
  *
  * `kind` distinguishes the cheap always-on report (`"inspect"`) from the
- * heavier opt-in mesh-health evidence (`"diagnose"`) and from the file
- * Forensics report (`"forensics"`, added for `/tools/file-forensics/`); all
- * three re-run the same local import from the same source bytes, since a
- * fresh dedicated worker is spun up and torn down per call (see
- * `runInspectWorker` below) rather than keeping an imported model alive
- * across requests -- the file is small (bounded by the shared 32 MiB /
- * 500,000-triangle importer ceiling every call applies), so re-importing
- * costs far less than the complexity of a stateful worker just to avoid it.
+ * heavier opt-in mesh-health evidence (`"diagnose"`), the file Forensics
+ * report (`"forensics"`, added for `/tools/file-forensics/`), and the
+ * printability assessment (`"printability"`, added for
+ * `/tools/printability/`); all four re-run the same local import from the
+ * same source bytes, since a fresh dedicated worker is spun up and torn down
+ * per call (see `runInspectWorker`/`runPrintabilityWorker` below) rather than
+ * keeping an imported model alive across requests -- the file is small
+ * (bounded by the shared 32 MiB / 500,000-triangle importer ceiling every
+ * call applies), so re-importing costs far less than the complexity of a
+ * stateful worker just to avoid it. This also means adjusting a printability
+ * parameter (thin-wall threshold, overhang angle, build direction, or build
+ * volume) and re-running is itself just another `"printability"` request,
+ * exactly like `diagnoseModelAsync`'s "opt-in, re-run on demand" shape.
  * `"forensics"` asks the same importer the same question `"inspect"` does --
  * it never runs a second, different importer or validator -- and reports the
  * normalized model's own provenance, warnings, and mesh/instance structure
- * instead of `inspectModel`'s geometric measurements.
+ * instead of `inspectModel`'s geometric measurements. `"printability"` runs
+ * `assessPrintability` (`@voxelspy/analysis`), a single bounded pass over one
+ * already-imported model like `"inspect"`/`"diagnose"`/`"forensics"` -- not
+ * an interactive multi-query session like `measure-worker-client.ts`'s or
+ * `clearance-worker-client.ts`'s dedicated channels, which exist because a
+ * user issues many independent queries (snap points, sections, placements)
+ * against one loaded model without re-importing it each time. Printability
+ * has no such per-query shape: one call in, one bounded report out, so it
+ * fits this file's kind-discriminated, fresh-worker-per-call pattern instead
+ * of warranting a fourth worker file.
  */
 export interface InspectWorkerRequestBase {
   readonly requestId: number;
@@ -58,10 +77,40 @@ export interface InspectWorkerRequestBase {
   };
 }
 
+/**
+ * Wire shape for a `"printability"` request's assessment parameters --
+ * mirrors `AssessPrintabilityOptions`'s `wallThickness`/`overhang`/
+ * `buildVolume` leaves (`@voxelspy/analysis`), flattened to the handful of
+ * fields `/tools/printability/`'s form actually exposes rather than the full
+ * options shape (no `maxSampleTriangles`/`maxFindings`/`maxRegions`/
+ * `maxComponents`/`executionBudget` overrides -- this release uses
+ * `assessPrintability`'s own defaults and ceilings for those). Every field is
+ * optional and `undefined` is passed straight through to
+ * `assessPrintability`, which resolves its own documented default for each
+ * (see `printability.ts`): omitting a field here is "use the engine's
+ * default", never a client-side default duplicated in this file.
+ */
+export interface PrintabilityAssessmentRequestOptions {
+  readonly thinThresholdMillimetres?: number;
+  readonly overhangThresholdDegreesFromVertical?: number;
+  readonly buildDirection?: Vec3;
+  readonly buildVolumeDimensionsMillimetres?: Vec3;
+}
+
 export type InspectWorkerRequest =
   | (InspectWorkerRequestBase & { readonly kind: "inspect" })
   | (InspectWorkerRequestBase & { readonly kind: "diagnose" })
-  | (InspectWorkerRequestBase & { readonly kind: "forensics" });
+  | (InspectWorkerRequestBase & { readonly kind: "forensics" })
+  | (InspectWorkerRequestBase & {
+      readonly kind: "printability";
+      // Optional (rather than required) purely so `runInspectWorker`'s
+      // existing generic request builder below -- shared by
+      // `"inspect"`/`"diagnose"`/`"forensics"`, none of which set this field
+      // -- stays structurally valid for every kind without itself needing to
+      // branch on `"printability"`. `runPrintabilityWorker` (the dedicated
+      // client function for this kind, below) always supplies it explicitly.
+      readonly assessmentOptions?: PrintabilityAssessmentRequestOptions;
+    });
 
 /**
  * What one successful inspection hands back to the UI: the serializable
@@ -136,6 +185,21 @@ export interface ForensicsOutcome {
   readonly instances: readonly ForensicsInstanceSummary[];
 }
 
+/**
+ * What one successful `"printability"` call hands back: the bounded
+ * `PrintabilityAssessment` evidence plus the imported `NormalizedModel`
+ * itself. Carries the model's typed-array geometry back to the main thread
+ * for the same reason `MeshHealthDiagnosisOutcome` does -- `PrintabilityViewer`
+ * needs the model's own mesh geometry (and `flattenedTriangleLocator` needs
+ * the full `NormalizedModel` to resolve reported triangle indices back to
+ * drawable positions) to draw the 3D evidence overlay alongside the textual
+ * report.
+ */
+export interface PrintabilityOutcome {
+  readonly model: NormalizedModel;
+  readonly assessment: PrintabilityAssessment;
+}
+
 export type InspectWorkerResponse =
   | {
       readonly requestId: number;
@@ -170,6 +234,18 @@ export type InspectWorkerResponse =
   | {
       readonly requestId: number;
       readonly kind: "forensics";
+      readonly ok: false;
+      readonly message: string;
+    }
+  | {
+      readonly requestId: number;
+      readonly kind: "printability";
+      readonly ok: true;
+      readonly outcome: PrintabilityOutcome;
+    }
+  | {
+      readonly requestId: number;
+      readonly kind: "printability";
       readonly ok: false;
       readonly message: string;
     };
@@ -314,6 +390,110 @@ export async function forensicsSourceAsync(
   signal?: AbortSignal,
 ): Promise<ForensicsOutcome> {
   const response = await runInspectWorker(source, "forensics", signal);
+  if (!response.ok) throw new Error(response.message);
+  return response.outcome;
+}
+
+/**
+ * Runs one `"printability"` request/response round trip against a fresh
+ * dedicated inspection worker (`inspect.worker.ts`, the same worker file
+ * `runInspectWorker` above dispatches to). Written directly rather than
+ * through `runInspectWorker`'s shared generic: every other kind's request is
+ * fully determined by `InspectSource` alone, but a printability request also
+ * carries `assessmentOptions` (thin-wall threshold, overhang angle, build
+ * direction, build volume) -- a caller-supplied parameter set with no
+ * equivalent on `"inspect"`/`"diagnose"`/`"forensics"`. Duplicating this
+ * worker's launch/message/abort/teardown lifecycle here (rather than
+ * threading an optional parameter through the shared generic) keeps that
+ * generic's signature untouched for its three existing callers and keeps
+ * this one printability-specific concern in one place, matching this file's
+ * own established precedent of small, deliberate duplication over a shared
+ * abstraction reshaped to fit one more case (see e.g. `ModelSourceCard`'s
+ * duplication across `InspectFlow.tsx`/`ClearanceFlow.tsx`/
+ * `MeasureSectionFlow.tsx`).
+ */
+async function runPrintabilityWorker(
+  source: InspectSource,
+  assessmentOptions: PrintabilityAssessmentRequestOptions,
+  signal?: AbortSignal,
+): Promise<Extract<InspectWorkerResponse, { kind: "printability" }>> {
+  const format = inferFormat(source.file.name);
+  if (!format)
+    throw new Error(`${source.file.name} is not a supported STL or OBJ file.`);
+  const bytes = new Uint8Array(await source.file.arrayBuffer());
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new InspectionCancelledError());
+      return;
+    }
+    const worker = new Worker(new URL("./inspect.worker.ts", import.meta.url), {
+      type: "module",
+      name: "voxelspy-inspect-printability",
+    });
+    const requestId = 1;
+    let settled = false;
+
+    const finish = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      worker.removeEventListener("message", onMessage);
+      worker.removeEventListener("error", onError);
+      worker.terminate();
+      action();
+    };
+    const onAbort = () => {
+      finish(() => reject(new InspectionCancelledError()));
+    };
+    const onMessage = (event: MessageEvent<InspectWorkerResponse>) => {
+      const data = event.data;
+      if (data.requestId !== requestId || data.kind !== "printability") return;
+      finish(() => resolve(data));
+    };
+    const onError = () => {
+      finish(() =>
+        reject(new Error("Inspection worker stopped unexpectedly.")),
+      );
+    };
+
+    signal?.addEventListener("abort", onAbort);
+    worker.addEventListener("message", onMessage);
+    worker.addEventListener("error", onError);
+
+    const request: InspectWorkerRequest = {
+      kind: "printability",
+      requestId,
+      format,
+      sourceName: source.file.name,
+      bytes,
+      options:
+        source.frameSource === "expert"
+          ? { userUnit: source.unit, userAxis: source.axis }
+          : { declaredUnit: source.unit, declaredAxis: source.axis },
+      assessmentOptions,
+    };
+    worker.postMessage(request, [request.bytes.buffer]);
+  });
+}
+
+/**
+ * Imports one local model file and runs `assessPrintability` against it,
+ * entirely off the main thread, for `/tools/printability/`. Re-runnable with
+ * different `assessmentOptions` against the same file (the caller keeps its
+ * own `File` reference and calls this again) exactly the way
+ * `diagnoseModelAsync` is re-run on demand -- see `runPrintabilityWorker`'s
+ * doc comment for the worker lifecycle.
+ */
+export async function assessPrintabilitySourceAsync(
+  source: InspectSource,
+  assessmentOptions: PrintabilityAssessmentRequestOptions,
+  signal?: AbortSignal,
+): Promise<PrintabilityOutcome> {
+  const response = await runPrintabilityWorker(
+    source,
+    assessmentOptions,
+    signal,
+  );
   if (!response.ok) throw new Error(response.message);
   return response.outcome;
 }

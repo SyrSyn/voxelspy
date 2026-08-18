@@ -2273,6 +2273,141 @@ a.tool-card-available:hover {
   margin-top: 0.25rem;
 }
 
+/* Printability (/tools/printability/): the parameters fieldset, the
+   disclaimer banner, the layer-toggle checkboxes above the 3D preview, and
+   the preview's own viewport. Reuses `.method-card`/`.placement-grid`/
+   `.section-normal-choices`/`.geometry-summary`/`.geometry-table`/
+   `.diagnostic-list`/`.topology-truncated`/`.clearance-caveat`/
+   `.inspect-semantics-note`/`.viewport-canvas` conventions wherever the
+   shape already matches; only genuinely new shapes get new rules here. */
+.printability-parameters-label {
+  margin: 1rem 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.printability-build-volume-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 0.9rem;
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 830;
+}
+.printability-build-volume-toggle input {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--green);
+}
+.printability-parameters-note {
+  margin: 0.9rem 0 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+.printability-parameters-details {
+  margin-top: 1.2rem;
+}
+.printability-parameters-details > summary {
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 820;
+  cursor: pointer;
+}
+/* The framing banner (`PrintabilityDisclaimer`): must never read as a
+   tooltip or a footnote -- rendered inline, always visible, with the same
+   orange-callout emphasis `.clearance-caveat`/`.boundary-note` already use
+   for "review this deliberately" content, but bolder (a full-width top
+   border and larger body text) since this is this tool's central framing
+   claim, not a secondary caveat. */
+.printability-disclaimer {
+  margin: 1.2rem 0;
+  padding: 1.1rem 1.25rem;
+  border: 1px solid color-mix(in srgb, var(--orange) 45%, var(--line));
+  border-top: 4px solid var(--orange);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--orange) 10%, transparent);
+}
+.printability-disclaimer strong {
+  display: block;
+  color: var(--text);
+  font-size: 1rem;
+}
+.printability-disclaimer p {
+  margin: 0.4rem 0 0;
+  color: var(--text);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+.printability-layer-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.1rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  border: 0;
+}
+.printability-layer-toggles legend {
+  width: 100%;
+  padding: 0;
+  margin-bottom: 0.4rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.printability-layer-toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+.printability-layer-toggles input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--green);
+}
+.printability-viewport {
+  margin: 1rem 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* Convert (/tools/convert/): the certified-simplification and export-honesty
+   framing banners. Same bolder orange-callout emphasis as
+   `.printability-disclaimer` (full-width top border, larger body text) --
+   this tool has two central framing claims (the measured deviation
+   certification, and "this file cannot record its own unit/axis"), never
+   folded into a secondary `.clearance-caveat`/`.boundary-note`. Reuses
+   `.watertight-badge`/`.geometry-summary`/`.geometry-table`/
+   `.provenance-warnings`/`.clearance-caveat` conventions wherever the shape
+   already matches; this is the only genuinely new rule this tool needs. */
+.convert-disclaimer {
+  margin: 1.2rem 0;
+  padding: 1.1rem 1.25rem;
+  border: 1px solid color-mix(in srgb, var(--orange) 45%, var(--line));
+  border-top: 4px solid var(--orange);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--orange) 10%, transparent);
+}
+.convert-disclaimer strong {
+  display: block;
+  color: var(--text);
+  font-size: 1rem;
+}
+.convert-disclaimer p {
+  margin: 0.4rem 0 0;
+  color: var(--text);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
 @media (max-width: 720px) {
   .correspondence-table {
     min-width: 40rem;
