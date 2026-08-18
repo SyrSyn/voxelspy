@@ -1606,6 +1606,77 @@ a.tool-card-available:hover {
   font-size: 0.78rem;
   font-style: italic;
 }
+/* On-demand `diagnoseMeshHealth` evidence: the heavier, opt-in sibling of
+   the topology findings above. `.diagnostic-evidence` holds the load/loading
+   /error states plus (once ready) the 3D viewer and the four evidence
+   lists; `.mesh-health-viewport` reuses `.viewport-canvas`'s sizing but
+   without the dark comparison-workbench chrome around it. */
+.diagnostic-evidence {
+  padding-top: 1.2rem;
+  margin-top: 1.2rem;
+  border-top: 1px solid var(--line);
+}
+.diagnostic-evidence > p {
+  max-width: 62ch;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.mesh-health-viewport {
+  margin: 1rem 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.diagnostic-evidence-lists {
+  display: grid;
+  gap: 1.4rem;
+  margin-top: 1rem;
+}
+.diagnostic-list {
+  padding: 0;
+  margin: 0.5rem 0 0;
+  list-style: none;
+}
+.diagnostic-list li + li {
+  border-top: 1px solid var(--line);
+}
+.diagnostic-list button {
+  display: block;
+  width: 100%;
+  padding: 0.6rem 0.35rem;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.diagnostic-list button:hover,
+.diagnostic-list button[aria-pressed="true"] {
+  background: var(--green-soft);
+}
+.diagnostic-list button strong {
+  display: block;
+  font-size: 0.85rem;
+}
+.diagnostic-list button span {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.diagnostic-list button small {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+.diagnostic-list button em {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-style: italic;
+}
 .provenance-list {
   display: grid;
   gap: 0.6rem;

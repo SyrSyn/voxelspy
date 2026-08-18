@@ -362,3 +362,208 @@ test("the tools catalog represents the focus pages as entry points into Inspect,
   await links.filter({ hasText: "Is this model watertight?" }).click();
   await expect(page).toHaveURL(/\/tools\/watertight\/$/u);
 });
+
+// ---------------------------------------------------------------------------
+// Full diagnostic evidence (`diagnoseMeshHealth`): opt-in, on-demand detail
+// beyond the topology findings above, with a 3D view of the selected item.
+// See apps/web/src/InspectFlow.tsx's `DiagnosticEvidenceSection` and
+// apps/web/src/MeshHealthViewer.tsx.
+// ---------------------------------------------------------------------------
+
+/** `count` open, mutually disjoint triangles (spaced far enough apart on X
+ * that no vertex coincides across triangles), each an independent connected
+ * component with its own 3-edge closed boundary loop -- used to push the
+ * boundary-loop count past `diagnoseMeshHealth`'s default 20-loop cap
+ * without needing a large or hand-written fixture. */
+function manyOpenTrianglesStl(count: number): string {
+  const facets = Array.from({ length: count }, (_, index) => {
+    const offset = index * 20;
+    return `facet normal 0 0 1
+outer loop
+vertex ${offset} 0 0
+vertex ${offset + 10} 0 0
+vertex ${offset} 10 0
+endloop
+endfacet`;
+  }).join("\n");
+  return `solid many\n${facets}\nendsolid many\n`;
+}
+
+test("the full diagnostic evidence panel is opt-in: it is not offered without topology findings, and never runs automatically", async ({
+  page,
+}) => {
+  await page.goto("/tools/inspect/");
+  await chooseFile(page, "tetrahedron.stl", tetrahedronStl);
+  await page.getByRole("button", { name: "Validate and inspect" }).click();
+  await expect(
+    page.getByRole("heading", { level: 2, name: "tetrahedron.stl" }),
+  ).toBeVisible({ timeout: 20_000 });
+
+  // A clean, closed model has nothing to diagnose, so the panel is absent
+  // entirely rather than offered with an empty result.
+  await expect(
+    page.getByRole("heading", { level: 3, name: "Full diagnostic evidence" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Load full diagnostic evidence" }),
+  ).toHaveCount(0);
+});
+
+test("opening the full diagnostic evidence loads and renders boundary-loop, edge, and triangle evidence with a 3D view", async ({
+  page,
+}) => {
+  await page.goto("/tools/inspect/");
+  await chooseFile(page, "open-triangle.stl", openTriangleStl);
+  await page.getByRole("button", { name: "Validate and inspect" }).click();
+  await expect(
+    page.getByRole("heading", { level: 2, name: "open-triangle.stl" }),
+  ).toBeVisible({ timeout: 20_000 });
+
+  // Present but not yet run: the heavier pass is opt-in, not automatic.
+  const evidenceHeading = page.getByRole("heading", {
+    level: 3,
+    name: "Full diagnostic evidence",
+  });
+  await expect(evidenceHeading).toBeVisible();
+  const loadButton = page.getByRole("button", {
+    name: "Load full diagnostic evidence",
+  });
+  await expect(loadButton).toBeVisible();
+  await loadButton.click();
+
+  await expect(
+    page.getByText("Computing full diagnostic evidence…"),
+  ).toBeVisible();
+
+  // The open triangle's 3 boundary edges form exactly one closed loop.
+  await expect(
+    page.getByRole("heading", { level: 4, name: "Boundary loops (1)" }),
+  ).toBeVisible({ timeout: 20_000 });
+  const loopButtons = page.locator(
+    '[aria-labelledby="diagnostic-boundary-loops-title"] .diagnostic-list li button',
+  );
+  await expect(loopButtons).toHaveCount(1);
+  await expect(loopButtons.first()).toContainText("Loop 1");
+  await expect(loopButtons.first()).toContainText("3 edges");
+  await expect(loopButtons.first()).toContainText("Closed loop");
+  await expect(loopButtons.first()).toContainText("perimeter");
+
+  // The other three evidence categories are correctly empty for one clean
+  // open triangle (no non-manifold edges, no inconsistent orientation, no
+  // degenerate triangles).
+  await expect(
+    page.getByRole("heading", { level: 4, name: "Non-manifold edges (0)" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      level: 4,
+      name: "Inconsistent-orientation edges (0)",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 4, name: "Degenerate triangles (0)" }),
+  ).toBeVisible();
+
+  // The 3D view renders (WebGL is available in this test environment) with
+  // an accessible name distinct from the evidence lists it complements.
+  const canvas = page.locator(".mesh-health-viewport").getByRole("img");
+  await expect(canvas).toHaveCount(1);
+  const label = await canvas.getAttribute("aria-label");
+  expect(label).toContain("open-triangle.stl");
+
+  // Selecting the loop from the text list marks it selected (aria-pressed),
+  // which is also what highlights it in the 3D overlay.
+  await loopButtons.first().click();
+  await expect(loopButtons.first()).toHaveAttribute("aria-pressed", "true");
+  await loopButtons.first().click();
+  await expect(loopButtons.first()).toHaveAttribute("aria-pressed", "false");
+});
+
+test("truncation notes state the exact counts when the boundary-loop cap is hit", async ({
+  page,
+}) => {
+  await page.goto("/tools/inspect/");
+  // 22 disjoint open triangles: 22 boundary loops, one past
+  // `diagnoseMeshHealth`'s default 20-loop cap.
+  await chooseFile(page, "many-triangles.stl", manyOpenTrianglesStl(22));
+  await page.getByRole("button", { name: "Validate and inspect" }).click();
+  await expect(
+    page.getByRole("heading", { level: 2, name: "many-triangles.stl" }),
+  ).toBeVisible({ timeout: 20_000 });
+
+  await page
+    .getByRole("button", { name: "Load full diagnostic evidence" })
+    .click();
+  await expect(
+    page.getByRole("heading", { level: 4, name: "Boundary loops (22)" }),
+  ).toBeVisible({ timeout: 20_000 });
+
+  const boundarySection = page.locator(
+    '[aria-labelledby="diagnostic-boundary-loops-title"]',
+  );
+  await expect(boundarySection.locator(".diagnostic-list li")).toHaveCount(20);
+  await expect(boundarySection.locator(".topology-truncated")).toHaveText(
+    "Showing 20 of 22 boundary loops.",
+  );
+});
+
+test("with WebGL unavailable, the diagnostic evidence lists remain fully usable and the page does not crash", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    // Simulates a browser/GPU combination that cannot create a WebGL
+    // context, mirroring tests/comparison.spec.ts's own WebGL-unavailable
+    // coverage for the workbench.
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (
+      this: HTMLCanvasElement,
+      type: string,
+      ...args: unknown[]
+    ) {
+      if (type === "webgl2" || type === "webgl") return null;
+      return (original as (...callArgs: unknown[]) => unknown).apply(this, [
+        type,
+        ...args,
+      ]);
+    } as typeof HTMLCanvasElement.prototype.getContext;
+  });
+
+  await page.goto("/tools/inspect/");
+  await chooseFile(page, "open-triangle.stl", openTriangleStl);
+  await page.getByRole("button", { name: "Validate and inspect" }).click();
+  await expect(
+    page.getByRole("heading", { level: 2, name: "open-triangle.stl" }),
+  ).toBeVisible({ timeout: 20_000 });
+
+  await page
+    .getByRole("button", { name: "Load full diagnostic evidence" })
+    .click();
+  await expect(
+    page.getByRole("heading", { level: 4, name: "Boundary loops (1)" }),
+  ).toBeVisible({ timeout: 20_000 });
+
+  // No WebGL context was ever created, so no canvas exists; the accessible
+  // non-canvas fallback takes its place instead.
+  await expect(page.locator(".mesh-health-viewport canvas")).toHaveCount(0);
+  await expect(
+    page.locator(".mesh-health-viewport .render-fallback"),
+  ).toBeVisible();
+  await expect(
+    page.getByText("3D diagnostic preview unavailable", { exact: false }),
+  ).toBeVisible();
+
+  // The textual evidence -- the accessible equivalent of the 3D view -- is
+  // fully present and interactive regardless.
+  const loopButtons = page.locator(
+    '[aria-labelledby="diagnostic-boundary-loops-title"] .diagnostic-list li button',
+  );
+  await expect(loopButtons).toHaveCount(1);
+  await expect(loopButtons.first()).toContainText("3 edges");
+  await loopButtons.first().click();
+  await expect(loopButtons.first()).toHaveAttribute("aria-pressed", "true");
+
+  // The rest of the page (including starting a new inspection) still works.
+  await expect(
+    page.getByRole("button", { name: "Inspect another model" }),
+  ).toBeEnabled();
+});

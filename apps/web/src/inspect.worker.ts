@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import { inspectModel } from "@voxelspy/analysis";
+import { diagnoseMeshHealth, inspectModel } from "@voxelspy/analysis";
 import { importRequestSchema, modelIdSchema } from "@voxelspy/contracts";
 import { importModel } from "@voxelspy/importers";
 
@@ -19,7 +19,7 @@ scope.addEventListener(
 );
 
 async function handle(data: InspectWorkerRequest) {
-  const { requestId } = data;
+  const { requestId, kind } = data;
   let response: InspectWorkerResponse;
   try {
     const request = importRequestSchema.parse({
@@ -41,18 +41,28 @@ async function handle(data: InspectWorkerRequest) {
     });
     const imported = await importModel(request);
     if (!imported.ok) {
-      response = { requestId, ok: false, message: imported.message };
-    } else {
+      response = { requestId, kind, ok: false, message: imported.message };
+    } else if (kind === "inspect") {
       const inspection = inspectModel(imported.model);
       response = {
         requestId,
+        kind,
         ok: true,
         outcome: { inspection, warnings: imported.model.warnings },
+      };
+    } else {
+      const diagnosis = diagnoseMeshHealth(imported.model);
+      response = {
+        requestId,
+        kind,
+        ok: true,
+        outcome: { model: imported.model, diagnosis },
       };
     }
   } catch (error) {
     response = {
       requestId,
+      kind,
       ok: false,
       message:
         error instanceof Error
