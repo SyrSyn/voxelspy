@@ -12,6 +12,7 @@ import {
   workerOutboundMessageSchema,
   type AnalysisResult,
   type ImportResult,
+  type ModelId,
   type NormalizedModel,
   type RequestId,
   type SourceAxis,
@@ -20,10 +21,13 @@ import {
 } from "@voxelspy/contracts";
 import { inferFormat } from "@voxelspy/importers";
 
+type ResolvedUnit = Exclude<SourceUnit, "unknown">;
+type ResolvedAxis = Exclude<SourceAxis, "unknown">;
+
 export interface ComparisonSource {
   file: File;
-  unit: Exclude<SourceUnit, "unknown">;
-  axis: Exclude<SourceAxis, "unknown">;
+  unit: ResolvedUnit;
+  axis: ResolvedAxis;
   frameSource?: "default" | "expert";
 }
 
@@ -31,6 +35,26 @@ export interface CompletedComparison {
   baseline: NormalizedModel;
   candidate: NormalizedModel;
   analysis: AnalysisResult;
+}
+
+/**
+ * Everything the worker's import protocol needs for one model, already
+ * resolved to raw bytes. `runComparison` builds this from a `File` the user
+ * chose; reopening a saved session builds the same shape from the bytes
+ * stored in the session archive so both paths share one import path through
+ * the worker.
+ */
+export interface SessionImportSpec {
+  targetModelId: ModelId;
+  format: string;
+  sourceName: string;
+  bytes: Uint8Array;
+  options: {
+    declaredUnit?: ResolvedUnit;
+    declaredAxis?: ResolvedAxis;
+    userUnit?: ResolvedUnit;
+    userAxis?: ResolvedAxis;
+  };
 }
 
 export type ComparisonProgress = {
@@ -99,13 +123,36 @@ export function analysisExecutionBudget(memoryMiB: number) {
   };
 }
 
-export async function runComparison(
-  baselineSource: ComparisonSource,
-  candidateSource: ComparisonSource,
-  progress: (value: ComparisonProgress) => void,
-  analysisMemoryMiB = DEFAULT_ANALYSIS_MEMORY_MIB,
-  signal?: AbortSignal,
-): Promise<CompletedComparison> {
+/**
+ * Bridges one live comparison worker's message stream into request/response
+ * calls: `post` sends a wire message, `next` waits for the first queued
+ * message matching a predicate (throwing if the run failed or was
+ * cancelled first), and `setActiveRequestId` records which request ID a
+ * cancellation should target.
+ */
+interface WorkerSession {
+  post: (message: Parameters<typeof getWorkerMessageTransferList>[0]) => void;
+  next: (
+    predicate: (message: WorkerOutboundMessage) => boolean,
+  ) => Promise<WorkerOutboundMessage>;
+  setActiveRequestId: (id: RequestId | undefined) => void;
+}
+
+/**
+ * Owns one comparison worker's full lifecycle: creation, the ready/initialize
+ * handshake, cancellation wiring, the inactivity watchdog, and guaranteed
+ * termination. `onReady` fires once the worker has announced itself and
+ * before `initialize` is sent, so callers can surface a "preparing the
+ * worker" progress message at the same point the previous single-purpose
+ * implementation did. `run` receives a `WorkerSession` for the protocol
+ * exchange it actually cares about (importing models, running analysis, or
+ * both).
+ */
+async function withComparisonWorker<T>(
+  signal: AbortSignal | undefined,
+  onReady: () => void,
+  run: (session: WorkerSession) => Promise<T>,
+): Promise<T> {
   const worker = new Worker(
     new URL("./comparison.worker.ts", import.meta.url),
     { type: "module", name: "voxelspy-comparison" },
@@ -217,10 +264,7 @@ export async function runComparison(
   resetInactivityTimer();
   try {
     await next((message) => message.type === "ready");
-    progress({
-      stage: "starting",
-      message: "Preparing the local comparison worker",
-    });
+    onReady();
     const initializeId = requestIdSchema.parse("initialize.1");
     post({
       protocolVersion: WORKER_PROTOCOL_VERSION,
@@ -231,108 +275,192 @@ export async function runComparison(
       (message) =>
         message.type === "initialized" && message.requestId === initializeId,
     );
-
-    const importOne = async (
-      role: "baseline" | "candidate",
-      source: ComparisonSource,
-    ): Promise<NormalizedModel> => {
-      progress({ stage: role, message: `Importing ${role} geometry` });
-      const format = inferFormat(source.file.name);
-      if (!format)
-        throw new Error(
-          `${source.file.name} is not a supported STL or OBJ file.`,
-        );
-      const requestId = requestIdSchema.parse(`import.${role}.1`);
-      const bytes = new Uint8Array(await source.file.arrayBuffer());
-      const request = importRequestSchema.parse({
-        contractVersion: 1,
-        targetModelId: modelIdSchema.parse(`model.${role}`),
-        format,
-        sourceName: source.file.name,
-        bytes,
-        options: {
-          ...(source.frameSource === "expert"
-            ? { userUnit: source.unit, userAxis: source.axis }
-            : { declaredUnit: source.unit, declaredAxis: source.axis }),
-          limits: {
-            inputBytes: Math.min(
-              32 * 1024 * 1024,
-              Math.max(bytes.byteLength, 1),
-            ),
-            triangleCount: 500_000,
-          },
-        },
-      });
-      const validationRequest = structuredClone(request);
-      currentRequestId = requestId;
-      post({
-        protocolVersion: 1,
-        type: "execute",
-        operation: "import",
-        requestId,
-        request,
-      });
-      const response = await next(
-        (message) =>
-          (message.type === "result" || message.type === "error") &&
-          message.requestId === requestId,
-      );
-      currentRequestId = undefined;
-      if (response.type === "error") throw new Error(response.error.message);
-      if (response.type !== "result" || response.operation !== "import")
-        throw new Error(
-          "Comparison worker returned the wrong import result type.",
-        );
-      const result: ImportResult = response.result;
-      if (!result.ok) throw new Error(result.message);
-      importExchangeSchema.parse({ request: validationRequest, result });
-      return result.model;
-    };
-
-    const baseline = await importOne("baseline", baselineSource);
-    const candidate = await importOne("candidate", candidateSource);
-    progress({
-      stage: "analysis",
-      message: "Analyzing tessellated surface distance",
-    });
-    const analysisId = requestIdSchema.parse("analysis.1");
-    const request = analysisRequestSchema.parse({
-      contractVersion: 1,
-      requestId: analysisId,
-      baseline: { modelId: baseline.id, modelToComparison: IDENTITY_MAT4 },
-      candidate: { modelId: candidate.id, modelToComparison: IDENTITY_MAT4 },
-      method: {
-        ...SURFACE_DISTANCE_METHOD,
-        parameters: { maxRegions: MAX_CHANGED_REGIONS },
+    return await run({
+      post,
+      next,
+      setActiveRequestId: (id) => {
+        currentRequestId = id;
       },
-      tolerance: { distanceMillimetres: 0.1 },
-      executionBudget: analysisExecutionBudget(analysisMemoryMiB),
     });
-    currentRequestId = analysisId;
-    post({
-      protocolVersion: 1,
-      type: "execute",
-      operation: "analysis",
-      requestId: analysisId,
-      request,
-    });
-    const response = await next(
-      (message) =>
-        (message.type === "result" || message.type === "error") &&
-        message.requestId === analysisId,
-    );
-    currentRequestId = undefined;
-    if (response.type === "error") throw new Error(response.error.message);
-    if (response.type !== "result" || response.operation !== "analysis")
-      throw new Error("Comparison worker returned the wrong result type.");
-    const analysis = analysisExchangeSchema.parse({
-      request,
-      result: response.result,
-    }).result;
-    return { baseline, candidate, analysis };
   } finally {
     if (inactivityTimer !== undefined) clearTimeout(inactivityTimer);
     signal?.removeEventListener("abort", triggerCancel);
     worker.terminate();
   }
+}
+
+/**
+ * Runs one "import" round trip for a single model. `buildSpec` is called
+ * only after the `role` progress message is published so progress ordering
+ * matches what a caller would see reading a File from disk: "Importing
+ * baseline geometry" appears before any of that model's bytes are touched.
+ */
+async function importOne(
+  session: WorkerSession,
+  progress: (value: ComparisonProgress) => void,
+  role: "baseline" | "candidate",
+  buildSpec: () => Promise<SessionImportSpec>,
+): Promise<NormalizedModel> {
+  progress({ stage: role, message: `Importing ${role} geometry` });
+  const spec = await buildSpec();
+  const requestId = requestIdSchema.parse(`import.${role}.1`);
+  const request = importRequestSchema.parse({
+    contractVersion: 1,
+    targetModelId: spec.targetModelId,
+    format: spec.format,
+    sourceName: spec.sourceName,
+    bytes: spec.bytes,
+    options: {
+      ...spec.options,
+      limits: {
+        inputBytes: Math.min(
+          32 * 1024 * 1024,
+          Math.max(spec.bytes.byteLength, 1),
+        ),
+        triangleCount: 500_000,
+      },
+    },
+  });
+  const validationRequest = structuredClone(request);
+  session.setActiveRequestId(requestId);
+  session.post({
+    protocolVersion: 1,
+    type: "execute",
+    operation: "import",
+    requestId,
+    request,
+  });
+  const response = await session.next(
+    (message) =>
+      (message.type === "result" || message.type === "error") &&
+      message.requestId === requestId,
+  );
+  session.setActiveRequestId(undefined);
+  if (response.type === "error") throw new Error(response.error.message);
+  if (response.type !== "result" || response.operation !== "import")
+    throw new Error("Comparison worker returned the wrong import result type.");
+  const result: ImportResult = response.result;
+  if (!result.ok) throw new Error(result.message);
+  importExchangeSchema.parse({ request: validationRequest, result });
+  return result.model;
+}
+
+async function specFromSource(
+  role: "baseline" | "candidate",
+  source: ComparisonSource,
+): Promise<SessionImportSpec> {
+  const format = inferFormat(source.file.name);
+  if (!format)
+    throw new Error(`${source.file.name} is not a supported STL or OBJ file.`);
+  const bytes = new Uint8Array(await source.file.arrayBuffer());
+  return {
+    targetModelId: modelIdSchema.parse(`model.${role}`),
+    format,
+    sourceName: source.file.name,
+    bytes,
+    options:
+      source.frameSource === "expert"
+        ? { userUnit: source.unit, userAxis: source.axis }
+        : { declaredUnit: source.unit, declaredAxis: source.axis },
+  };
+}
+
+export async function runComparison(
+  baselineSource: ComparisonSource,
+  candidateSource: ComparisonSource,
+  progress: (value: ComparisonProgress) => void,
+  analysisMemoryMiB = DEFAULT_ANALYSIS_MEMORY_MIB,
+  signal?: AbortSignal,
+): Promise<CompletedComparison> {
+  return withComparisonWorker(
+    signal,
+    () =>
+      progress({
+        stage: "starting",
+        message: "Preparing the local comparison worker",
+      }),
+    async (session) => {
+      const baseline = await importOne(session, progress, "baseline", () =>
+        specFromSource("baseline", baselineSource),
+      );
+      const candidate = await importOne(session, progress, "candidate", () =>
+        specFromSource("candidate", candidateSource),
+      );
+      progress({
+        stage: "analysis",
+        message: "Analyzing tessellated surface distance",
+      });
+      const analysisId = requestIdSchema.parse("analysis.1");
+      const request = analysisRequestSchema.parse({
+        contractVersion: 1,
+        requestId: analysisId,
+        baseline: { modelId: baseline.id, modelToComparison: IDENTITY_MAT4 },
+        candidate: {
+          modelId: candidate.id,
+          modelToComparison: IDENTITY_MAT4,
+        },
+        method: {
+          ...SURFACE_DISTANCE_METHOD,
+          parameters: { maxRegions: MAX_CHANGED_REGIONS },
+        },
+        tolerance: { distanceMillimetres: 0.1 },
+        executionBudget: analysisExecutionBudget(analysisMemoryMiB),
+      });
+      session.setActiveRequestId(analysisId);
+      session.post({
+        protocolVersion: 1,
+        type: "execute",
+        operation: "analysis",
+        requestId: analysisId,
+        request,
+      });
+      const response = await session.next(
+        (message) =>
+          (message.type === "result" || message.type === "error") &&
+          message.requestId === analysisId,
+      );
+      session.setActiveRequestId(undefined);
+      if (response.type === "error") throw new Error(response.error.message);
+      if (response.type !== "result" || response.operation !== "analysis")
+        throw new Error("Comparison worker returned the wrong result type.");
+      const analysis = analysisExchangeSchema.parse({
+        request,
+        result: response.result,
+      }).result;
+      return { baseline, candidate, analysis };
+    },
+  );
+}
+
+/**
+ * Reconstructs the two normalized models a saved session references, by
+ * re-running the same deterministic import the session's report already
+ * describes (same source bytes, same declared/user unit and axis
+ * resolution) rather than storing typed-array geometry in the archive
+ * itself. Analysis is not re-run: the caller already has a validated
+ * `AnalysisResult` from the session's report.
+ */
+export async function reimportSessionModels(
+  baselineSpec: SessionImportSpec,
+  candidateSpec: SessionImportSpec,
+  progress: (value: ComparisonProgress) => void,
+  signal?: AbortSignal,
+): Promise<{ baseline: NormalizedModel; candidate: NormalizedModel }> {
+  return withComparisonWorker(
+    signal,
+    () =>
+      progress({
+        stage: "starting",
+        message: "Preparing the local session worker",
+      }),
+    async (session) => {
+      const baseline = await importOne(session, progress, "baseline", () =>
+        Promise.resolve(baselineSpec),
+      );
+      const candidate = await importOne(session, progress, "candidate", () =>
+        Promise.resolve(candidateSpec),
+      );
+      return { baseline, candidate };
+    },
+  );
 }

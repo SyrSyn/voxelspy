@@ -590,6 +590,58 @@ main {
   margin: 0.2rem 0 0;
   color: var(--muted);
 }
+.session-open-card {
+  margin-top: 1.4rem;
+  padding: 1rem 1.25rem 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+.session-open-input {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: 0.65rem;
+  background: var(--surface-solid);
+  cursor: pointer;
+}
+.session-open-input:hover {
+  border-color: var(--green);
+}
+.session-open-input > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+.session-open-input input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.session-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.9rem;
+  margin: 1rem 0 0;
+}
+.session-panel .boundary-note {
+  flex: 1 1 18rem;
+  min-width: 0;
+  margin: 0;
+}
+.session-panel .comparison-error {
+  flex: 1 1 100%;
+}
 .workbench-loading {
   display: grid;
   min-height: 60vh;
@@ -1398,6 +1450,17 @@ kbd {
     grid-template-columns: 1fr;
   }
   .comparison-status .button {
+    width: 100%;
+  }
+  .session-open-input {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .session-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .session-panel .button {
     width: 100%;
   }
   .footer-inner {

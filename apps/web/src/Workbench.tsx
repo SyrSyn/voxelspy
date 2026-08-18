@@ -45,6 +45,12 @@ type CompleteOutcome = Extract<
 type ChangeRegion = CompleteOutcome["regions"][number];
 type AnalysisMetric = CompleteOutcome["metrics"][number];
 
+export interface WorkbenchSessionPanelProps {
+  onSave: () => void;
+  status: "idle" | "saving" | "error";
+  error?: string | undefined;
+}
+
 export interface WorkbenchProps {
   baseline: NormalizedModel;
   candidate: NormalizedModel;
@@ -55,6 +61,7 @@ export interface WorkbenchProps {
   headerAction?: ReactNode;
   variant?: "default" | "sample";
   enableKeyboardShortcuts?: boolean;
+  sessionPanel?: WorkbenchSessionPanelProps;
 }
 
 const identity = new Matrix4();
@@ -1074,6 +1081,7 @@ export function Workbench({
   headerAction,
   variant = "default",
   enableKeyboardShortcuts = true,
+  sessionPanel,
 }: WorkbenchProps) {
   const baselineToComparison = useMemo(
     () => new Matrix4().fromArray(analysis.baseline.modelToComparison),
@@ -1293,6 +1301,30 @@ export function Workbench({
           {headerAction}
         </div>
       </header>
+      {sessionPanel && (
+        <div className="session-panel">
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={sessionPanel.onSave}
+            disabled={sessionPanel.status === "saving"}
+          >
+            {sessionPanel.status === "saving"
+              ? "Saving session…"
+              : "Save session"}
+          </button>
+          <p className="boundary-note">
+            Saving embeds both models&rsquo; original geometry in the downloaded
+            file, so sharing a saved session shares that model data.
+          </p>
+          {sessionPanel.status === "error" && sessionPanel.error && (
+            <div className="comparison-error" role="alert">
+              <strong>Session could not be saved</strong>
+              <p>{sessionPanel.error}</p>
+            </div>
+          )}
+        </div>
+      )}
       <div className="workbench-toolbar">
         <div className="toolbar-controls">
           <label>

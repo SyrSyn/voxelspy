@@ -1,11 +1,23 @@
 import type { SourceAxis, SourceUnit } from "@voxelspy/contracts";
+import { SessionArchiveError } from "@voxelspy/session-archive";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import {
+  asArrayBufferBacked,
+  describeSessionError,
+  openSession,
+  saveSession,
+  sessionImportSpecFor,
+  SESSION_FILE_MEDIA_TYPE,
+  type SavedSession,
+  type SessionSourceModels,
+} from "./session";
 import {
   ANALYSIS_MEMORY_MAX_MIB,
   ANALYSIS_MEMORY_MIN_MIB,
   ANALYSIS_MEMORY_STEP_MIB,
   ComparisonCancelledError,
   DEFAULT_ANALYSIS_MEMORY_MIB,
+  reimportSessionModels,
   runComparison,
   type ComparisonProgress,
   type ComparisonSource,
@@ -176,6 +188,33 @@ function SourceCard({
   );
 }
 
+/** Downloads a saved session as a `.voxelspy` file via a revocable Blob URL. */
+function downloadSessionArchive(saved: SavedSession) {
+  const blob = new Blob([asArrayBufferBacked(saved.bytes)], {
+    type: SESSION_FILE_MEDIA_TYPE,
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = saved.fileName;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  // Revoking synchronously can race the download the click() just started in
+  // some browsers; a 0ms macrotask lets that navigation begin first.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function describeSessionFailure(reason: unknown, action: "open" | "save") {
+  if (reason instanceof SessionArchiveError)
+    return describeSessionError(reason);
+  if (reason instanceof Error) return reason.message;
+  return action === "open"
+    ? "The session could not be opened safely."
+    : "The session could not be saved safely.";
+}
+
 export function ComparisonFlow() {
   const [baseline, setBaseline] = useState(emptySource);
   const [candidate, setCandidate] = useState(emptySource);
@@ -183,10 +222,19 @@ export function ComparisonFlow() {
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [result, setResult] = useState<CompletedComparison>();
+  const [sourceModels, setSourceModels] = useState<SessionSourceModels>();
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "error">(
+    "idle",
+  );
+  const [saveError, setSaveError] = useState<string>();
+  const [openProgress, setOpenProgress] = useState<ComparisonProgress>();
+  const [openError, setOpenError] = useState<string>();
   const [analysisMemoryMiB, setAnalysisMemoryMiB] = useState(
     DEFAULT_ANALYSIS_MEMORY_MIB,
   );
   const activeRunRef = useRef<AbortController | null>(null);
+  const activeOpenRunRef = useRef<AbortController | null>(null);
+  const saveInFlightRef = useRef(false);
   const baselineCapability = useMemo(
     () => sourceCapability(baseline),
     [baseline],
@@ -201,6 +249,7 @@ export function ComparisonFlow() {
   useEffect(() => {
     return () => {
       activeRunRef.current?.abort();
+      activeOpenRunRef.current?.abort();
     };
   }, []);
 
@@ -217,10 +266,12 @@ export function ComparisonFlow() {
       return;
     // A new run replaces any in-flight one; make sure it is stopped first.
     activeRunRef.current?.abort();
+    activeOpenRunRef.current?.abort();
     const controller = new AbortController();
     activeRunRef.current = controller;
     setError(undefined);
     setNotice(undefined);
+    setOpenError(undefined);
     setProgress({ stage: "starting", message: "Starting local comparison" });
     try {
       const next = await runComparison(
@@ -230,6 +281,19 @@ export function ComparisonFlow() {
         analysisMemoryMiB,
         controller.signal,
       );
+      // Re-read the original files (Blobs are immutable and freely
+      // re-readable) so a portable session can be saved later without
+      // holding the import's transferred bytes in memory the whole time.
+      const [baselineBytes, candidateBytes] = await Promise.all([
+        baseline.file.arrayBuffer(),
+        candidate.file.arrayBuffer(),
+      ]);
+      setSourceModels({
+        baseline: new Uint8Array(baselineBytes),
+        candidate: new Uint8Array(candidateBytes),
+      });
+      setSaveStatus("idle");
+      setSaveError(undefined);
       setResult(next);
     } catch (reason) {
       if (reason instanceof ComparisonCancelledError) {
@@ -251,6 +315,87 @@ export function ComparisonFlow() {
     activeRunRef.current?.abort();
   };
 
+  const openSessionFile = async (file: File) => {
+    activeRunRef.current?.abort();
+    activeOpenRunRef.current?.abort();
+    const controller = new AbortController();
+    activeOpenRunRef.current = controller;
+    setError(undefined);
+    setNotice(undefined);
+    setOpenError(undefined);
+    setOpenProgress({ stage: "starting", message: "Reading session file" });
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const opened = await openSession(bytes);
+      const report = opened.exchange.bundle.report;
+      const baselineModel = report.models.find(
+        (model) => model.role === "baseline",
+      );
+      const candidateModel = report.models.find(
+        (model) => model.role === "candidate",
+      );
+      if (!baselineModel || !candidateModel)
+        throw new Error(
+          "The session archive is missing a required model entry.",
+        );
+      const baselineBytes = opened.resources.get(baselineModel.sourcePath);
+      const candidateBytes = opened.resources.get(candidateModel.sourcePath);
+      if (!baselineBytes || !candidateBytes)
+        throw new Error(
+          "The session archive is missing a required model resource.",
+        );
+      const { baseline: baselineModelResult, candidate: candidateModelResult } =
+        await reimportSessionModels(
+          sessionImportSpecFor(baselineModel, baselineBytes),
+          sessionImportSpecFor(candidateModel, candidateBytes),
+          setOpenProgress,
+          controller.signal,
+        );
+      setSourceModels({ baseline: baselineBytes, candidate: candidateBytes });
+      setSaveStatus("idle");
+      setSaveError(undefined);
+      setResult({
+        baseline: baselineModelResult,
+        candidate: candidateModelResult,
+        analysis: report.analysis.result,
+      });
+    } catch (reason) {
+      if (reason instanceof ComparisonCancelledError) {
+        setNotice("Session open cancelled.");
+      } else {
+        setOpenError(describeSessionFailure(reason, "open"));
+      }
+    } finally {
+      setOpenProgress(undefined);
+      if (activeOpenRunRef.current === controller)
+        activeOpenRunRef.current = null;
+    }
+  };
+
+  const handleSaveSession = () => {
+    if (!result || !sourceModels || saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
+    setSaveStatus("saving");
+    setSaveError(undefined);
+    void (async () => {
+      try {
+        const saved = await saveSession({
+          baseline: result.baseline,
+          candidate: result.candidate,
+          analysis: result.analysis,
+          sourceModels,
+        });
+        downloadSessionArchive(saved);
+        setSaveStatus("idle");
+      } catch (reason) {
+        setSaveStatus("error");
+        setSaveError(describeSessionFailure(reason, "save"));
+      } finally {
+        saveInFlightRef.current = false;
+      }
+    })();
+  };
+
   if (result)
     return (
       <Suspense
@@ -264,10 +409,19 @@ export function ComparisonFlow() {
           baseline={result.baseline}
           candidate={result.candidate}
           analysis={result.analysis}
+          sessionPanel={{
+            onSave: handleSaveSession,
+            status: saveStatus,
+            error: saveError,
+          }}
           onReset={() => {
             setResult(undefined);
             setError(undefined);
             setNotice(undefined);
+            setOpenError(undefined);
+            setSourceModels(undefined);
+            setSaveStatus("idle");
+            setSaveError(undefined);
           }}
         />
       </Suspense>
@@ -284,6 +438,47 @@ export function ComparisonFlow() {
           uploaded.
         </p>
       </header>
+      <section
+        className="session-open-card"
+        aria-labelledby="session-open-title"
+      >
+        <div className="section-heading">
+          <span className="step">Optional</span>
+          <h2 id="session-open-title">Reopen a saved session</h2>
+          <p>
+            Already saved a comparison as a <code>.voxelspy</code> file? Open it
+            to restore the workbench directly, with the same models and analysis
+            result, without re-running the analysis.
+          </p>
+        </div>
+        <label className="session-open-input" htmlFor="session-open-file">
+          <span>
+            {openProgress
+              ? openProgress.message
+              : "Choose a .voxelspy session file"}
+          </span>
+          <input
+            id="session-open-file"
+            type="file"
+            accept=".voxelspy"
+            disabled={Boolean(progress) || Boolean(openProgress)}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = "";
+              if (file) void openSessionFile(file);
+            }}
+          />
+          <span className="button button-secondary" aria-hidden="true">
+            Browse this device
+          </span>
+        </label>
+        {openError && (
+          <div className="comparison-error" role="alert">
+            <strong>Session could not be opened</strong>
+            <p>{openError}</p>
+          </div>
+        )}
+      </section>
       <section className="comparison-card" aria-labelledby="choose-title">
         <div className="section-heading">
           <span className="step">Step 01</span>

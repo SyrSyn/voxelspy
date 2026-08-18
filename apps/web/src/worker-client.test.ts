@@ -1,13 +1,15 @@
+import { IDENTITY_MAT4, requestIdSchema } from "@voxelspy/contracts";
 import type { RequestId, WorkerOutboundMessage } from "@voxelspy/contracts";
-import { requestIdSchema } from "@voxelspy/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CANCEL_GRACE_PERIOD_MS,
   ComparisonCancelledError,
   ComparisonProtocolError,
   INACTIVITY_TIMEOUT_MS,
+  reimportSessionModels,
   runComparison,
   type ComparisonSource,
+  type SessionImportSpec,
 } from "./worker-client";
 
 type Listener = (event: { data: unknown }) => void;
@@ -296,5 +298,141 @@ describe("requestIdSchema sanity", () => {
     expect(() =>
       requestIdSchema.parse("cancel.import.baseline.1"),
     ).not.toThrow();
+  });
+});
+
+function minimalNormalizedModel(role: "baseline" | "candidate") {
+  const id = `model.${role}`;
+  return {
+    contractVersion: 1,
+    id,
+    frame: { unit: "millimetre", coordinateSystem: "right-handed-z-up" },
+    meshes: [
+      {
+        id: `mesh.${role}`,
+        geometry: {
+          positions: new Float64Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+          indices: new Uint32Array([0, 1, 2]),
+        },
+      },
+    ],
+    placement: {
+      kind: "flat",
+      instances: [
+        {
+          id: `instance.${role}`,
+          meshId: `mesh.${role}`,
+          meshToModel: IDENTITY_MAT4,
+        },
+      ],
+    },
+    warnings: [],
+    provenance: {
+      formatId: "stl",
+      importerId: "test.reimport",
+      importerVersion: "1.0.0",
+      sourceName: `${role}.stl`,
+      detectedSourceUnit: "unknown",
+      detectedSourceAxis: "unknown",
+      sourceUnit: "millimetre",
+      sourceAxis: "right-handed-z-up",
+      sourceResolution: { unit: "declared", axis: "declared" },
+      appliedSourceToModel: IDENTITY_MAT4,
+      notes: [],
+    },
+  };
+}
+
+function dummySessionSpec(role: "baseline" | "candidate"): SessionImportSpec {
+  return {
+    targetModelId: `model.${role}` as SessionImportSpec["targetModelId"],
+    format: "stl",
+    sourceName: `${role}.stl`,
+    bytes: new TextEncoder().encode("irrelevant"),
+    options: { declaredUnit: "millimetre", declaredAxis: "right-handed-z-up" },
+  };
+}
+
+describe("reimportSessionModels", () => {
+  it("re-runs only the two import operations, never analysis, and returns both models", async () => {
+    const runPromise = reimportSessionModels(
+      dummySessionSpec("baseline"),
+      dummySessionSpec("candidate"),
+      () => {},
+    );
+    const worker = FakeWorker.instances.at(-1)!;
+    worker.emit(readyMessage);
+    await flushMicrotasks();
+    const initializeId = lastPostedRequestId(worker);
+    worker.emit({
+      protocolVersion: 1,
+      type: "initialized",
+      requestId: initializeId,
+    });
+    await flushMicrotasks();
+
+    const baselineRequestId = lastPostedRequestId(worker);
+    expect(baselineRequestId).toBe("import.baseline.1");
+    worker.emit({
+      protocolVersion: 1,
+      type: "result",
+      operation: "import",
+      requestId: baselineRequestId,
+      result: {
+        contractVersion: 1,
+        ok: true,
+        model: minimalNormalizedModel("baseline"),
+      },
+    });
+    await flushMicrotasks();
+
+    const candidateRequestId = lastPostedRequestId(worker);
+    expect(candidateRequestId).toBe("import.candidate.1");
+    worker.emit({
+      protocolVersion: 1,
+      type: "result",
+      operation: "import",
+      requestId: candidateRequestId,
+      result: {
+        contractVersion: 1,
+        ok: true,
+        model: minimalNormalizedModel("candidate"),
+      },
+    });
+
+    const result = await runPromise;
+    expect(result.baseline.id).toBe("model.baseline");
+    expect(result.candidate.id).toBe("model.candidate");
+    expect(
+      worker.posted.filter(
+        (message) => (message as { type: string }).type === "execute",
+      ),
+    ).toHaveLength(2);
+    expect(
+      worker.posted.some(
+        (message) =>
+          (message as { operation?: string }).operation === "analysis",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects with ComparisonCancelledError and terminates the worker when aborted before any operation is active", async () => {
+    const controller = new AbortController();
+    const runPromise = reimportSessionModels(
+      dummySessionSpec("baseline"),
+      dummySessionSpec("candidate"),
+      () => {},
+      controller.signal,
+    );
+    runPromise.catch(() => {});
+    const worker = FakeWorker.instances.at(-1)!;
+    worker.emit(readyMessage);
+    await flushMicrotasks();
+
+    controller.abort();
+    await flushMicrotasks();
+
+    await expect(runPromise).rejects.toBeInstanceOf(ComparisonCancelledError);
+    expect(worker.terminated).toBe(true);
   });
 });

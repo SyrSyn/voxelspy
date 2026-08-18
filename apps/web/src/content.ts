@@ -62,7 +62,8 @@ export const docs: DocPage[] = [
         id: "portable-artifacts",
         title: "Portable artifacts are explicit",
         paragraphs: [
-          "Reports and sessions have versioned, serializable data boundaries, but portable export is not connected to the browser workflow yet.",
+          "A saved session is a self-contained .voxelspy file: it embeds both original models, the analysis result, and the comparison configuration, so saving or sharing one is itself a model-data transfer, not just a result summary. Saving and reopening a session are both explicit, local actions with no network step.",
+          "Portable report export (rendering a comparison to a standalone document) has a versioned, serializable data boundary in the workspace, but is not connected to the browser workflow yet.",
         ],
       },
     ],

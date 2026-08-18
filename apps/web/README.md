@@ -29,7 +29,7 @@ The comparison form exposes an analysis RAM allowance from 128 MiB to 768 MiB an
 
 The workbench keeps the selected source frame, normalization transform, importer provenance, import warnings and notes, analysis warnings, and approximation uncertainty available alongside the result. Selecting a replacement file restores the common source-frame defaults so an expert override cannot accidentally carry to a different model.
 
-Portable report and session contracts exist in the workspace, but browser save and export actions are not connected yet.
+The compare workbench can save a completed comparison as a portable `.voxelspy` session (both source models, the analysis result, and the comparison configuration, written with `@voxelspy/session-archive`) and reopen one later, restoring the workbench directly without re-running the analysis. Saving is a deliberate, explicitly-labeled action; because the archive embeds both models' original geometry, saving one is itself a model-data transfer once you share the file. Portable report export (rendering a report to a standalone document) has its own versioned contract in the workspace but is not connected to the browser workflow yet.
 
 ## Static hosting
 
