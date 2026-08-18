@@ -1336,6 +1336,74 @@ kbd {
   font-size: 1.7rem;
   letter-spacing: -0.035em;
 }
+.docs-tools-pointer {
+  margin-top: 1.4rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.tool-shell-body {
+  margin-top: 1rem;
+}
+.tools-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 1rem;
+}
+.tool-card {
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  text-decoration: none;
+  color: inherit;
+}
+a.tool-card-available:hover {
+  border-color: var(--line-strong);
+}
+.tool-card-planned {
+  border-style: dashed;
+  background: var(--surface-muted);
+}
+.tool-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.tool-status-available {
+  color: var(--green);
+}
+.tool-status-planned {
+  color: var(--muted);
+}
+.tool-card h2 {
+  margin: 0.7rem 0 0.4rem;
+  font-size: 1.3rem;
+}
+.tool-card > p {
+  margin: 0 0 0.4rem;
+  color: var(--muted);
+}
+.tool-summary {
+  font-size: 0.88rem;
+}
+.tool-question {
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--line);
+  font-style: italic;
+}
+.tool-card-available strong {
+  margin-top: auto;
+  padding-top: 0.8rem;
+  color: var(--green);
+  font-size: 0.85rem;
+}
 .not-found {
   min-height: 70vh;
   display: flex;
@@ -1422,7 +1490,8 @@ kbd {
     display: flex;
   }
   .file-grid,
-  .docs-grid {
+  .docs-grid,
+  .tools-grid {
     grid-template-columns: 1fr;
   }
   .method-card {

@@ -6,6 +6,29 @@ export interface DocPage {
   sections: { id: string; title: string; paragraphs: string[] }[];
 }
 
+export type ToolStatus = "available" | "planned";
+
+/** A serializable catalog entry for one tool in the VoxelSpy toolbox. Holds
+ *  no React or DOM references so it can be shared with a prerendered page,
+ *  a test, or (later) a non-web consumer without changes. */
+export interface Tool {
+  /** Stable, URL-safe identifier, also used as the React list key. */
+  id: string;
+  /** Canonical route. For a `planned` tool this is the route it will use
+   *  once built, not a route that exists yet -- see `routes` below, which
+   *  only lists routes the build actually emits. */
+  path: string;
+  name: string;
+  /** One line, used in compact contexts (catalog card headline, nav). */
+  description: string;
+  /** A longer paragraph of detail, used where there is room to explain what
+   *  the tool does and, for a planned tool, what it will do. */
+  summary: string;
+  status: ToolStatus;
+  /** The user question this tool answers, stated plainly. */
+  question: string;
+}
+
 export const docs: DocPage[] = [
   {
     path: "/docs/getting-started/",
@@ -140,8 +163,90 @@ export const docs: DocPage[] = [
   },
 ];
 
+/** The VoxelSpy toolbox: tools for understanding, validating, measuring, and
+ *  comparing 3D geometry. Only `Compare` is built today -- every other entry
+ *  is `planned` and says so plainly; the catalog page renders planned tools
+ *  as non-link cards rather than dead links. Keep this honest: add a tool
+ *  here only once it is real, and flip `status` to `"available"` (and add
+ *  its `path` to `routes` below) only once the route actually exists. */
+export const tools: Tool[] = [
+  {
+    id: "compare",
+    path: "/compare/",
+    name: "Compare",
+    description: "Diff a baseline and a candidate model, region by region.",
+    summary:
+      "Load a trusted baseline and a candidate revision from your device and see exactly what moved, was added, was removed, or deviated beyond tolerance, with per-region evidence and an exportable report or session. Comparison runs entirely in your browser.",
+    status: "available",
+    question: "What changed between this baseline and this candidate?",
+  },
+  {
+    id: "inspect",
+    path: "/tools/inspect/",
+    name: "Inspect",
+    description:
+      "Look inside one model without a second one to compare against.",
+    summary:
+      "Open a single model and examine its structure directly: bounds, watertightness, component counts, and other properties that do not require a baseline. Inspect is not built yet.",
+    status: "planned",
+    question: "What is actually inside this one model?",
+  },
+  {
+    id: "measure-section",
+    path: "/tools/measure-section/",
+    name: "Measure & Section",
+    description: "Take dimensions and cross-sections straight off a model.",
+    summary:
+      "Place point-to-point and section-plane measurements directly on a model's geometry, with source units preserved. Measure & Section is not built yet.",
+    status: "planned",
+    question: "How big is this, and what does it look like sliced open?",
+  },
+  {
+    id: "clearance-fit",
+    path: "/tools/clearance-fit/",
+    name: "Clearance & Fit",
+    description: "Check the gap or interference between two parts.",
+    summary:
+      "Test whether two models fit together the way they are supposed to: minimum clearance, overlap volume, and where along the surface the fit gets tight. Clearance & Fit is not built yet.",
+    status: "planned",
+    question: "Will these two parts actually fit together?",
+  },
+  {
+    id: "mesh-health",
+    path: "/tools/mesh-health/",
+    name: "Mesh Health",
+    description: "Find non-manifold edges, holes, and other mesh defects.",
+    summary:
+      "Scan a mesh for the structural problems that break downstream tools: non-manifold edges, holes, self-intersections, and inverted normals, each located and explained. Mesh Health is not built yet.",
+    status: "planned",
+    question:
+      "Is this mesh actually sound, or does it just look fine rendered?",
+  },
+  {
+    id: "printability",
+    path: "/tools/printability/",
+    name: "Printability",
+    description: "Check a model against practical 3D-printing constraints.",
+    summary:
+      "Evaluate wall thickness, overhang angles, and unsupported spans against limits for a given process, before committing material and time to a print. Printability is not built yet.",
+    status: "planned",
+    question: "Will this actually print the way I expect?",
+  },
+  {
+    id: "file-forensics",
+    path: "/tools/file-forensics/",
+    name: "File Forensics",
+    description: "Understand what a model file actually encodes, byte by byte.",
+    summary:
+      "Inspect a file's declared format, units, axes, precision, embedded metadata, and import warnings, when the question is about the file itself rather than the shape it encodes. File Forensics is not built yet.",
+    status: "planned",
+    question: "What is this file actually telling me, and can I trust it?",
+  },
+];
+
 export const routes = [
   "/",
+  "/tools/",
   "/compare/",
   "/docs/",
   ...docs.map((doc) => doc.path),

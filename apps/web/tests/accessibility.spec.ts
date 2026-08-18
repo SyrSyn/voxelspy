@@ -296,7 +296,14 @@ async function attachRichFixture(page: Page) {
 // Landmarks, headings, skip link, and aria-controls
 // ---------------------------------------------------------------------------
 
-const routes = ["/", "/compare/", "/docs/", "/docs/getting-started/", "/nope/"];
+const routes = [
+  "/",
+  "/tools/",
+  "/compare/",
+  "/docs/",
+  "/docs/getting-started/",
+  "/nope/",
+];
 
 for (const route of routes) {
   test(`landmark and heading structure are correct on ${route}`, async ({

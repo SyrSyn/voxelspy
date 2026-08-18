@@ -3,7 +3,8 @@ import { Link, NavLink, Route, Routes, useLocation } from "react-router";
 import { Wordmark } from "./Brand";
 import { ComparisonFlow } from "./ComparisonFlow";
 import { HomeDemo } from "./HomeDemo";
-import { docs, searchDocs, type DocPage } from "./content";
+import { docs, searchDocs, tools, type DocPage } from "./content";
+import { ToolShell } from "./ToolShell";
 
 type ThemePreference = "system" | "light" | "dark";
 
@@ -12,6 +13,11 @@ const baseMetadata = {
     title: "VoxelSpy — A 3D Toolkit, Free Forever",
     description:
       "Explore a loaded sample revision with synchronized difference, baseline, and candidate views.",
+  },
+  "/tools/": {
+    title: "Tools — VoxelSpy",
+    description:
+      "Browse the VoxelSpy toolbox: tools for understanding, validating, measuring, and comparing 3D geometry.",
   },
   "/compare/": {
     title: "Compare models — VoxelSpy",
@@ -122,9 +128,7 @@ function Header() {
           className={open ? "main-nav is-open" : "main-nav"}
           aria-label="Primary navigation"
         >
-          <NavLink to="/" end>
-            Home
-          </NavLink>
+          <NavLink to="/tools/">Tools</NavLink>
           <NavLink to="/compare/">Compare</NavLink>
           <NavLink to="/docs/">Docs</NavLink>
         </nav>
@@ -159,8 +163,9 @@ function Footer() {
     <footer className="site-footer">
       <div className="shell footer-inner">
         <Wordmark />
-        <p>Compare geometry without giving it away.</p>
+        <p>Local tools for understanding geometry, without giving it away.</p>
         <nav aria-label="Footer navigation">
+          <Link to="/tools/">Tools</Link>
           <Link to="/docs/privacy/">Privacy</Link>
           <Link to="/docs/geometry/">Geometry</Link>
         </nav>
@@ -171,6 +176,48 @@ function Footer() {
 
 function HomePage() {
   return <HomeDemo />;
+}
+
+function ToolCard({ tool }: { tool: (typeof tools)[number] }) {
+  if (tool.status === "available")
+    return (
+      <Link className="tool-card tool-card-available" to={tool.path}>
+        <span className="tool-status tool-status-available">
+          <span aria-hidden="true">●</span> Available
+        </span>
+        <h2>{tool.name}</h2>
+        <p>{tool.description}</p>
+        <p className="tool-question">{tool.question}</p>
+        <strong>Open tool →</strong>
+      </Link>
+    );
+  return (
+    <div className="tool-card tool-card-planned">
+      <span className="tool-status tool-status-planned">
+        <span aria-hidden="true">○</span> Planned — not built yet
+      </span>
+      <h2>{tool.name}</h2>
+      <p>{tool.description}</p>
+      <p className="tool-summary">{tool.summary}</p>
+      <p className="tool-question">{tool.question}</p>
+    </div>
+  );
+}
+
+function ToolsIndex() {
+  return (
+    <ToolShell
+      eyebrow="Tools"
+      title="A toolbox for 3D geometry"
+      description="Tools for understanding, validating, measuring, and comparing 3D geometry -- each one built to answer one question well, not to be another do-everything convert/view/repair site."
+    >
+      <div className="tools-grid">
+        {tools.map((tool) => (
+          <ToolCard key={tool.id} tool={tool} />
+        ))}
+      </div>
+    </ToolShell>
+  );
 }
 
 function SearchBox() {
@@ -258,6 +305,10 @@ function DocsIndex() {
           boundaries behind a trustworthy comparison.
         </p>
         <SearchBox />
+        <p className="docs-tools-pointer">
+          Looking for what VoxelSpy can do beyond comparison? See the{" "}
+          <Link to="/tools/">tools catalog</Link>.
+        </p>
       </header>
       <div className="docs-grid">
         {docs.map((doc) => (
@@ -300,10 +351,10 @@ function NotFound() {
     <div className="page shell not-found">
       <span className="eyebrow">404</span>
       <h1>That route is not in this model.</h1>
-      <p>Return to comparison or browse the documentation.</p>
+      <p>Browse the toolbox or the documentation instead.</p>
       <div className="actions">
-        <Link className="button button-primary" to="/compare/">
-          Compare models
+        <Link className="button button-primary" to="/tools/">
+          Browse tools
         </Link>
         <Link className="button button-secondary" to="/docs/">
           Browse docs
@@ -353,6 +404,7 @@ export function App() {
       <main id="main-content">
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/tools/" element={<ToolsIndex />} />
           <Route path="/compare/" element={<ComparisonFlow />} />
           <Route path="/docs/" element={<DocsIndex />} />
           {docs.map((doc) => (
