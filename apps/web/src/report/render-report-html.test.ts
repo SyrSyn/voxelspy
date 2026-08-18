@@ -61,6 +61,7 @@ async function importSample(
 async function buildRealReport(options?: {
   readonly baselineFile?: File;
   readonly title?: string;
+  readonly candidatePlacement?: typeof IDENTITY_MAT4;
 }) {
   const sample = createBuiltInSamplePair();
   const baseline = await importSample(
@@ -73,7 +74,10 @@ async function buildRealReport(options?: {
     contractVersion: 1,
     requestId: requestIdSchema.parse("analysis.render-fixture"),
     baseline: { modelId: baseline.id, modelToComparison: IDENTITY_MAT4 },
-    candidate: { modelId: candidate.id, modelToComparison: IDENTITY_MAT4 },
+    candidate: {
+      modelId: candidate.id,
+      modelToComparison: options?.candidatePlacement ?? IDENTITY_MAT4,
+    },
     method: SURFACE_DISTANCE_METHOD,
     tolerance: { distanceMillimetres: 0.1 },
     executionBudget: {
@@ -404,3 +408,28 @@ function buildManyRegionsReport(regionCount: number): Report {
     summary,
   });
 }
+
+describe("renderReportHtml placement disclosure", () => {
+  it("distinguishes a placed comparison from an unplaced one", async () => {
+    const unplaced = renderReportHtml(await buildRealReport());
+    expect(unplaced).toContain("Placement");
+    expect(unplaced).toContain("no placement applied");
+    expect(unplaced).not.toContain("placed geometry");
+
+    // A candidate positioned into the comparison frame, as an accepted
+    // alignment produces.
+    const placed = renderReportHtml(
+      await buildRealReport({
+        candidatePlacement: [
+          1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 2.5, 0, 0, 1,
+        ] as unknown as typeof IDENTITY_MAT4,
+      }),
+    );
+    // The reader must be able to see that this result describes placed
+    // geometry, and by how much, without opening the underlying data.
+    expect(placed).toContain("placed geometry");
+    expect(placed).toContain("candidate");
+    expect(placed).toContain("2.5");
+    expect(placed).not.toBe(unplaced);
+  });
+});

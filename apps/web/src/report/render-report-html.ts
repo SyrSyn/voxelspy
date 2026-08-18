@@ -42,6 +42,7 @@ function renderBody(report: Report): string {
   return [
     renderHeader(report),
     renderModels(report),
+    renderPlacement(report),
     renderAnalysis(report.analysis.result.outcome),
     renderResultWarnings(report.analysis.result.warnings),
     renderFindings(report.findings),
@@ -82,6 +83,65 @@ function renderModels(report: Report): string {
     <thead><tr><th scope="col">Role</th><th scope="col">Name</th><th scope="col">Source</th><th scope="col">Media type</th><th scope="col">Path</th><th scope="col">SHA-256</th><th scope="col">Source frame</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
+</section>`;
+}
+
+const IDENTITY_PLACEMENT = [
+  1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+] as const;
+
+function isIdentityPlacement(transform: readonly number[]): boolean {
+  return IDENTITY_PLACEMENT.every((value, index) => transform[index] === value);
+}
+
+function renderTransformRows(transform: readonly number[]): string {
+  const rows = [0, 1, 2, 3]
+    .map((row) => {
+      const cells = [0, 1, 2, 3]
+        .map((column) => {
+          const value = transform[column * 4 + row] ?? 0;
+          return `<td>${escapeHtml(String(Object.is(value, -0) ? 0 : value))}</td>`;
+        })
+        .join("");
+      return `<tr>${cells}</tr>`;
+    })
+    .join("\n");
+  return `<table class="transform"><tbody>${rows}</tbody></table>`;
+}
+
+/**
+ * A comparison whose models were placed by anything other than the identity
+ * describes aligned geometry, and a reader of the report must be able to see
+ * that without inspecting the underlying data.
+ */
+function renderPlacement(report: Report): string {
+  const bindings = [
+    { role: "baseline", binding: report.analysis.result.baseline },
+    { role: "candidate", binding: report.analysis.result.candidate },
+  ] as const;
+  const placed = bindings.filter(
+    ({ binding }) => !isIdentityPlacement(binding.modelToComparison),
+  );
+  const note =
+    placed.length === 0
+      ? "<p>Both models were compared where their imported geometry already sat, with no placement applied.</p>"
+      : `<p class="placement-applied">This comparison describes <strong>placed geometry</strong>: ${placed
+          .map(({ role }) => escapeHtml(role))
+          .join(
+            " and ",
+          )} was positioned into the comparison frame by the transform below. Measurements describe the models as placed.</p>`;
+  const tables = bindings
+    .map(
+      ({ role, binding }) => `<div>
+      <h3>${escapeHtml(role)}${isIdentityPlacement(binding.modelToComparison) ? " (unplaced)" : ""}</h3>
+      ${renderTransformRows(binding.modelToComparison)}
+    </div>`,
+    )
+    .join("\n");
+  return `<section aria-labelledby="placement-heading">
+  <h2 id="placement-heading">Placement</h2>
+  ${note}
+  <div class="placement-grid">${tables}</div>
 </section>`;
 }
 
@@ -408,4 +468,10 @@ const STYLE = `
   .badge-indeterminate { background: var(--error-bg); color: var(--error-fg); display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; }
   .notes { white-space: pre-wrap; }
   .digest { word-break: break-all; }
+  .placement-grid { display: flex; flex-wrap: wrap; gap: 1rem; }
+  .placement-grid > div { flex: 1 1 16rem; min-width: 0; }
+  .placement-grid h3 { margin: 0.75rem 0 0; font-size: 0.95rem; text-transform: capitalize; }
+  table.transform { width: auto; font-variant-numeric: tabular-nums; }
+  table.transform td { text-align: right; padding: 0.15rem 0.5rem; }
+  .placement-applied { border-left: 3px solid var(--accent); padding-left: 0.75rem; }
 `;
