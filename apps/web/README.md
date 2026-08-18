@@ -35,4 +35,6 @@ The workbench also has an "Export report" action next to "Save session": it rend
 
 ## Static hosting
 
-The build produces route-specific HTML for direct navigation and a static `404.html`. No provider-specific runtime, server function, or fallback rewrite is required. A production origin and provider configuration are intentionally outside this package.
+The build produces route-specific HTML for direct navigation and a static `404.html`, plus a `_headers` file declaring the security policy and caching rules. No provider-specific runtime, server function, or fallback rewrite is required. A production origin and provider configuration are intentionally outside this package.
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for build output, host requirements, the verification list to run against a deployment target, cutover, and rollback.
