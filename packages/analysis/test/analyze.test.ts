@@ -410,6 +410,38 @@ describe("approximate surface-distance adapter", () => {
       expect(result.outcome.reasons.join(" ")).not.toMatch(/vertex/u);
     }
   });
+
+  it("admits the documented worst-case memory combination (facet-local geometry at the vertex and triangle ceilings) under the default memory budget", () => {
+    // Regression guard for the memory-estimate recalibration documented on
+    // BYTES_PER_VERTEX/BYTES_PER_TRIANGLE in src/analyze.ts: a facet-local
+    // pair sitting exactly at both documented expansion ceilings at once
+    // (3,000,000 combined vertices, 1,000,000 combined triangles -- the
+    // worst-case ratio those constants' safety margin was chosen around)
+    // must still pass checkResourceBudget's memory check under the default
+    // 768 MiB budget. `maxWorkUnits: 1` stops the run immediately after
+    // that check (see the "after 0 charged units" pattern used by the
+    // tests above), so this stays fast without running a full analysis
+    // over a million triangles.
+    const result = analyzeModelPair({
+      request: request("surface-distance", {
+        maxWorkUnits: 1,
+        maxMemoryBytes: ANALYSIS_LIMITS.maxMemoryBytes,
+      }),
+      baseline: disconnectedFacetModel("baseline", 500_000),
+      candidate: disconnectedFacetModel("candidate", 500_000),
+    });
+
+    expect(result.outcome).toMatchObject({
+      state: "indeterminate",
+      code: "resource-budget-exceeded",
+    });
+    if (result.outcome.state === "indeterminate") {
+      expect(result.outcome.reasons[0]).toMatch(/after 0 charged units/u);
+      expect(result.outcome.reasons.join(" ")).not.toMatch(
+        /vertices|triangles; the implementation ceiling|Estimated analysis memory/u,
+      );
+    }
+  });
 });
 
 describe("exact axis-aligned-box adapter", () => {

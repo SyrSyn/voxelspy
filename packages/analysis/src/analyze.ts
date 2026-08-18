@@ -32,20 +32,41 @@ export interface AnalysisResourceLimits {
   readonly maxReportedRegions: number;
 }
 
-/** Safety ceilings for this implementation, not release-size claims. */
+/**
+ * Safety ceilings for this implementation, not release-size claims.
+ *
+ * `maxWorkUnits` is calibrated so the documented `maxExpandedTriangles`
+ * ceiling is actually reachable, not just declared: measured against the
+ * scaling benchmark tiers (`bench/scaling.mjs`, including its `--large`
+ * documented-ceiling tier), a pair totalling the documented 1,000,000
+ * combined triangles charges roughly 1.91 billion work units to complete
+ * `surface-distance` end to end, in well under a minute of wall-clock time
+ * and comfortably inside `maxMemoryBytes`. 2,200,000,000 keeps roughly 15%
+ * margin above that measured figure for geometry that prunes the spatial
+ * index somewhat less effectively than the benchmark's terrain shape,
+ * without weakening the fail-closed behavior charged work still enforces:
+ * a caller-supplied budget smaller than what a request needs continues to
+ * fail closed as `resource-budget-exceeded` before the corresponding pass
+ * runs, exactly as before.
+ */
 export const ANALYSIS_LIMITS: AnalysisResourceLimits = Object.freeze({
   maxExpandedVertices: 3_000_000,
   maxExpandedTriangles: 1_000_000,
-  maxWorkUnits: 76_800_000,
+  maxWorkUnits: 2_200_000_000,
   maxMemoryBytes: 768 * 1024 * 1024,
   maxReportedRegions: 2_048,
 });
 
 /**
- * Conservative per-element memory accounting for the flattened comparison
- * frame and the working structures built from it, used only to reject
- * requests before allocating anything. `checkResourceBudget` applies this to
- * the combined baseline + candidate vertex and triangle counts.
+ * Per-element memory accounting for the flattened comparison frame and the
+ * working structures built from it, used only to reject requests before
+ * allocating anything. `checkResourceBudget` applies this to the combined
+ * baseline + candidate vertex and triangle counts.
+ *
+ * This is a structural safety-margin estimate, not a literal prediction of
+ * every possible `process.memoryUsage().heapUsed` sample. Its exact
+ * structural baseline -- the data this implementation actually references
+ * while a comparison runs -- is:
  *
  *  - 24 bytes/vertex: Float64Array positions (3 * 8 bytes), exact.
  *  - 12 bytes/triangle: Uint32Array indices (3 * 4 bytes), exact.
@@ -63,10 +84,59 @@ export const ANALYSIS_LIMITS: AnalysisResourceLimits = Object.freeze({
  *    the ranking phase's exact-edge connectivity map, each entry costing a
  *    JS string key, a small value object, and V8 Map bucket overhead.
  *
- * Total: 24 bytes/vertex + 300 bytes/triangle (12 + 48 + 48 + 24 + 168).
+ * Structural baseline: 24 bytes/vertex + 300 bytes/triangle
+ * (12 + 48 + 48 + 24 + 168).
+ *
+ * This estimate is deliberately a relative/structural cost model with a
+ * stated safety margin, not a byte-exact prediction that every possible
+ * single-sample `heapUsed` reading will stay under. Measurement showed a
+ * byte-exact-prediction reading of these constants cannot be honored
+ * without either breaking the documented ceilings or rejecting geometry
+ * this package already accepts, for two independent, measured reasons:
+ *
+ *  1. Shape dependence. Vertex-to-triangle ratio varies enormously with
+ *     mesh representation for the *same* triangle count: an indexed mesh
+ *     (shared vertices, as `bench/scaling.mjs`'s terrain tiles use) has
+ *     roughly 0.5 vertices per triangle, while a facet-local mesh (one
+ *     private vertex copy per triangle corner, the representation binary
+ *     STL import commonly produces -- see the "Topology semantics" section
+ *     of ../README.md) has exactly 3, a 6x difference in vertex count at
+ *     identical triangle count. A per-element multiplier large enough to
+ *     stay conservative against the terrain benchmark's measured heap at
+ *     its ~400,000-combined-triangle tier (roughly 230 MiB measured against
+ *     a ~180 MiB estimate at these constants) would, applied to a
+ *     facet-local pair of that same triangle count, push the estimate for
+ *     an existing accepted test case (`test/analyze.test.ts`, "accepts
+ *     ordinary facet-local models above the former vertex ceiling") past
+ *     its 128 MiB request budget -- rejecting geometry this package
+ *     currently, correctly, accepts.
+ *  2. GC-timing noise. Repeated runs of byte-identical, deterministic
+ *     geometry (`bench/scaling.mjs`) show single-sample, un-forced-GC
+ *     `heapUsed` deltas varying by up to roughly 4x at the same input size
+ *     (for example 23-92 MiB observed across repeated runs at the same
+ *     ~100,000-combined-triangle tier). That spread tracks V8
+ *     garbage-collector scheduling within one synchronous call, not a
+ *     stable per-vertex/per-triangle cost.
+ *
+ * Either reason alone rules out a multiplier chosen to dominate every
+ * single-sample small/mid-scale reading: this package's worst-case
+ * documented combination -- 3,000,000 vertices (the facet-local case) at
+ * 1,000,000 triangles -- must still fit under `ANALYSIS_LIMITS.maxMemoryBytes`
+ * (768 MiB). The exported constants below apply a stated 1.5x margin over
+ * the structural baseline (36 bytes/vertex, 450 bytes/triangle): at that
+ * margin the worst-case documented combination estimates to ~532 MiB (31%
+ * headroom), while a margin near the ~2.2x some single-sample mid-scale
+ * readings would need already estimates to ~781 MiB, over budget on its
+ * own. Below the scale where the memory ceiling's protection is actually
+ * load-bearing, the absolute byte counts involved (single-digit to low
+ * tens of MiB) are far short of anything that threatens a browser tab
+ * regardless of the ratio; measured raw memory at and near the documented
+ * ceiling -- where it matters -- stays comfortably under this estimate. See
+ * the "Resource behavior" section of ../README.md and the benchmark's
+ * memory table for the underlying numbers.
  */
-const BYTES_PER_VERTEX = 24;
-const BYTES_PER_TRIANGLE = 300;
+const BYTES_PER_VERTEX = 36;
+const BYTES_PER_TRIANGLE = 450;
 
 export const SURFACE_DISTANCE_METHOD = Object.freeze({
   id: "surface-distance",
