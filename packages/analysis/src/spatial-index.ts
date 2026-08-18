@@ -167,11 +167,34 @@ export class TriangleSpatialIndex {
   }
 
   distance(px: number, py: number, pz: number, work: WorkUnitCounter): number {
+    return this.nearestTriangle(px, py, pz, work).distance;
+  }
+
+  /**
+   * Same accelerated traversal `distance` uses, but also identifies which
+   * opposite-surface triangle achieved the minimum. `distance` is
+   * implemented in terms of this method (identical traversal, identical
+   * charged work), so the two can never diverge on the value returned.
+   *
+   * Added for `checkClearance` (`src/clearance.ts`), which needs the actual
+   * closest point on the opposite surface, not just its distance, to report
+   * a measurable closest-point pair. Knowing which single triangle is
+   * nearest lets the caller compute that point cheaply
+   * (`closestPointOnTriangle` in `src/geometry.ts`) from one known triangle
+   * instead of re-scanning the whole surface.
+   */
+  nearestTriangle(
+    px: number,
+    py: number,
+    pz: number,
+    work: WorkUnitCounter,
+  ): { readonly distance: number; readonly triangleIndex: number } {
     const geometry = this.#geometry;
     const order = this.#order;
     const positions = geometry.positions;
     const indices = geometry.indices;
     let minimumSquared = Number.POSITIVE_INFINITY;
+    let nearestTriangleIndex = -1;
     const stack: SpatialNode[] = [this.#root];
     while (stack.length > 0) {
       const node = stack.pop()!;
@@ -195,7 +218,10 @@ export class TriangleSpatialIndex {
             ib,
             ic,
           );
-          if (squared < minimumSquared) minimumSquared = squared;
+          if (squared < minimumSquared) {
+            minimumSquared = squared;
+            nearestTriangleIndex = triangle;
+          }
         }
         continue;
       }
@@ -217,8 +243,66 @@ export class TriangleSpatialIndex {
         "Surface distance exceeded the supported numeric range.",
       );
     }
-    return distance;
+    return { distance, triangleIndex: nearestTriangleIndex };
   }
+
+  /**
+   * Collects every triangle index whose containing BVH leaf's aggregate AABB
+   * overlaps the query box `[minX..maxZ]`. Coarser than an exact
+   * per-triangle AABB test -- every triangle sharing a leaf is included once
+   * that leaf's own bounds overlap the query, since individual triangle
+   * bounds are transient construction-time state, not retained per entry
+   * (see the class doc comment). This never produces a wrong final answer,
+   * only some extra rejected candidates: `checkClearance`'s interference
+   * detection (`src/clearance.ts`), the only caller, applies an exact
+   * triangle-triangle intersection test to every candidate afterward.
+   */
+  overlapping(
+    minX: number,
+    minY: number,
+    minZ: number,
+    maxX: number,
+    maxY: number,
+    maxZ: number,
+    work: WorkUnitCounter,
+  ): number[] {
+    const order = this.#order;
+    const candidates: number[] = [];
+    const stack: SpatialNode[] = [this.#root];
+    while (stack.length > 0) {
+      const node = stack.pop()!;
+      work.charge(1);
+      if (!boundsOverlap(node, minX, minY, minZ, maxX, maxY, maxZ)) continue;
+
+      if (node.left === undefined || node.right === undefined) {
+        for (let index = node.start; index < node.end; index += 1) {
+          candidates.push(order[index]!);
+        }
+        continue;
+      }
+      stack.push(node.left, node.right);
+    }
+    return candidates;
+  }
+}
+
+function boundsOverlap(
+  bounds: Bounds6,
+  minX: number,
+  minY: number,
+  minZ: number,
+  maxX: number,
+  maxY: number,
+  maxZ: number,
+): boolean {
+  return (
+    bounds.minX <= maxX &&
+    bounds.maxX >= minX &&
+    bounds.minY <= maxY &&
+    bounds.maxY >= minY &&
+    bounds.minZ <= maxZ &&
+    bounds.maxZ >= minZ
+  );
 }
 
 function buildNode(

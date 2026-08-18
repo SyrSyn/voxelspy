@@ -380,3 +380,102 @@ export function pointTriangleDistanceSquared(
   const dz = pz - (az + abz * v + acz * w);
   return dx * dx + dy * dy + dz * dz;
 }
+
+/**
+ * The closest point on the triangle whose vertex indices are `ia`, `ib`,
+ * `ic` in `positions` to point `(px, py, pz)`, as a comparison-frame `Vec3`.
+ *
+ * Deliberately a separate routine from `pointTriangleDistanceSquared`
+ * (rather than that routine's cases refactored to also return a point)
+ * because that function is invoked up to hundreds of millions of times for
+ * large comparisons and must stay allocation-free; this routine runs only
+ * once per final answer -- `checkClearance`'s closest-point-pair report
+ * (`src/clearance.ts`) calls it exactly once, on the one triangle a prior
+ * `TriangleSpatialIndex.nearestTriangle` call already identified as nearest
+ * -- so the small cost of returning a `Vec3` is immaterial. Uses the exact
+ * same Voronoi-region case analysis (Ericson, "Real-Time Collision
+ * Detection"), so the point returned here is always consistent with the
+ * squared distance that routine would compute for the same inputs.
+ */
+export function closestPointOnTriangle(
+  px: number,
+  py: number,
+  pz: number,
+  positions: Float64Array,
+  ia: number,
+  ib: number,
+  ic: number,
+): Vec3 {
+  const ax = positions[ia * 3]!;
+  const ay = positions[ia * 3 + 1]!;
+  const az = positions[ia * 3 + 2]!;
+  const bx = positions[ib * 3]!;
+  const by = positions[ib * 3 + 1]!;
+  const bz = positions[ib * 3 + 2]!;
+  const cx = positions[ic * 3]!;
+  const cy = positions[ic * 3 + 1]!;
+  const cz = positions[ic * 3 + 2]!;
+
+  const abx = bx - ax;
+  const aby = by - ay;
+  const abz = bz - az;
+  const acx = cx - ax;
+  const acy = cy - ay;
+  const acz = cz - az;
+  const apx = px - ax;
+  const apy = py - ay;
+  const apz = pz - az;
+  const d1 = abx * apx + aby * apy + abz * apz;
+  const d2 = acx * apx + acy * apy + acz * apz;
+  if (d1 <= 0 && d2 <= 0) {
+    return [ax, ay, az];
+  }
+
+  const bpx = px - bx;
+  const bpy = py - by;
+  const bpz = pz - bz;
+  const d3 = abx * bpx + aby * bpy + abz * bpz;
+  const d4 = acx * bpx + acy * bpy + acz * bpz;
+  if (d3 >= 0 && d4 <= d3) {
+    return [bx, by, bz];
+  }
+
+  const vc = d1 * d4 - d3 * d2;
+  if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+    const v = d1 / (d1 - d3);
+    return [ax + abx * v, ay + aby * v, az + abz * v];
+  }
+
+  const cpx = px - cx;
+  const cpy = py - cy;
+  const cpz = pz - cz;
+  const d5 = abx * cpx + aby * cpy + abz * cpz;
+  const d6 = acx * cpx + acy * cpy + acz * cpz;
+  if (d6 >= 0 && d5 <= d6) {
+    return [cx, cy, cz];
+  }
+
+  const vb = d5 * d2 - d1 * d6;
+  if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+    const w = d2 / (d2 - d6);
+    return [ax + acx * w, ay + acy * w, az + acz * w];
+  }
+
+  const va = d3 * d6 - d5 * d4;
+  if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) {
+    const edgex = cx - bx;
+    const edgey = cy - by;
+    const edgez = cz - bz;
+    const w = (d4 - d3) / (d4 - d3 + (d5 - d6));
+    return [bx + edgex * w, by + edgey * w, bz + edgez * w];
+  }
+
+  const denominator = 1 / (va + vb + vc);
+  const v = vb * denominator;
+  const w = vc * denominator;
+  return [
+    ax + abx * v + acx * w,
+    ay + aby * v + acy * w,
+    az + abz * v + acz * w,
+  ];
+}

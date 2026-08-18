@@ -20,6 +20,12 @@ import {
 } from "./geometry.js";
 import type { FlatGeometry, WorkUnitCounter } from "./geometry.js";
 import {
+  canonicalEdgeKey,
+  exactEdgeKeyAt,
+  groupTrianglesByExactEdgeConnectivity,
+  pointKeyAt,
+} from "./region-connectivity.js";
+import {
   NumericRangeExceededError,
   TriangleSpatialIndex,
 } from "./spatial-index.js";
@@ -288,8 +294,30 @@ function checkResourceBudget(
 ): string | undefined {
   const first = countExpandedGeometry(baseline);
   const second = countExpandedGeometry(candidate);
-  const vertices = first.vertices + second.vertices;
-  const triangles = first.triangles + second.triangles;
+  return checkExpandedGeometryBudget(
+    first.vertices + second.vertices,
+    first.triangles + second.triangles,
+    request.executionBudget,
+  );
+}
+
+/**
+ * Checks combined expanded vertex/triangle counts and estimated working
+ * memory (`BYTES_PER_VERTEX`/`BYTES_PER_TRIANGLE` above) against
+ * `ANALYSIS_LIMITS`, honoring an optional caller-supplied memory budget no
+ * larger than `ANALYSIS_LIMITS.maxMemoryBytes`. Returns a human-readable
+ * problem description, or `undefined` when the combination fits.
+ *
+ * Shared by `analyzeModelPair`'s `checkResourceBudget` above and
+ * `checkClearance`'s own pre-flight check (`src/clearance.ts`), so every
+ * two-model entry point in this package enforces identical ceilings from one
+ * implementation rather than two copies of the same arithmetic.
+ */
+export function checkExpandedGeometryBudget(
+  vertices: number,
+  triangles: number,
+  executionBudget?: { readonly maxMemoryBytes?: number },
+): string | undefined {
   if (vertices > ANALYSIS_LIMITS.maxExpandedVertices) {
     return `Expanded geometry requires ${vertices} vertices; the implementation ceiling is ${ANALYSIS_LIMITS.maxExpandedVertices}.`;
   }
@@ -300,7 +328,7 @@ function checkResourceBudget(
     vertices * BYTES_PER_VERTEX + triangles * BYTES_PER_TRIANGLE;
   const memoryBudget = Math.min(
     ANALYSIS_LIMITS.maxMemoryBytes,
-    request.executionBudget?.maxMemoryBytes ?? ANALYSIS_LIMITS.maxMemoryBytes,
+    executionBudget?.maxMemoryBytes ?? ANALYSIS_LIMITS.maxMemoryBytes,
   );
   if (
     !Number.isSafeInteger(estimatedMemory) ||
@@ -348,7 +376,7 @@ const PREPROCESSING_CHUNK_ELEMENTS = 1024;
  * reports for the same input. It also means index-level topology (whether
  * two triangles happen to share a vertex INDEX) is not what this reports.
  */
-function assessGeometry(
+export function assessGeometry(
   modelId: NormalizedModel["id"],
   geometry: FlatGeometry,
   work: WorkUnitCounter,
@@ -833,39 +861,10 @@ function directionalRegions(
     changed[triangle] = maximum > tolerance ? 1 : 0;
   }
 
-  const connectivity = new DisjointSet(triangleCount);
-  const firstTriangleByEdge = new Map<string, number>();
-  for (let triangle = 0; triangle < triangleCount; triangle += 1) {
-    if (changed[triangle] === 0) continue;
-    const base = triangle * 3;
-    const a = indices[base]!;
-    const b = indices[base + 1]!;
-    const c = indices[base + 2]!;
-    for (const edge of [
-      exactEdgeKeyAt(source, a, b),
-      exactEdgeKeyAt(source, b, c),
-      exactEdgeKeyAt(source, c, a),
-    ]) {
-      const neighbor = firstTriangleByEdge.get(edge);
-      if (neighbor === undefined) {
-        firstTriangleByEdge.set(edge, triangle);
-      } else {
-        connectivity.union(triangle, neighbor);
-      }
-    }
-  }
-
-  const components = new Map<number, number[]>();
-  for (let triangle = 0; triangle < triangleCount; triangle += 1) {
-    if (changed[triangle] === 0) continue;
-    const root = connectivity.find(triangle);
-    const component = components.get(root) ?? [];
-    component.push(triangle);
-    components.set(root, component);
-  }
+  const components = groupTrianglesByExactEdgeConnectivity(source, changed);
 
   const regions: RankedSurfaceRegion[] = [];
-  for (const component of components.values()) {
+  for (const component of components) {
     const bounds = boundsOfTriangles(source, component);
     let anchorTriangle = component[0]!;
     for (const triangle of component) {
@@ -896,77 +895,6 @@ function directionalRegions(
     });
   }
   return { regions, maxLongestEdge };
-}
-
-class DisjointSet {
-  readonly #parents: Uint32Array;
-  readonly #ranks: Uint8Array;
-
-  constructor(size: number) {
-    this.#parents = Uint32Array.from({ length: size }, (_, index) => index);
-    this.#ranks = new Uint8Array(size);
-  }
-
-  find(value: number): number {
-    let root = value;
-    while (this.#parents[root] !== root) root = this.#parents[root]!;
-    while (this.#parents[value] !== value) {
-      const parent = this.#parents[value]!;
-      this.#parents[value] = root;
-      value = parent;
-    }
-    return root;
-  }
-
-  union(left: number, right: number): void {
-    let leftRoot = this.find(left);
-    let rightRoot = this.find(right);
-    if (leftRoot === rightRoot) return;
-    const leftRank = this.#ranks[leftRoot]!;
-    const rightRank = this.#ranks[rightRoot]!;
-    if (leftRank < rightRank) {
-      [leftRoot, rightRoot] = [rightRoot, leftRoot];
-    }
-    this.#parents[rightRoot] = leftRoot;
-    if (leftRank === rightRank) this.#ranks[leftRoot] = leftRank + 1;
-  }
-}
-
-function pointKeyAt(geometry: FlatGeometry, vertexIndex: number): string {
-  const base = vertexIndex * 3;
-  const positions = geometry.positions;
-  return `${positions[base]},${positions[base + 1]},${positions[base + 2]}`;
-}
-
-function exactEdgeKeyAt(
-  geometry: FlatGeometry,
-  firstVertex: number,
-  secondVertex: number,
-): string {
-  return canonicalEdgeKey(
-    pointKeyAt(geometry, firstVertex),
-    pointKeyAt(geometry, secondVertex),
-  ).key;
-}
-
-/**
- * Canonicalizes an edge between two exact-coordinate vertex keys into one
- * orientation-independent Map key, plus whether `fromKey -> toKey` is the
- * "forward" traversal under that canonical order. Shared by `assessGeometry`
- * (which needs `forward` to detect inconsistent orientation) and
- * `exactEdgeKeyAt` (which only needs the undirected key, for region
- * connectivity), so both stay keyed on the exact same coordinate identity
- * with no risk of drifting apart.
- */
-function canonicalEdgeKey(
-  fromKey: string,
-  toKey: string,
-): { key: string; forward: boolean } {
-  const forward = compareText(fromKey, toKey) <= 0;
-  return {
-    key: forward ? `${fromKey}|${toKey}` : `${toKey}|${fromKey}`,
-    forward,
-  };
 }
 
 function compareSurfaceRegion(
@@ -1180,7 +1108,7 @@ function analyzeAxisAlignedBoxes(
   }
 }
 
-interface Bounds {
+export interface Bounds {
   readonly min: Vec3;
   readonly max: Vec3;
 }
@@ -1333,7 +1261,7 @@ function boundsOfPositions(
  * positions directly instead of materializing a Vec3 array of the region's
  * (possibly duplicated) triangle corners.
  */
-function boundsOfTriangles(
+export function boundsOfTriangles(
   geometry: FlatGeometry,
   triangleIndices: readonly number[],
 ): Bounds {

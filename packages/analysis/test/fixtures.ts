@@ -8,6 +8,7 @@ import type {
   AnalysisRequest,
   Mat4,
   NormalizedModel,
+  Vec3,
 } from "@voxelspy/contracts";
 
 const BOX_INDICES = new Uint32Array([
@@ -224,6 +225,65 @@ export function panelWithInteriorHoleModel(id: string): NormalizedModel {
     new Uint32Array(indices),
     "generated-fixture",
     "Finely tessellated panel with one interior grid cell omitted, forming a hole with no vertex or centroid sample of its own.",
+  );
+}
+
+/**
+ * A four-walled, open-top/bottom square channel (a "socket") centered on the
+ * z axis: four disconnected rectangular walls at `x = ±halfOpening` and
+ * `y = ±halfOpening`, each spanning `z` in `[0, height]`. Used by the
+ * clearance-check peg-in-hole fixture: a box "peg" centered inside the
+ * channel is equidistant from all four walls, so the clearance between the
+ * peg's four side faces and this socket is uniform by construction.
+ */
+export function squareChannelModel(
+  id: string,
+  halfOpening: number,
+  height: number,
+): NormalizedModel {
+  const walls: readonly (readonly [Vec3, Vec3, Vec3, Vec3])[] = [
+    // front (y = -halfOpening), spanning x
+    [
+      [-halfOpening, -halfOpening, 0],
+      [halfOpening, -halfOpening, 0],
+      [halfOpening, -halfOpening, height],
+      [-halfOpening, -halfOpening, height],
+    ],
+    // back (y = halfOpening)
+    [
+      [-halfOpening, halfOpening, 0],
+      [halfOpening, halfOpening, 0],
+      [halfOpening, halfOpening, height],
+      [-halfOpening, halfOpening, height],
+    ],
+    // left (x = -halfOpening), spanning y
+    [
+      [-halfOpening, -halfOpening, 0],
+      [-halfOpening, halfOpening, 0],
+      [-halfOpening, halfOpening, height],
+      [-halfOpening, -halfOpening, height],
+    ],
+    // right (x = halfOpening)
+    [
+      [halfOpening, -halfOpening, 0],
+      [halfOpening, halfOpening, 0],
+      [halfOpening, halfOpening, height],
+      [halfOpening, -halfOpening, height],
+    ],
+  ];
+  const positions: number[] = [];
+  const indices: number[] = [];
+  walls.forEach((quad, wallIndex) => {
+    const base = wallIndex * 4;
+    for (const vertex of quad) positions.push(...vertex);
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  });
+  return generatedMeshModel(
+    id,
+    new Float64Array(positions),
+    new Uint32Array(indices),
+    "generated-fixture",
+    "Four-walled open square channel (a socket), used for peg-in-hole clearance-check fixtures.",
   );
 }
 

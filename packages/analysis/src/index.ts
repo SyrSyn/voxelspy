@@ -65,3 +65,29 @@ export type {
   TopologyDegenerateTriangle,
   TopologyEdgeSegment,
 } from "./summary.js";
+export {
+  CLEARANCE_METHOD_ID,
+  CLEARANCE_METHOD_VERSION,
+  DEFAULT_MAX_INTERFERING_TRIANGLE_PAIRS,
+  DEFAULT_MAX_TIGHT_REGIONS,
+  MAX_INTERFERING_TRIANGLE_PAIRS,
+  MAX_TIGHT_REGIONS,
+  checkClearance,
+} from "./clearance.js";
+export type {
+  CheckClearanceInput,
+  CheckClearanceOptions,
+  ClearanceCheckComplete,
+  ClearanceCheckIndeterminate,
+  ClearanceCheckResult,
+  ClearanceInterference,
+  ClearanceInterferenceVolume,
+  ClearancePart,
+  ClearancePlacement,
+  ClearanceState,
+  ClearanceTightRegion,
+  ClearanceTightRegionSet,
+  ClearanceTrianglePair,
+  ClearanceWarning,
+  ClosestPointPair,
+} from "./clearance.js";
