@@ -1,4 +1,3 @@
-import { analyzeModelPair, SURFACE_DISTANCE_METHOD } from "@voxelspy/analysis";
 import {
   CANONICAL_FRAME,
   IDENTITY_MAT4,
@@ -10,10 +9,13 @@ import {
   type NormalizedModel,
 } from "@voxelspy/contracts";
 import { describe, expect, it } from "vitest";
+
 import {
+  SURFACE_DISTANCE_METHOD,
+  analyzeModelPair,
   summarizeModelComparison,
   summarizeModelGeometry,
-} from "./model-summary";
+} from "../src/index.js";
 
 const BOX_INDICES = new Uint32Array([
   0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 3, 7, 6, 3, 6, 2, 0, 4,

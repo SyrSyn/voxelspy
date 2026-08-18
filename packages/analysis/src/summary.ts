@@ -1,9 +1,12 @@
-import type {
-  AnalysisResult,
-  Mat4,
-  NormalizedModel,
-  Vec3,
+import {
+  IDENTITY_MAT4,
+  type AnalysisResult,
+  type Mat4,
+  type NormalizedModel,
+  type Vec3,
 } from "@voxelspy/contracts";
+
+import { multiply } from "./geometry.js";
 
 export type DeltaDirection = "increase" | "decrease" | "unchanged";
 
@@ -136,17 +139,20 @@ interface EdgeRecord {
   readonly triangleIndices: number[];
 }
 
-const IDENTITY: Mat4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-
 /**
  * Summarizes placed model geometry in the supplied comparison frame.
  *
  * Calculations retain Float64 coordinates throughout. No recentering, repair,
  * tolerance welding, or printability interpretation is performed.
+ *
+ * This walks the model's own mesh/placement graph directly (rather than
+ * `flattenModel`'s typed-array flattening) because it also needs exact
+ * shared-edge topology keyed per placed instance, which is summary-specific
+ * and not part of the shared flattening path.
  */
 export function summarizeModelGeometry(
   model: NormalizedModel,
-  modelToComparison: Mat4 = IDENTITY,
+  modelToComparison: Mat4 = IDENTITY_MAT4,
 ): ModelPresentationSummary {
   const meshes = new Map(model.meshes.map((mesh) => [mesh.id, mesh]));
   const positions: Vec3[] = [];
@@ -204,7 +210,7 @@ export function summarizeModelGeometry(
     );
     const stack = [...model.placement.rootIds]
       .reverse()
-      .map((id) => ({ id, parentToModel: IDENTITY }));
+      .map((id) => ({ id, parentToModel: IDENTITY_MAT4 }));
     while (stack.length > 0) {
       const current = stack.pop()!;
       const node = nodes.get(current.id);
@@ -454,20 +460,6 @@ function numericDelta(baseline: number, candidate: number): NumericDelta {
     direction:
       difference > 0 ? "increase" : difference < 0 ? "decrease" : "unchanged",
   };
-}
-
-function multiply(left: readonly number[], right: readonly number[]): Mat4 {
-  const output = new Array<number>(16).fill(0);
-  for (let column = 0; column < 4; column += 1) {
-    for (let row = 0; row < 4; row += 1) {
-      let value = 0;
-      for (let inner = 0; inner < 4; inner += 1) {
-        value += left[inner * 4 + row]! * right[column * 4 + inner]!;
-      }
-      output[column * 4 + row] = value;
-    }
-  }
-  return output as Mat4;
 }
 
 function transformPoint(matrix: readonly number[], point: Vec3): Vec3 {

@@ -26,11 +26,11 @@ import {
   Vector3,
 } from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
-import {
-  summarizeModelComparison,
-  type ModelComparisonPresentationSummary,
-  type NumericDelta,
-} from "./model-summary";
+import type {
+  ModelComparisonPresentationSummary,
+  NumericDelta,
+} from "@voxelspy/analysis";
+import { summarizeModelComparisonAsync } from "./summary-worker-client";
 
 type ViewKind = "baseline" | "difference" | "candidate";
 type CameraState = {
@@ -749,7 +749,42 @@ function volumeReasonLabel(reason: string) {
   );
 }
 
-function GeometrySummary({
+type GeometrySummaryState =
+  | { status: "loading" }
+  | { status: "ready"; summary: ModelComparisonPresentationSummary }
+  | { status: "error"; message: string };
+
+function GeometrySummary({ state }: { state: GeometrySummaryState }) {
+  if (state.status === "loading") {
+    return (
+      <section
+        className="geometry-summary"
+        aria-labelledby="geometry-summary-title"
+      >
+        <h3 id="geometry-summary-title">Geometry</h3>
+        <p role="status" aria-live="polite">
+          Computing geometry summary…
+        </p>
+      </section>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <section
+        className="geometry-summary"
+        aria-labelledby="geometry-summary-title"
+      >
+        <h3 id="geometry-summary-title">Geometry</h3>
+        <p role="status" aria-live="polite">
+          Geometry summary unavailable: {state.message}
+        </p>
+      </section>
+    );
+  }
+  return <GeometrySummaryTable summary={state.summary} />;
+}
+
+function GeometrySummaryTable({
   summary,
 }: {
   summary: ModelComparisonPresentationSummary;
@@ -1066,10 +1101,42 @@ export function Workbench({
   const [camera, setCamera] = useState(initial);
   const [clip, setClip] = useState(100);
   const [paletteId, setPaletteId] = useState<ModelPaletteId>("neutral");
-  const presentation = useMemo(
-    () => summarizeModelComparison(baseline, candidate, analysis),
-    [analysis, baseline, candidate],
-  );
+  const [summaryState, setSummaryState] = useState<GeometrySummaryState>({
+    status: "loading",
+  });
+  useEffect(() => {
+    // Full-topology summarization (re-transforming every vertex, exact-edge
+    // maps, union-find over every triangle) is heavy enough on large models
+    // to freeze the render thread for seconds to minutes, so it always runs
+    // in a dedicated worker. The AbortController doubles as the stale-result
+    // guard: switching to a different baseline/candidate/analysis (or
+    // unmounting) aborts the in-flight request below before this effect
+    // re-runs, so a late response from a superseded request is dropped
+    // instead of overwriting newer state.
+    setSummaryState({ status: "loading" });
+    const controller = new AbortController();
+    summarizeModelComparisonAsync(
+      baseline,
+      candidate,
+      analysis,
+      controller.signal,
+    )
+      .then((summary) => {
+        setSummaryState({ status: "ready", summary });
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError")
+          return;
+        setSummaryState({
+          status: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Geometry summary unavailable.",
+        });
+      });
+    return () => controller.abort();
+  }, [analysis, baseline, candidate]);
   const ordered: RegionId[] =
     analysis.outcome.state === "complete"
       ? analysis.outcome.orderedRegionIds
@@ -1375,7 +1442,7 @@ export function Workbench({
               </ol>
             )}
           </div>
-          <GeometrySummary summary={presentation} />
+          <GeometrySummary state={summaryState} />
         </aside>
         <div className="source-views">
           {renderViewport("baseline")}

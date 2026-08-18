@@ -11,3 +11,17 @@ export type {
   AnalysisMethodCapability,
   AnalysisResourceLimits,
 } from "./analyze.js";
+export { summarizeModelComparison, summarizeModelGeometry } from "./summary.js";
+export type {
+  CompactAnalysisSummary,
+  DeltaDirection,
+  ModelBoundsSummary,
+  ModelComparisonPresentationSummary,
+  ModelPresentationDeltas,
+  ModelPresentationSummary,
+  ModelVolumeSummary,
+  NumericDelta,
+  TopologySummary,
+  VolumeDelta,
+  VolumeUnavailableReason,
+} from "./summary.js";
