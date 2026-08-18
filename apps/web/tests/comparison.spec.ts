@@ -25,10 +25,16 @@ endsolid candidate
 test("opens with a working sample difference above its source models", async ({
   page,
 }) => {
+  // Compared against the first observed request's origin rather than a
+  // hardcoded port: this file also runs under playwright.csp.config.ts,
+  // which serves the same build on a different port to exercise the real
+  // Content-Security-Policy headers (see tests/README.md).
   const offOrigin: string[] = [];
+  let pageOrigin: string | undefined;
   page.on("request", (request) => {
-    if (new URL(request.url()).origin !== "http://127.0.0.1:4173")
-      offOrigin.push(request.url());
+    const requestOrigin = new URL(request.url()).origin;
+    pageOrigin ??= requestOrigin;
+    if (requestOrigin !== pageOrigin) offOrigin.push(request.url());
   });
 
   await page.goto("/");
@@ -164,10 +170,16 @@ test("keeps the full comparison legible at desktop splash sizes", async ({
 test("imports, analyzes, and opens synchronized comparison views locally", async ({
   page,
 }) => {
+  // Compared against the first observed request's origin rather than a
+  // hardcoded port: this file also runs under playwright.csp.config.ts,
+  // which serves the same build on a different port to exercise the real
+  // Content-Security-Policy headers (see tests/README.md).
   const offOrigin: string[] = [];
+  let pageOrigin: string | undefined;
   page.on("request", (request) => {
-    if (new URL(request.url()).origin !== "http://127.0.0.1:4173")
-      offOrigin.push(request.url());
+    const requestOrigin = new URL(request.url()).origin;
+    pageOrigin ??= requestOrigin;
+    if (requestOrigin !== pageOrigin) offOrigin.push(request.url());
   });
   await page.goto("/compare/");
   const cards = page.locator(".source-card");
@@ -282,7 +294,17 @@ test("keeps capability guidance usable on a compact viewport", async ({
   const memory = page.getByRole("slider", {
     name: "Analysis RAM allowance",
   });
-  await expect(memory).toHaveValue("256");
+  // The starting value is a device-aware recommendation (see the dedicated
+  // capability-preflight tests below), so only its well-formedness is
+  // checked here rather than one fixed number -- the real reading depends
+  // on the host's reported memory and cores.
+  const recommended = Number(await memory.inputValue());
+  expect(recommended).toBeGreaterThanOrEqual(128);
+  expect(recommended).toBeLessThanOrEqual(768);
+  expect(recommended % 128).toBe(0);
+  const recommendation = page.locator("#analysis-memory-recommendation");
+  await expect(recommendation).toBeVisible();
+  await expect(recommendation).not.toHaveText("");
   await memory.fill("512");
   await expect(page.locator(".analysis-capacity output")).toHaveText("512 MiB");
   await expect(
@@ -355,4 +377,234 @@ test("restores ready source-frame defaults when a file is replaced", async ({
   await expect(
     page.getByRole("button", { name: "Validate and compare" }),
   ).toBeEnabled();
+});
+
+/**
+ * Overrides the device signals `capability.ts` reads, deterministically and
+ * before any page script runs, so the capability-preflight tests below do
+ * not depend on the host machine's actual memory or core count.
+ */
+async function stubDeviceSignals(
+  page: import("@playwright/test").Page,
+  signals: {
+    deviceMemory?: number;
+    hardwareConcurrency?: number;
+    coarsePointer?: boolean;
+  },
+) {
+  await page.addInitScript((values) => {
+    if (values.deviceMemory !== undefined) {
+      Object.defineProperty(window.navigator, "deviceMemory", {
+        get: () => values.deviceMemory,
+        configurable: true,
+      });
+    }
+    if (values.hardwareConcurrency !== undefined) {
+      Object.defineProperty(window.navigator, "hardwareConcurrency", {
+        get: () => values.hardwareConcurrency,
+        configurable: true,
+      });
+    }
+    if (values.coarsePointer !== undefined) {
+      const originalMatchMedia = window.matchMedia.bind(window);
+      window.matchMedia = (query: string) =>
+        query === "(pointer: coarse)"
+          ? ({
+              matches: values.coarsePointer,
+              media: query,
+              onchange: null,
+              addListener() {},
+              removeListener() {},
+              addEventListener() {},
+              removeEventListener() {},
+              dispatchEvent: () => false,
+            } as MediaQueryList)
+          : originalMatchMedia(query);
+    }
+  }, signals);
+}
+
+test("recommends a conservative, explained allowance on a simulated low-memory phone", async ({
+  page,
+}) => {
+  await stubDeviceSignals(page, {
+    deviceMemory: 2,
+    hardwareConcurrency: 4,
+    coarsePointer: true,
+  });
+  await page.goto("/compare/");
+  const memory = page.getByRole("slider", { name: "Analysis RAM allowance" });
+  await expect(memory).toHaveValue("256");
+  await expect(
+    page.getByText("This device reports 2 GB of memory", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("touch/mobile device", { exact: false }),
+  ).toBeVisible();
+  // The recommendation is a starting point, never a hard cap.
+  await memory.fill("768");
+  await expect(page.locator(".analysis-capacity output")).toHaveText("768 MiB");
+});
+
+test("recommends the full allowance on a simulated high-end, confirmed non-mobile desktop", async ({
+  page,
+}) => {
+  await stubDeviceSignals(page, {
+    deviceMemory: 8,
+    hardwareConcurrency: 16,
+    coarsePointer: false,
+  });
+  await page.goto("/compare/");
+  const memory = page.getByRole("slider", { name: "Analysis RAM allowance" });
+  await expect(memory).toHaveValue("768");
+  await expect(
+    page.getByText("This device reports 8 GB of memory", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("also reports 16 CPU cores", { exact: false }),
+  ).toBeVisible();
+});
+
+test("blocks comparison with a clear message instead of crashing when Web Workers are unavailable", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    // @ts-expect-error -- deliberately simulating a browser without Worker
+    // support for the capability-preflight fallback path.
+    delete window.Worker;
+  });
+  await page.goto("/compare/");
+  await expect(
+    page.getByText("Local comparison is unavailable in this browser"),
+  ).toBeVisible();
+  await expect(
+    page.getByText("does not support Web Workers", { exact: false }),
+  ).toBeVisible();
+  const cards = page.locator(".source-card");
+  await cards
+    .nth(0)
+    .locator('input[type="file"]')
+    .setInputFiles({
+      name: "baseline.stl",
+      mimeType: "model/stl",
+      buffer: Buffer.from(baseline),
+    });
+  await cards
+    .nth(1)
+    .locator('input[type="file"]')
+    .setInputFiles({
+      name: "candidate.stl",
+      mimeType: "model/stl",
+      buffer: Buffer.from(candidate),
+    });
+  // Even with two otherwise-ready files chosen, the missing Worker support
+  // keeps the run disabled rather than letting it throw when it later tries
+  // to construct one.
+  await expect(
+    page.getByRole("button", { name: "Validate and compare" }),
+  ).toBeDisabled();
+});
+
+test("warns before running when the chosen files are unlikely to fit the chosen allowance", async ({
+  page,
+}) => {
+  await page.goto("/compare/");
+  const cards = page.locator(".source-card");
+  const memory = page.getByRole("slider", { name: "Analysis RAM allowance" });
+  await memory.fill("128");
+  // Content does not need to be a valid mesh: the fit estimate is computed
+  // from file size alone, before any import or parsing happens.
+  await cards
+    .nth(0)
+    .locator('input[type="file"]')
+    .setInputFiles({
+      name: "large-baseline.stl",
+      mimeType: "model/stl",
+      buffer: Buffer.alloc(20 * 1024 * 1024),
+    });
+  await cards
+    .nth(1)
+    .locator('input[type="file"]')
+    .setInputFiles({
+      name: "large-candidate.stl",
+      mimeType: "model/stl",
+      buffer: Buffer.alloc(20 * 1024 * 1024),
+    });
+  await expect(
+    page.getByText("Estimated analysis memory need is roughly", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("This is a rough estimate, not a guarantee", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  // Raising the allowance past the rough estimate clears the warning.
+  await memory.fill("768");
+  await expect(
+    page.getByText("Estimated analysis memory need is roughly", {
+      exact: false,
+    }),
+  ).toBeHidden();
+});
+
+test("keeps findings and session/report actions usable when WebGL is unavailable", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    // Simulates a browser/GPU combination that cannot create a WebGL
+    // context, without depending on a real headless GPU configuration.
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (
+      this: HTMLCanvasElement,
+      type: string,
+      ...args: unknown[]
+    ) {
+      if (type === "webgl2" || type === "webgl") return null;
+      return (original as (...callArgs: unknown[]) => unknown).apply(this, [
+        type,
+        ...args,
+      ]);
+    } as typeof HTMLCanvasElement.prototype.getContext;
+  });
+  await page.goto("/compare/");
+  const cards = page.locator(".source-card");
+  await cards
+    .nth(0)
+    .locator('input[type="file"]')
+    .setInputFiles({
+      name: "baseline.stl",
+      mimeType: "model/stl",
+      buffer: Buffer.from(baseline),
+    });
+  await cards
+    .nth(1)
+    .locator('input[type="file"]')
+    .setInputFiles({
+      name: "candidate.stl",
+      mimeType: "model/stl",
+      buffer: Buffer.from(candidate),
+    });
+  await page.getByRole("button", { name: "Validate and compare" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Comparison workbench" }),
+  ).toBeVisible({ timeout: 20_000 });
+  // No WebGL context was ever created, so no canvas exists, and each
+  // viewport shows the accessible non-canvas fallback instead.
+  await expect(page.locator("canvas")).toHaveCount(0);
+  await expect(page.locator(".render-fallback")).toHaveCount(3);
+  await expect(
+    page.getByText("3D preview unavailable", { exact: false }).first(),
+  ).toBeVisible();
+  // Findings, evidence, and the export/session actions do not depend on a
+  // live 3D view and must remain usable.
+  await expect(
+    page.getByRole("heading", { name: "Changed regions" }),
+  ).toBeVisible();
+  expect(await page.locator(".findings li").count()).toBeGreaterThan(0);
+  const saveButton = page.getByRole("button", { name: "Save session" });
+  const exportButton = page.getByRole("button", { name: "Export report" });
+  await expect(saveButton).toBeEnabled({ timeout: 20_000 });
+  await expect(exportButton).toBeEnabled();
 });

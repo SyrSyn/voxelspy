@@ -57,6 +57,55 @@ assert.match(compare, /disabled=""/);
 const docs = await readFile(path.join(root, "dist/docs/index.html"), "utf8");
 assert.match(docs, /Search documentation/);
 assert.match(docs, /Privacy by default/);
+
+// Structural privacy boundary: the static build must ship a hosting headers
+// file declaring a strict Content-Security-Policy, so a regression that
+// drops or weakens it fails the build rather than silently shipping. See
+// apps/web/tests/README.md and apps/web/tests/privacy.spec.ts for the
+// behavioral half of this evidence.
+const headers = await readFile(path.join(root, "dist/_headers"), "utf8");
+assert.match(
+  headers,
+  /^\/\*$/m,
+  "_headers must apply to all routes via a bare /* rule",
+);
+const cspLine = headers
+  .split("\n")
+  .find((line) => /Content-Security-Policy:/.test(line));
+assert.ok(cspLine, "_headers must declare a Content-Security-Policy");
+for (const directive of [
+  "default-src 'self'",
+  "script-src 'self' 'sha256-",
+  "style-src 'self'",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "worker-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+]) {
+  assert.ok(
+    cspLine.includes(directive),
+    `_headers Content-Security-Policy is missing "${directive}"`,
+  );
+}
+assert.match(
+  headers,
+  /Referrer-Policy: no-referrer/,
+  "_headers must set a conservative Referrer-Policy",
+);
+assert.match(
+  headers,
+  /X-Content-Type-Options: nosniff/,
+  "_headers must set X-Content-Type-Options",
+);
+assert.match(
+  headers,
+  /Permissions-Policy: /,
+  "_headers must set a Permissions-Policy",
+);
+
 console.log(
-  `Verified ${routes.length} static routes, metadata, local boundary, and documentation content.`,
+  `Verified ${routes.length} static routes, metadata, local boundary, documentation content, and hosting headers.`,
 );

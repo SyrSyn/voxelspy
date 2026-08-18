@@ -1,0 +1,19 @@
+# Hosting headers for static deployment (Cloudflare Pages "_headers" format;
+# most static hosts that honor a headers file use the same shape, and this
+# file is a plain static asset elsewhere, so it costs nothing to ship).
+#
+# This is the structural half of VoxelSpy's local-processing privacy
+# guarantee: comparisons never send model data off-origin today, and this
+# policy makes a silent regression (a dependency that starts calling out,
+# a stray <img src="https://...">, a tracking script) fail loudly in the
+# browser instead of leaking quietly. See apps/web/tests/README.md for what
+# this does and does not prove.
+#
+# script-src's hash allows exactly one inline script: the early theme guard
+# in index.html that reads localStorage before first paint (avoids a
+# flash of the wrong theme). Everything else is same-origin only.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-cOqNf9rQBC2f9uweTItN+UYLKXcmFRduAHEYm3N1MmE='; style-src 'self'; img-src 'self' data:; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=(), interest-cohort=()

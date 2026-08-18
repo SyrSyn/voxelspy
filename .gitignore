@@ -24,6 +24,7 @@ Thumbs.db
 *.seed
 playwright-report/
 test-results/
+test-results-csp/
 
 # Temporary files
 .cache/
