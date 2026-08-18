@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { docs, routes, searchDocs, tools } from "./content";
+import { docs, inspectFocusPages, routes, searchDocs, tools } from "./content";
 
 describe("documentation content", () => {
   it("keeps every page on a unique canonical route", () => {
@@ -56,5 +56,48 @@ describe("tools catalog", () => {
     expect(inspect?.path).toBe("/tools/inspect/");
     expect(inspect?.status).toBe("available");
     expect(routes).toContain("/tools/inspect/");
+  });
+
+  it("lists Inspect's focused entry points as a sub-list, not as separate tools", () => {
+    const inspect = tools.find((tool) => tool.id === "inspect");
+    expect(inspect?.entryPoints?.map((entry) => entry.path)).toEqual(
+      inspectFocusPages.map((page) => page.path),
+    );
+    // Every other tool -- including every planned one -- carries no
+    // entryPoints of its own: this sub-list only ever attaches to a real,
+    // available implementation.
+    for (const tool of tools) {
+      if (tool.id !== "inspect") expect(tool.entryPoints).toBeUndefined();
+    }
+    // None of the focus pages appear in `tools` itself: they are landing
+    // pages into Inspect, not additional tools in the catalog count.
+    for (const page of inspectFocusPages) {
+      expect(tools.some((tool) => tool.path === page.path)).toBe(false);
+    }
+  });
+});
+
+describe("Inspect focus pages", () => {
+  it("keeps every focus page on a unique route under /tools/, each declared in routes", () => {
+    expect(new Set(inspectFocusPages.map((page) => page.path)).size).toBe(
+      inspectFocusPages.length,
+    );
+    for (const page of inspectFocusPages) {
+      expect(page.path.startsWith("/tools/")).toBe(true);
+      expect(page.path.endsWith("/")).toBe(true);
+      expect(routes).toContain(page.path);
+    }
+  });
+
+  it("gives each focus page genuinely distinct copy", () => {
+    const titles = inspectFocusPages.map((page) => page.title);
+    const descriptions = inspectFocusPages.map((page) => page.description);
+    const intros = inspectFocusPages.map((page) => page.intro.join(" "));
+    expect(new Set(titles).size).toBe(inspectFocusPages.length);
+    expect(new Set(descriptions).size).toBe(inspectFocusPages.length);
+    expect(new Set(intros).size).toBe(inspectFocusPages.length);
+    for (const page of inspectFocusPages) {
+      expect(page.intro.length).toBeGreaterThan(0);
+    }
   });
 });

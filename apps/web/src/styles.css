@@ -1404,10 +1404,78 @@ a.tool-card-available:hover {
   color: var(--green);
   font-size: 0.85rem;
 }
+.tool-card-group {
+  display: flex;
+  flex-direction: column;
+}
+.tool-card-group .tool-card {
+  flex: 1;
+}
+/* A tool's focused landing routes (see `Tool.entryPoints` in content.ts),
+   rendered as a plain link list under its card -- deliberately not styled
+   like another card, so the catalog reads as "entry points into Inspect",
+   not as three more tools. */
+.tool-entry-points {
+  margin-top: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  font-size: 0.82rem;
+}
+.tool-entry-points-label {
+  color: var(--muted);
+}
+.tool-entry-points ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.9rem;
+  padding: 0;
+  margin: 0.35rem 0 0;
+  list-style: none;
+}
 /* --- Inspect tool ------------------------------------------------------- */
 .inspect-model-field {
   max-width: 26rem;
   margin-top: 2rem;
+}
+/* Focused landing pages into Inspect (`/tools/scale/`, `/tools/volume/`,
+   `/tools/watertight/`): intro copy above the shared report, and a crosslink
+   back to the general tool. */
+.inspect-focus-intro {
+  max-width: 62ch;
+  margin-bottom: 1.6rem;
+}
+.inspect-focus-intro p {
+  color: var(--muted);
+}
+.inspect-focus-crosslink {
+  font-size: 0.9rem;
+}
+/* On the general Inspect page, points to the focused entry points instead. */
+.inspect-entrypoints {
+  max-width: 62ch;
+  margin-bottom: 1.6rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.inspect-entrypoints ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1rem;
+  padding: 0;
+  margin: 0.4rem 0 0;
+  list-style: none;
+}
+/* A focus page's own row or section in the shared report, highlighted with
+   styling only -- the data, order, and computation are unchanged. */
+.row-emphasis {
+  background: var(--green-soft);
+  border-radius: 0.4rem;
+}
+.section-emphasis {
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius);
+  background: var(--green-soft);
 }
 .inspect-report {
   display: flex;

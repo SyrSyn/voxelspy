@@ -205,3 +205,160 @@ test("Inspect appears in the tools catalog as available and links to /tools/insp
     page.getByRole("heading", { level: 1, name: "Look inside one model" }),
   ).toBeVisible();
 });
+
+// ---------------------------------------------------------------------------
+// Focused entry points into Inspect: /tools/scale/, /tools/volume/,
+// /tools/watertight/. Same worker-backed inspection and the same report as
+// /tools/inspect/, each with its own question-first landing page. See
+// apps/web/src/content.ts's `inspectFocusPages` and
+// apps/web/src/InspectFlow.tsx's `focus` prop.
+// ---------------------------------------------------------------------------
+
+const focusRoutes: {
+  path: string;
+  h1: string;
+  descriptionContains: string;
+}[] = [
+  {
+    path: "/tools/scale/",
+    h1: "Is this model in millimetres or inches?",
+    descriptionContains: "unit and axis",
+  },
+  {
+    path: "/tools/volume/",
+    h1: "What is this model's volume?",
+    descriptionContains: "enclosed volume",
+  },
+  {
+    path: "/tools/watertight/",
+    h1: "Is this model watertight?",
+    descriptionContains: "closed/not-closed verdict",
+  },
+];
+
+for (const { path, h1, descriptionContains } of focusRoutes) {
+  test(`${path} renders its own H1 and metadata, distinct from /tools/inspect/`, async ({
+    page,
+  }) => {
+    await page.goto(path);
+    await expect(
+      page.getByRole("heading", { level: 1, name: h1 }),
+    ).toBeVisible();
+    // The <title> and meta description come from this page's own
+    // InspectFocusPage entry, not the general Inspect metadata.
+    await expect(page).toHaveTitle(`${h1} — VoxelSpy`);
+    const description = await page
+      .locator('meta[name="description"]')
+      .getAttribute("content");
+    expect(description).toContain(descriptionContains);
+    expect(description).not.toMatch(/full local report/u);
+
+    // Leads with intro copy before the shared report/import form below.
+    await expect(page.locator(".inspect-focus-intro")).toBeVisible();
+    await expect(
+      page.locator(".inspect-focus-intro").getByRole("link", {
+        name: "Open the full Inspect report →",
+      }),
+    ).toHaveAttribute("href", "/tools/inspect/");
+  });
+}
+
+test("an import on a focus route produces the same full report as /tools/inspect/", async ({
+  page,
+}) => {
+  await page.goto("/tools/volume/");
+  await chooseFile(page, "tetrahedron.stl", tetrahedronStl);
+  await page.getByRole("button", { name: "Validate and inspect" }).click();
+
+  await expect(
+    page.getByRole("heading", { level: 2, name: "tetrahedron.stl" }),
+  ).toBeVisible({ timeout: 20_000 });
+
+  // The full report -- not a cut-down volume-only view -- appears below.
+  const measurements = page.locator(
+    '[aria-labelledby="inspect-measurements-title"]',
+  );
+  await expect(
+    measurements.locator('[role="row"]', { hasText: "Volume" }),
+  ).not.toContainText("Not valid");
+  await expect(page.locator(".watertight-badge strong")).toHaveText("Closed");
+  await expect(
+    page.locator('[aria-labelledby="mesh-breakdown-title"]'),
+  ).toBeVisible();
+
+  // The H1 stays this page's own question-first title even after the report
+  // renders (it does not revert to the general Inspect heading).
+  await expect(
+    page.getByRole("heading", {
+      level: 1,
+      name: "What is this model's volume?",
+    }),
+  ).toBeVisible();
+});
+
+test("/tools/scale/ opens the expert unit/axis selector by default", async ({
+  page,
+}) => {
+  await page.goto("/tools/scale/");
+  // The Expert settings <details> is open without a click, unlike the
+  // general Inspect page, so the reinterpretation control is immediately
+  // visible.
+  await expect(page.getByLabel("Source unit")).toBeVisible();
+  await expect(page.getByLabel("Source up-axis")).toBeVisible();
+});
+
+test("/tools/inspect/ points to the three focused entry points", async ({
+  page,
+}) => {
+  await page.goto("/tools/inspect/");
+  const nav = page.locator(".inspect-entrypoints");
+  await expect(nav).toBeVisible();
+  await expect(nav.getByRole("link")).toHaveCount(3);
+  await expect(
+    nav.getByRole("link", { name: "Is this model in millimetres or inches?" }),
+  ).toHaveAttribute("href", "/tools/scale/");
+  await expect(
+    nav.getByRole("link", {
+      name: "What is this model's volume, and can it be trusted?",
+    }),
+  ).toHaveAttribute("href", "/tools/volume/");
+  await expect(
+    nav.getByRole("link", { name: "Is this model watertight?" }),
+  ).toHaveAttribute("href", "/tools/watertight/");
+});
+
+test("the tools catalog represents the focus pages as entry points into Inspect, not as separate tool cards", async ({
+  page,
+}) => {
+  await page.goto("/tools/");
+
+  // Exactly two available, real tool cards: Compare and Inspect. The three
+  // focus pages must not inflate this count.
+  await expect(page.locator("a.tool-card-available")).toHaveCount(2);
+
+  const inspectCard = page
+    .locator("a.tool-card-available")
+    .filter({ has: page.getByRole("heading", { level: 2, name: "Inspect" }) });
+  const entryPoints = page.locator(".tool-entry-points");
+  await expect(entryPoints).toHaveCount(1);
+  await expect(entryPoints).toContainText("Entry points into Inspect");
+
+  const links = entryPoints.getByRole("link");
+  await expect(links).toHaveCount(3);
+  await expect(
+    links.filter({ hasText: "Is this model in millimetres or inches?" }),
+  ).toHaveAttribute("href", "/tools/scale/");
+  await expect(
+    links.filter({ hasText: "What is this model's volume?" }),
+  ).toHaveAttribute("href", "/tools/volume/");
+  await expect(
+    links.filter({ hasText: "Is this model watertight?" }),
+  ).toHaveAttribute("href", "/tools/watertight/");
+
+  // The entry-points list is not itself (or inside) the Inspect card's own
+  // link, so nothing is nested inside another link.
+  await expect(inspectCard.locator("a")).toHaveCount(0);
+
+  await links.filter({ hasText: "Is this model watertight?" }).click();
+  await expect(page).toHaveURL(/\/tools\/watertight\/$/u);
+});

@@ -6,11 +6,13 @@ import type {
 } from "@voxelspy/analysis";
 import type { SourceAxis, SourceUnit } from "@voxelspy/contracts";
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import {
   evaluateCapabilityPreflight,
   readEnvironmentReadings,
   type CapabilityPreflight,
 } from "./capability";
+import { inspectFocusPages, type InspectFocusId } from "./content";
 import {
   InspectionCancelledError,
   inspectSourceAsync,
@@ -97,9 +99,15 @@ export function modelSourceCapability(selection: ModelSourceSelection) {
 function ModelSourceCard({
   selection,
   update,
+  expertSettingsOpen = false,
 }: {
   selection: ModelSourceSelection;
   update: (selection: ModelSourceSelection) => void;
+  /** Opens the unit/axis "Expert settings" drawer by default, rather than
+   *  requiring a click to reveal it. Used by the `/tools/scale/` focus page
+   *  to make the reinterpretation control prominent, per the roadmap: the
+   *  control itself is unchanged, only its default visibility is. */
+  expertSettingsOpen?: boolean;
 }) {
   const capability = modelSourceCapability(selection);
   return (
@@ -128,7 +136,7 @@ function ModelSourceCard({
           Browse this device
         </span>
       </label>
-      <details>
+      <details open={expertSettingsOpen}>
         <summary>Expert settings</summary>
         <p>
           Change these only when the source uses a different unit or up-axis.
@@ -290,13 +298,28 @@ function watertightPresentation(verdict: WatertightnessVerdict): {
 // Report rendering
 // ---------------------------------------------------------------------------
 
-function HeadlineStats({ summary }: { summary: ModelPresentationSummary }) {
+function HeadlineStats({
+  summary,
+  focus,
+}: {
+  summary: ModelPresentationSummary;
+  focus?: InspectFocusId | undefined;
+}) {
   const dimensions = summary.bounds.available
     ? summary.bounds.dimensionsMillimetres.map(conciseNumber).join(" × ")
     : "Unavailable (no position data)";
   const volume = summary.volume.available
     ? `${conciseNumber(summary.volume.absoluteCubicMillimetres)} mm³`
     : "Not valid";
+  // Focus emphasises a row with styling only -- the measurements themselves,
+  // their order, and their values are identical to the general Inspect
+  // report; this is presentation, not a second computation.
+  const rowClass = (row: "dimensions" | "surfaceArea" | "volume") => {
+    const emphasised =
+      (focus === "scale" && row === "dimensions") ||
+      (focus === "volume" && (row === "volume" || row === "surfaceArea"));
+    return emphasised ? "row-emphasis" : undefined;
+  };
   return (
     <section
       className="geometry-summary"
@@ -308,15 +331,15 @@ function HeadlineStats({ summary }: { summary: ModelPresentationSummary }) {
           <span role="columnheader">Measure</span>
           <span role="columnheader">Value</span>
         </div>
-        <div role="row">
+        <div role="row" className={rowClass("dimensions")}>
           <strong role="rowheader">Dimensions (mm)</strong>
           <span>{dimensions}</span>
         </div>
-        <div role="row">
+        <div role="row" className={rowClass("surfaceArea")}>
           <strong role="rowheader">Surface area (mm²)</strong>
           <span>{conciseNumber(summary.surfaceAreaSquareMillimetres)}</span>
         </div>
-        <div role="row">
+        <div role="row" className={rowClass("volume")}>
           <strong role="rowheader">Volume</strong>
           <span>{volume}</span>
         </div>
@@ -355,10 +378,12 @@ function InspectReport({
   outcome,
   sourceMeta,
   onReset,
+  focus,
 }: {
   outcome: InspectionOutcome;
   sourceMeta: { name: string; size: number };
   onReset: () => void;
+  focus?: InspectFocusId | undefined;
 }) {
   const { inspection, warnings } = outcome;
   const watertight = watertightPresentation(inspection.watertightness);
@@ -381,9 +406,12 @@ function InspectReport({
         </button>
       </header>
 
-      <HeadlineStats summary={inspection.summary} />
+      <HeadlineStats summary={inspection.summary} focus={focus} />
 
-      <section aria-labelledby="watertight-title">
+      <section
+        aria-labelledby="watertight-title"
+        className={focus === "watertight" ? "section-emphasis" : undefined}
+      >
         <h3 id="watertight-title">Watertightness</h3>
         <div className={`watertight-badge ${watertight.className}`}>
           <i aria-hidden="true" />
@@ -402,7 +430,10 @@ function InspectReport({
         </p>
       </section>
 
-      <section aria-labelledby="topology-findings-title">
+      <section
+        aria-labelledby="topology-findings-title"
+        className={focus === "watertight" ? "section-emphasis" : undefined}
+      >
         <h3 id="topology-findings-title">Topology findings</h3>
         {inspection.topologyFindings.length === 0 ? (
           <p className="empty-findings">
@@ -484,7 +515,7 @@ function InspectReport({
         )}
       </section>
 
-      <details className="technical-details">
+      <details className="technical-details" open={focus === "scale"}>
         <summary>Provenance &amp; interpretation</summary>
         <section>
           <dl className="provenance-list">
@@ -589,7 +620,20 @@ const INITIAL_CAPABILITY: CapabilityPreflight = {
   blockingMessage: undefined,
 };
 
-export function InspectFlow() {
+/**
+ * `focus` renders one of the seeded landing routes into Inspect
+ * (`/tools/scale/`, `/tools/volume/`, `/tools/watertight/`): the same
+ * component, the same worker-backed single-model inspection, and the same
+ * full report, parameterised by which aspect leads. Omitting it renders the
+ * general `/tools/inspect/` page. See `InspectFocusPage` in content.ts for
+ * each focus's copy and metadata, and the roadmap rationale in this bead:
+ * these are landing pages into one capable inspector, not separate
+ * implementations.
+ */
+export function InspectFlow({ focus }: { focus?: InspectFocusId } = {}) {
+  const focusPage = focus
+    ? inspectFocusPages.find((page) => page.id === focus)
+    : undefined;
   const [selection, setSelection] = useState(modelSourceSelectionForFile(null));
   const [progress, setProgress] = useState<string>();
   const [error, setError] = useState<string>();
@@ -656,15 +700,41 @@ export function InspectFlow() {
 
   return (
     <ToolShell
-      eyebrow="Inspect"
-      title="Look inside one model"
-      description="Choose a single STL or OBJ file from your device and get a full local report: dimensions, surface area, volume, watertightness, topology findings, and a per-mesh breakdown."
+      eyebrow={focusPage?.eyebrow ?? "Inspect"}
+      title={focusPage?.title ?? "Look inside one model"}
+      description={
+        focusPage?.description ??
+        "Choose a single STL or OBJ file from your device and get a full local report: dimensions, surface area, volume, watertightness, topology findings, and a per-mesh breakdown."
+      }
     >
+      {focusPage ? (
+        <section className="inspect-focus-intro" aria-label="About this page">
+          {focusPage.intro.map((paragraph) => (
+            <p key={paragraph}>{paragraph}</p>
+          ))}
+          <p className="inspect-focus-crosslink">
+            This page leads with one question; the rest of the report is below.{" "}
+            <Link to="/tools/inspect/">Open the full Inspect report →</Link>
+          </p>
+        </section>
+      ) : (
+        <nav className="inspect-entrypoints" aria-label="Focused entry points">
+          <span>Looking for one specific answer?</span>
+          <ul>
+            {inspectFocusPages.map((page) => (
+              <li key={page.id}>
+                <Link to={page.path}>{page.question}</Link>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
       {outcome && sourceMeta ? (
         <InspectReport
           outcome={outcome}
           sourceMeta={sourceMeta}
           onReset={reset}
+          focus={focus}
         />
       ) : (
         <section
@@ -687,7 +757,11 @@ export function InspectFlow() {
             </div>
           )}
           <div className="inspect-model-field">
-            <ModelSourceCard selection={selection} update={setSelection} />
+            <ModelSourceCard
+              selection={selection}
+              update={setSelection}
+              expertSettingsOpen={focus === "scale"}
+            />
           </div>
           <div className="comparison-status" aria-live="polite">
             <span className={ready ? "status-ready" : ""}>

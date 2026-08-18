@@ -4,7 +4,13 @@ import { Wordmark } from "./Brand";
 import { ComparisonFlow } from "./ComparisonFlow";
 import { HomeDemo } from "./HomeDemo";
 import { InspectFlow } from "./InspectFlow";
-import { docs, searchDocs, tools, type DocPage } from "./content";
+import {
+  docs,
+  inspectFocusPages,
+  searchDocs,
+  tools,
+  type DocPage,
+} from "./content";
 import { ToolShell } from "./ToolShell";
 
 type ThemePreference = "system" | "light" | "dark";
@@ -41,6 +47,17 @@ function resolveMetadata(path: string) {
   const doc = docs.find((item) => item.path === path);
   if (doc)
     return { title: `${doc.title} — VoxelSpy`, description: doc.description };
+  // Each focus page (`/tools/scale/`, `/tools/volume/`, `/tools/watertight/`)
+  // is a landing route into Inspect, not a page of its own: its title and
+  // description come from the same `InspectFocusPage` entry that drives its
+  // intro copy and `InspectFlow`'s `focus` prop, the same way a doc page's
+  // metadata comes from its own `DocPage` entry above.
+  const focusPage = inspectFocusPages.find((item) => item.path === path);
+  if (focusPage)
+    return {
+      title: `${focusPage.title} — VoxelSpy`,
+      description: focusPage.description,
+    };
   return (
     baseMetadata[path as keyof typeof baseMetadata] ?? {
       title: "Page not found — VoxelSpy",
@@ -210,6 +227,36 @@ function ToolCard({ tool }: { tool: (typeof tools)[number] }) {
   );
 }
 
+/**
+ * Renders a tool's focused entry points (see `Tool.entryPoints` and
+ * `InspectFocusPage` in content.ts) as a small link list under its card --
+ * never as their own `.tool-card`s. They are landing routes into the same
+ * tool, not additional tools, so the catalog must not visually inflate the
+ * count of what VoxelSpy actually offers. Rendered outside `ToolCard`'s own
+ * `<a>` (which wraps the whole card) so an entry-point link is never nested
+ * inside another link.
+ */
+function ToolEntryPoints({ tool }: { tool: (typeof tools)[number] }) {
+  if (!tool.entryPoints || tool.entryPoints.length === 0) return null;
+  return (
+    <nav
+      className="tool-entry-points"
+      aria-label={`Focused entry points into ${tool.name}`}
+    >
+      <span className="tool-entry-points-label">
+        Entry points into {tool.name}:
+      </span>
+      <ul>
+        {tool.entryPoints.map((entry) => (
+          <li key={entry.id}>
+            <Link to={entry.path}>{entry.name}</Link>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
 function ToolsIndex() {
   return (
     <ToolShell
@@ -219,7 +266,10 @@ function ToolsIndex() {
     >
       <div className="tools-grid">
         {tools.map((tool) => (
-          <ToolCard key={tool.id} tool={tool} />
+          <div className="tool-card-group" key={tool.id}>
+            <ToolCard tool={tool} />
+            <ToolEntryPoints tool={tool} />
+          </div>
         ))}
       </div>
     </ToolShell>
@@ -413,6 +463,13 @@ export function App() {
           <Route path="/tools/" element={<ToolsIndex />} />
           <Route path="/compare/" element={<ComparisonFlow />} />
           <Route path="/tools/inspect/" element={<InspectFlow />} />
+          {inspectFocusPages.map((page) => (
+            <Route
+              key={page.path}
+              path={page.path}
+              element={<InspectFlow focus={page.id} />}
+            />
+          ))}
           <Route path="/docs/" element={<DocsIndex />} />
           {docs.map((doc) => (
             <Route

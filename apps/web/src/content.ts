@@ -27,7 +27,84 @@ export interface Tool {
   status: ToolStatus;
   /** The user question this tool answers, stated plainly. */
   question: string;
+  /** Focused landing pages that lead with one aspect of this tool's report
+   *  rather than duplicating the tool itself -- see `InspectFocusPage`. The
+   *  catalog renders these as a sub-list under the tool's own card, never as
+   *  additional `Tool` entries: they share this tool's implementation, so
+   *  listing them as siblings in `tools` would overstate how many tools
+   *  actually exist. Only ever set on an `available` tool. */
+  entryPoints?: { id: string; path: string; name: string; question: string }[];
 }
+
+export type InspectFocusId = "scale" | "volume" | "watertight";
+
+/**
+ * A focused landing route into the Inspect tool: the same worker-backed,
+ * single-model inspection and the same full report as `/tools/inspect/`,
+ * parameterised by which aspect of that report leads. Someone who searches
+ * "STL volume calculator" or "is my STL watertight" should land on a page
+ * that answers exactly that question in its own words and then reveals the
+ * fuller report, rather than a generic "Inspect" landing page or a second
+ * implementation. `InspectFlow`'s `focus` prop reads this list; `App`'s
+ * routing and metadata do too, so a focus page needs no metadata or routing
+ * code of its own beyond an entry here and in `routes` below.
+ */
+export interface InspectFocusPage {
+  id: InspectFocusId;
+  path: string;
+  eyebrow: string;
+  title: string;
+  /** One line: the ToolShell description and the page's meta description. */
+  description: string;
+  /** Intro paragraphs shown above the shared Inspect report, answering this
+   *  page's own question before the fuller report appears below the fold. */
+  intro: string[];
+  /** The user question this page answers, stated plainly -- echoed in the
+   *  tools catalog's entry-point sub-list. */
+  question: string;
+}
+
+export const inspectFocusPages: InspectFocusPage[] = [
+  {
+    id: "scale",
+    path: "/tools/scale/",
+    eyebrow: "Inspect · Units & scale",
+    title: "Is this model in millimetres or inches?",
+    description:
+      "Check a model's dimensions against the unit and axis VoxelSpy actually resolved, and reinterpret them deliberately if the file guessed wrong.",
+    intro: [
+      "Neither STL nor the OBJ subset this release supports declares a unit or an up-axis authoritatively, so an import starts from millimetre, right-handed Z-up defaults and records exactly that choice as provenance. This page leads with the resulting dimensions and the control that lets you say the file actually meant something else -- open below.",
+      "Reinterpreting a unit is a deliberate, provenance-recorded choice you make before inspecting, never a silent rescale: the source unit and axis you select stay attached to the result and are shown next to what the file itself suggested.",
+    ],
+    question: "Is this model in millimetres or inches?",
+  },
+  {
+    id: "volume",
+    path: "/tools/volume/",
+    eyebrow: "Inspect · Volume & surface area",
+    title: "What is this model's volume?",
+    description:
+      "Get a model's enclosed volume and surface area, or, when the mesh cannot support one, the specific structural reason a volume figure is withheld.",
+    intro: [
+      "An enclosed-volume figure is only meaningful for a mesh that is genuinely closed and consistently oriented: open boundary edges, non-manifold edges, or inconsistent triangle winding make the number meaningless, so it is withheld rather than printed anyway with false confidence. This page leads with that number, or with the exact reason it is missing.",
+      "Surface area does not depend on the mesh being closed, so it is always reported alongside volume, whichever way that turns out.",
+    ],
+    question: "What is this model's volume, and can it be trusted?",
+  },
+  {
+    id: "watertight",
+    path: "/tools/watertight/",
+    eyebrow: "Inspect · Watertightness",
+    title: "Is this model watertight?",
+    description:
+      "Get a closed/not-closed verdict for a model's mesh topology, with every open boundary edge or non-manifold edge that keeps it from closing.",
+    intro: [
+      "A mesh is watertight only when every edge is shared by exactly two triangle corners, checked with exact-coordinate adjacency rather than a tolerance-based weld: two triangle corners count as the same point only when their coordinates are bit-for-bit identical. This page leads with that verdict and the topology findings behind it.",
+      "A model assembled from parts that are geometrically touching but not exactly coincident can still report open boundary edges even though it looks closed when rendered.",
+    ],
+    question: "Is this model watertight?",
+  },
+];
 
 export const docs: DocPage[] = [
   {
@@ -200,6 +277,12 @@ export const tools: Tool[] = [
       "Open a single model from your device and get a full local report: dimensions, surface area, volume (or the reasons it is withheld), watertightness, bounded topology findings, and a per-mesh breakdown, alongside the exact unit and axis interpretation applied. Runs entirely in your browser.",
     status: "available",
     question: "What is actually inside this one model?",
+    entryPoints: inspectFocusPages.map((page) => ({
+      id: page.id,
+      path: page.path,
+      name: page.title,
+      question: page.question,
+    })),
   },
   {
     id: "measure-section",
@@ -259,6 +342,7 @@ export const routes = [
   "/tools/",
   "/compare/",
   "/tools/inspect/",
+  ...inspectFocusPages.map((page) => page.path),
   "/docs/",
   ...docs.map((doc) => doc.path),
 ];
