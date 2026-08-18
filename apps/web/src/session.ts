@@ -246,11 +246,11 @@ const SESSION_ERROR_MESSAGES: Record<SessionArchiveErrorCode, string> = {
   DUPLICATE_PATH: "That archive contains duplicate internal entries.",
   INVALID_JSON: "That archive's session data is not valid, strict JSON.",
   UNSUPPORTED_VERSION:
-    "That session was saved with an unsupported VoxelSpy session version.",
+    "That session was saved with a newer or unrecognized VoxelSpy version. Open it with a newer version of this application, or re-save it from one this version supports.",
   INVALID_MANIFEST:
     "That archive's manifest does not match the expected session format.",
   INVALID_REPORT:
-    "That archive's report does not match the expected session format.",
+    "That archive's report does not match the format this version of VoxelSpy understands; it may have been saved by a newer or different build.",
   MANIFEST_MISMATCH: "That archive's contents do not match its own manifest.",
   INTEGRITY_ERROR:
     "That archive failed an integrity check; its contents may be corrupted.",

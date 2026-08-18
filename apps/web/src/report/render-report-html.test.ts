@@ -4,13 +4,23 @@ import {
   summarizeModelComparison,
 } from "@voxelspy/analysis";
 import {
+  CANONICAL_FRAME,
   IDENTITY_MAT4,
   analysisRequestSchema,
+  analysisResultSchema,
+  entityIdSchema,
   importRequestSchema,
+  instanceIdSchema,
+  meshIdSchema,
   modelIdSchema,
+  normalizedModelSchema,
+  regionIdSchema,
   reportIdSchema,
+  reportSchema,
   requestIdSchema,
+  type AnalysisResult,
   type NormalizedModel,
+  type Report,
 } from "@voxelspy/contracts";
 import { importModel } from "@voxelspy/importers";
 import { describe, expect, it } from "vitest";
@@ -162,8 +172,235 @@ describe("renderReportHtml", () => {
     const html = renderReportHtml(tampered);
     expect(html).toContain("123456.789000");
   });
+
+  it("escapes hostile content across every user-visible report field a session archive can carry", async () => {
+    const report = await buildRealReport();
+    expect(report.findings.length).toBeGreaterThan(0);
+    // Combines an unescaped <script> and an <img onerror=...> attribute
+    // injection; either one executing would set a global flag no test
+    // fixture ever sets on its own.
+    const payload =
+      "<script>window.__voxelspyXssProbe=1</script>" +
+      '<img src=x onerror="window.__voxelspyXssProbe=1">';
+
+    const hostile: Report = {
+      ...report,
+      title: payload,
+      models: report.models.map((model) => ({
+        ...model,
+        displayName: payload,
+        sourceName: payload,
+        // The contract cross-checks `sourceName` against the normalization
+        // provenance it was imported with; both must carry the hostile
+        // value for the document to stay valid.
+        normalizationProvenance: {
+          ...model.normalizationProvenance,
+          sourceName: payload,
+        },
+      })),
+      findings: report.findings.map((finding) => ({
+        ...finding,
+        title: payload,
+        summary: payload,
+      })),
+      review: { ...report.review, notes: payload },
+      analysis: {
+        ...report.analysis,
+        result: {
+          ...report.analysis.result,
+          warnings: [
+            ...report.analysis.result.warnings,
+            {
+              code: entityIdSchema.parse("hostile-content-warning"),
+              severity: "warning" as const,
+              message: payload,
+            },
+          ],
+        },
+      },
+    };
+
+    // The injected content must still satisfy the exact contract a real
+    // session archive's report is validated against on both save and open
+    // -- the renderer's escaping, not a narrower shape that never reaches
+    // it, is what has to stop this from executing.
+    expect(() => reportSchema.parse(hostile)).not.toThrow();
+
+    const html = renderReportHtml(hostile);
+
+    // No occurrence, anywhere in the document, is left unescaped.
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain('onerror="window');
+    expect(html).not.toContain("<img src=x onerror=");
+
+    // Content is preserved as visible (escaped) text, not silently
+    // stripped, once per field it was injected into -- the title (rendered
+    // twice: once in <title>, once in the <h1>), both models' display name
+    // and source name, every finding's title and summary, the review
+    // notes, and the extra warning message. Each rendered instance of the
+    // payload contains the marker string twice (once in the script body,
+    // once in the img attribute), so the total marker count is double the
+    // instance count.
+    const instanceCount =
+      2 /* title + h1 */ +
+      report.models.length * 2 +
+      report.findings.length * 2 +
+      1 /* review notes */ +
+      1; /* warning message */
+    const markerOccurrences =
+      html.split("window.__voxelspyXssProbe").length - 1;
+    expect(markerOccurrences).toBe(instanceCount * 2);
+  });
+});
+
+describe("renderReportHtml with a findings-capped report", () => {
+  it("keeps the truncation note visible in the rendered HTML", async () => {
+    const report = buildManyRegionsReport(10_001);
+    expect(report.findings).toHaveLength(10_000);
+
+    const html = renderReportHtml(report);
+
+    expect(html).toContain("Additional changed regions were not included");
+    expect(html).toContain("10001");
+    expect(html).toContain("9999");
+  });
+
+  it("renders a report at the findings cap within a generous time bound", () => {
+    const report = buildManyRegionsReport(10_001);
+
+    const start = performance.now();
+    const html = renderReportHtml(report);
+    const elapsedMilliseconds = performance.now() - start;
+
+    expect(html.length).toBeGreaterThan(0);
+    // Generous on purpose: this exists to catch a future quadratic-time
+    // regression, not to pin down current performance.
+    expect(elapsedMilliseconds).toBeLessThan(5_000);
+  });
 });
 
 function structuredCloneReport<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function minimalTriangleModel(id: string): NormalizedModel {
+  const meshId = meshIdSchema.parse(`${id}.mesh`);
+  const instanceId = instanceIdSchema.parse(`${id}.instance`);
+  return normalizedModelSchema.parse({
+    contractVersion: 1,
+    id: modelIdSchema.parse(id),
+    frame: CANONICAL_FRAME,
+    meshes: [
+      {
+        id: meshId,
+        geometry: {
+          positions: new Float64Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+          indices: new Uint32Array([0, 1, 2]),
+        },
+      },
+    ],
+    placement: {
+      kind: "flat",
+      instances: [{ id: instanceId, meshId, meshToModel: IDENTITY_MAT4 }],
+    },
+    warnings: [],
+    provenance: {
+      formatId: "stl",
+      importerId: "voxelspy.test-fixture",
+      importerVersion: "0.0.0",
+      sourceName: `${id}.stl`,
+      sourceDigest: { algorithm: "sha256", value: "a".repeat(64) },
+      detectedSourceUnit: "unknown",
+      detectedSourceAxis: "unknown",
+      sourceUnit: "millimetre",
+      sourceAxis: "right-handed-z-up",
+      sourceResolution: { unit: "declared", axis: "declared" },
+      appliedSourceToModel: IDENTITY_MAT4,
+      notes: [],
+    },
+  });
+}
+
+/**
+ * Builds an `AnalysisResult` with `regionCount` regions, none carrying
+ * metrics -- `outcome.metrics` has its own 10,000-item contract ceiling
+ * independent of the findings ceiling this exercises; this fixture only
+ * needs to push region *count* past `MAX_FINDINGS` (mirrors the equivalent
+ * fixture in `build-report.test.ts`, which asserts the build side of this
+ * same truncation).
+ */
+function manyRegionsAnalysis(
+  baselineId: NormalizedModel["id"],
+  candidateId: NormalizedModel["id"],
+  regionCount: number,
+): AnalysisResult {
+  const regions = Array.from({ length: regionCount }, (_, index) => ({
+    id: regionIdSchema.parse(`region.synthetic.${index}`),
+    frame: "comparison" as const,
+    category: "deviation" as const,
+    bounds: { min: [0, 0, 0] as const, max: [1, 1, 1] as const },
+    anchor: [0.5, 0.5, 0.5] as const,
+    metricIds: [],
+    warningCodes: [],
+  }));
+  return analysisResultSchema.parse({
+    contractVersion: 1,
+    requestId: requestIdSchema.parse("analysis.many-regions-fixture"),
+    baseline: { modelId: baselineId, modelToComparison: IDENTITY_MAT4 },
+    candidate: { modelId: candidateId, modelToComparison: IDENTITY_MAT4 },
+    warnings: [],
+    outcome: {
+      state: "complete",
+      semantics: "approximate",
+      requestedMethod: SURFACE_DISTANCE_METHOD,
+      effectiveMethod: SURFACE_DISTANCE_METHOD,
+      requestedTolerance: { distanceMillimetres: 0.1 },
+      effectiveTolerance: { distanceMillimetres: 0.1 },
+      validation: [
+        {
+          modelId: baselineId,
+          closed: false,
+          consistentlyOriented: true,
+          boundaryEdgeCount: 0,
+          nonManifoldEdgeCount: 0,
+          degenerateTriangleCount: 0,
+          reasons: [],
+          preconditions: [],
+        },
+        {
+          modelId: candidateId,
+          closed: false,
+          consistentlyOriented: true,
+          boundaryEdgeCount: 0,
+          nonManifoldEdgeCount: 0,
+          degenerateTriangleCount: 0,
+          reasons: [],
+          preconditions: [],
+        },
+      ],
+      metrics: [],
+      regions,
+      orderedRegionIds: regions.map((region) => region.id),
+      adjustments: [],
+      uncertainty: {
+        description: "Synthetic fixture uncertainty.",
+        parameters: {},
+      },
+    },
+  });
+}
+
+function buildManyRegionsReport(regionCount: number): Report {
+  const baseline = minimalTriangleModel("model.baseline");
+  const candidate = minimalTriangleModel("model.candidate");
+  const analysis = manyRegionsAnalysis(baseline.id, candidate.id, regionCount);
+  const summary = summarizeModelComparison(baseline, candidate, analysis);
+  return buildComparisonReport({
+    id: REPORT_ID,
+    createdAt: CREATED_AT,
+    baseline,
+    candidate,
+    analysis,
+    summary,
+  });
 }
