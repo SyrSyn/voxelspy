@@ -300,6 +300,7 @@ const routes = [
   "/",
   "/tools/",
   "/compare/",
+  "/tools/inspect/",
   "/docs/",
   "/docs/getting-started/",
   "/nope/",

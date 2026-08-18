@@ -28,6 +28,7 @@ const ROUTES = [
   "/",
   "/tools/",
   "/compare/",
+  "/tools/inspect/",
   "/docs/",
   "/docs/getting-started/",
   "/docs/privacy/",

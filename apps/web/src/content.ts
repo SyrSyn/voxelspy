@@ -95,7 +95,8 @@ export const docs: DocPage[] = [
     path: "/docs/geometry/",
     eyebrow: "Correctness boundary",
     title: "Geometry interpretation",
-    description: "The invariants that keep comparison results interpretable.",
+    description:
+      "The invariants that keep comparison and single-model inspection results interpretable.",
     sections: [
       {
         id: "preserve-source",
@@ -117,6 +118,14 @@ export const docs: DocPage[] = [
         paragraphs: [
           "Surface comparison measures sampled points on each triangle against the opposite surface. Every reported distance is exact for the points it measured, but a feature smaller than the spacing between samples can fall between them and go unreported.",
           "Each result states the worst-case sample spacing in millimetres next to the tolerance you requested. When the spacing is larger than the tolerance, the result carries an explicit warning that features below that size can be missed. Finding no changed regions therefore means no change was observed at that sampling density, which is not the same as proving two models identical.",
+        ],
+      },
+      {
+        id: "single-model-inspection",
+        title: "Inspecting one model alone",
+        paragraphs: [
+          "Inspect reports on one model without a baseline: bounds and dimensions, surface area, volume (or the reasons volume is withheld), placed vertex/triangle/mesh/instance/component counts, a bounded list of topology findings, a watertightness verdict, and a per-mesh breakdown, alongside the file's provenance and the unit/axis interpretation actually applied.",
+          "Topology findings and the watertightness verdict use the same exact-coordinate adjacency as comparison: two triangle corners are the same point only when their coordinates are bit-for-bit identical, with no tolerance-based welding anywhere in the pipeline. A model assembled from parts that are geometrically touching but not exactly coincident can therefore report open boundary edges even though it looks closed when rendered.",
         ],
       },
       {
@@ -164,11 +173,12 @@ export const docs: DocPage[] = [
 ];
 
 /** The VoxelSpy toolbox: tools for understanding, validating, measuring, and
- *  comparing 3D geometry. Only `Compare` is built today -- every other entry
- *  is `planned` and says so plainly; the catalog page renders planned tools
- *  as non-link cards rather than dead links. Keep this honest: add a tool
- *  here only once it is real, and flip `status` to `"available"` (and add
- *  its `path` to `routes` below) only once the route actually exists. */
+ *  comparing 3D geometry. `Compare` and `Inspect` are built today -- every
+ *  other entry is `planned` and says so plainly; the catalog page renders
+ *  planned tools as non-link cards rather than dead links. Keep this
+ *  honest: add a tool here only once it is real, and flip `status` to
+ *  `"available"` (and add its `path` to `routes` below) only once the
+ *  route actually exists. */
 export const tools: Tool[] = [
   {
     id: "compare",
@@ -187,8 +197,8 @@ export const tools: Tool[] = [
     description:
       "Look inside one model without a second one to compare against.",
     summary:
-      "Open a single model and examine its structure directly: bounds, watertightness, component counts, and other properties that do not require a baseline. Inspect is not built yet.",
-    status: "planned",
+      "Open a single model from your device and get a full local report: dimensions, surface area, volume (or the reasons it is withheld), watertightness, bounded topology findings, and a per-mesh breakdown, alongside the exact unit and axis interpretation applied. Runs entirely in your browser.",
+    status: "available",
     question: "What is actually inside this one model?",
   },
   {
@@ -248,6 +258,7 @@ export const routes = [
   "/",
   "/tools/",
   "/compare/",
+  "/tools/inspect/",
   "/docs/",
   ...docs.map((doc) => doc.path),
 ];

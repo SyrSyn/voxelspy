@@ -1404,6 +1404,177 @@ a.tool-card-available:hover {
   color: var(--green);
   font-size: 0.85rem;
 }
+/* --- Inspect tool ------------------------------------------------------- */
+.inspect-model-field {
+  max-width: 26rem;
+  margin-top: 2rem;
+}
+.inspect-report {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+.inspect-report-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.inspect-report-header h2 {
+  max-width: 32ch;
+  margin: 0 0 0.3rem;
+  font-size: 1.6rem;
+  overflow-wrap: anywhere;
+}
+.inspect-report-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.geometry-table-2col > div {
+  grid-template-columns: minmax(9rem, 1fr) minmax(0, 1.6fr);
+}
+.watertight-badge {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  margin-top: 0.6rem;
+}
+.watertight-badge i {
+  flex: 0 0 auto;
+  width: 0.6rem;
+  height: 0.6rem;
+  margin-top: 0.4rem;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.watertight-closed i {
+  background: var(--green);
+}
+.watertight-not-closed i {
+  background: var(--orange);
+}
+.watertight-badge p {
+  margin: 0;
+}
+.watertight-badge strong {
+  display: block;
+}
+.watertight-badge span {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.inspect-semantics-note {
+  margin: 0.6rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.topology-list {
+  padding: 0;
+  margin: 0.6rem 0 0;
+  list-style: none;
+}
+.topology-item {
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--line);
+}
+.topology-item:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.topology-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+}
+.topology-item-head i {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.topology-item.topology-warning .topology-item-head i {
+  background: var(--orange);
+}
+.topology-item-head strong {
+  font-size: 0.92rem;
+}
+.topology-item-head span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+.topology-item > p {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+.topology-examples {
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+}
+.topology-examples summary {
+  color: var(--green);
+  font-weight: 800;
+  cursor: pointer;
+}
+.topology-examples ul {
+  padding-left: 1.1rem;
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+}
+.topology-examples li + li {
+  margin-top: 0.25rem;
+}
+.topology-truncated {
+  margin: 0.4rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: italic;
+}
+.provenance-list {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+}
+.provenance-list > div {
+  display: grid;
+  grid-template-columns: minmax(9rem, 0.6fr) minmax(0, 1fr);
+  gap: 0.5rem;
+}
+.provenance-list dt {
+  color: var(--muted);
+  font-weight: 800;
+  font-size: 0.76rem;
+}
+.provenance-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+}
+.provenance-warnings {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+.provenance-warnings ul {
+  padding-left: 1.1rem;
+  margin: 0.5rem 0 0;
+}
+.provenance-warnings li + li {
+  margin-top: 0.4rem;
+}
+.provenance-warnings .severity-error {
+  color: var(--danger-text);
+  font-weight: 800;
+}
+
 .not-found {
   min-height: 70vh;
   display: flex;
@@ -1569,8 +1740,12 @@ a.tool-card-available:hover {
     align-items: stretch;
     flex-direction: column;
   }
-  .source-frame {
+  .source-frame,
+  .provenance-list > div {
     grid-template-columns: 1fr;
+  }
+  .inspect-report-header {
+    flex-direction: column;
   }
   .comparison-status .button {
     width: 100%;

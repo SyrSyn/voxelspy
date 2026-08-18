@@ -51,10 +51,10 @@ describe("tools catalog", () => {
     }
   });
 
-  it("does not claim the concurrently-built Inspect route as available", () => {
+  it("lists Inspect as available at its declared route", () => {
     const inspect = tools.find((tool) => tool.id === "inspect");
     expect(inspect?.path).toBe("/tools/inspect/");
-    expect(inspect?.status).toBe("planned");
-    expect(routes).not.toContain("/tools/inspect/");
+    expect(inspect?.status).toBe("available");
+    expect(routes).toContain("/tools/inspect/");
   });
 });

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("the tools catalog lists the toolbox, links the available tool, and does not link planned ones", async ({
+test("the tools catalog lists the toolbox, links the available tools, and does not link planned ones", async ({
   page,
 }) => {
   await page.goto("/tools/");
@@ -9,16 +9,32 @@ test("the tools catalog lists the toolbox, links the available tool, and does no
     page.getByRole("heading", { level: 1, name: "A toolbox for 3D geometry" }),
   ).toBeVisible();
 
-  // Compare is the one available tool today: a real link into /compare/.
-  const compareCard = page.locator("a.tool-card-available", {
-    hasText: "Compare",
-  });
+  // Compare and Inspect are the two available tools today: real links into
+  // /compare/ and /tools/inspect/. Matched by each card's own heading (not
+  // `hasText`, which also matches Inspect's description mentioning "compare
+  // against").
+  const compareCard = page
+    .locator("a.tool-card-available")
+    .filter({ has: page.getByRole("heading", { level: 2, name: "Compare" }) });
   await expect(compareCard).toHaveCount(1);
   await expect(compareCard).toHaveAttribute("href", "/compare/");
   await expect(compareCard).toContainText("Available");
 
   await compareCard.click();
   await expect(page).toHaveURL(/\/compare\/$/u);
+
+  await page.goto("/tools/");
+  // Matched by its own heading (not `hasText`, which also matches File
+  // Forensics' summary copy mentioning "Inspect a file's...").
+  const inspectCard = page
+    .locator("a.tool-card-available")
+    .filter({ has: page.getByRole("heading", { level: 2, name: "Inspect" }) });
+  await expect(inspectCard).toHaveCount(1);
+  await expect(inspectCard).toHaveAttribute("href", "/tools/inspect/");
+  await expect(inspectCard).toContainText("Available");
+
+  await inspectCard.click();
+  await expect(page).toHaveURL(/\/tools\/inspect\/$/u);
 });
 
 test("planned tools render as non-link cards with a text status, not just color", async ({
@@ -44,17 +60,13 @@ test("planned tools render as non-link cards with a text status, not just color"
     await expect(card).toContainText("not built yet");
   }
 
-  // Inspect specifically: listed, described as planned, but not a link --
-  // another agent owns building the real /tools/inspect/ page. Matched by
-  // its own heading (not `hasText`, which also matches File Forensics'
-  // summary copy mentioning "Inspect a file's...").
-  const inspectCard = page
-    .locator(".tool-card")
+  // Inspect specifically is no longer planned -- it is a real, linked tool
+  // now (see tests/inspect.spec.ts for its own coverage) -- so it must not
+  // appear among the planned cards.
+  const inspectPlannedCard = page
+    .locator(".tool-card-planned")
     .filter({ has: page.getByRole("heading", { level: 2, name: "Inspect" }) });
-  await expect(inspectCard).toHaveCount(1);
-  await expect(inspectCard.locator("a")).toHaveCount(0);
-  const inspectTag = await inspectCard.evaluate((el) => el.tagName);
-  expect(inspectTag).not.toBe("A");
+  await expect(inspectPlannedCard).toHaveCount(0);
 });
 
 test("the primary navigation reads Tools / Compare / Docs, with Home reachable via the brand lockup", async ({

@@ -3,6 +3,7 @@ import { Link, NavLink, Route, Routes, useLocation } from "react-router";
 import { Wordmark } from "./Brand";
 import { ComparisonFlow } from "./ComparisonFlow";
 import { HomeDemo } from "./HomeDemo";
+import { InspectFlow } from "./InspectFlow";
 import { docs, searchDocs, tools, type DocPage } from "./content";
 import { ToolShell } from "./ToolShell";
 
@@ -23,6 +24,11 @@ const baseMetadata = {
     title: "Compare models — VoxelSpy",
     description:
       "Choose a baseline and candidate for private, browser-local comparison.",
+  },
+  "/tools/inspect/": {
+    title: "Inspect a model — VoxelSpy",
+    description:
+      "Load one local model and get a full local report: dimensions, volume, watertightness, and topology findings.",
   },
   "/docs/": {
     title: "Documentation — VoxelSpy",
@@ -406,6 +412,7 @@ export function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/tools/" element={<ToolsIndex />} />
           <Route path="/compare/" element={<ComparisonFlow />} />
+          <Route path="/tools/inspect/" element={<InspectFlow />} />
           <Route path="/docs/" element={<DocsIndex />} />
           {docs.map((doc) => (
             <Route
