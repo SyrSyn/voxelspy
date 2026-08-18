@@ -32,7 +32,7 @@ export const docs: DocPage[] = [
         id: "inspect-results",
         title: "Inspect before sharing",
         paragraphs: [
-          "Move from the overview to ranked regions and sections. Export is a separate action; selecting local files does not upload them.",
+          "Move from the overview to ranked regions and sections. Exporting a report or saving a session are both separate, explicit actions; selecting local files does not upload them.",
         ],
       },
     ],
@@ -63,7 +63,7 @@ export const docs: DocPage[] = [
         title: "Portable artifacts are explicit",
         paragraphs: [
           "A saved session is a self-contained .voxelspy file: it embeds both original models, the analysis result, and the comparison configuration, so saving or sharing one is itself a model-data transfer, not just a result summary. Saving and reopening a session are both explicit, local actions with no network step.",
-          "Portable report export (rendering a comparison to a standalone document) has a versioned, serializable data boundary in the workspace, but is not connected to the browser workflow yet.",
+          "Exporting a report renders the comparison to one standalone, self-contained .html document (findings, an overview view, and a geometry-summary narrative) and downloads it directly, with no network step. Unlike a saved session, an exported report does not embed either model's raw geometry.",
         ],
       },
     ],

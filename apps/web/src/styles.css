@@ -642,6 +642,12 @@ main {
 .session-panel .comparison-error {
   flex: 1 1 100%;
 }
+.report-actions-status {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
 .workbench-loading {
   display: grid;
   min-height: 60vh;

@@ -29,7 +29,9 @@ The comparison form exposes an analysis RAM allowance from 128 MiB to 768 MiB an
 
 The workbench keeps the selected source frame, normalization transform, importer provenance, import warnings and notes, analysis warnings, and approximation uncertainty available alongside the result. Selecting a replacement file restores the common source-frame defaults so an expert override cannot accidentally carry to a different model.
 
-The compare workbench can save a completed comparison as a portable `.voxelspy` session (both source models, the analysis result, and the comparison configuration, written with `@voxelspy/session-archive`) and reopen one later, restoring the workbench directly without re-running the analysis. Saving is a deliberate, explicitly-labeled action; because the archive embeds both models' original geometry, saving one is itself a model-data transfer once you share the file. Portable report export (rendering a report to a standalone document) has its own versioned contract in the workspace but is not connected to the browser workflow yet.
+The compare workbench can save a completed comparison as a portable `.voxelspy` session (both source models, the analysis result, and the comparison configuration, written with `@voxelspy/session-archive`) and reopen one later, restoring the workbench directly without re-running the analysis. Saving is a deliberate, explicitly-labeled action; because the archive embeds both models' original geometry, saving one is itself a model-data transfer once you share the file.
+
+The workbench also has an "Export report" action next to "Save session": it renders the comparison's findings, overview saved view, and geometry-summary narrative to one self-contained `.html` file (via `apps/web/src/report/`) and downloads it directly, with no network step. Unlike a saved session, an export does not embed either model's raw geometry -- it embeds provenance, analysis findings, and metrics. Both actions depend on an asynchronous geometry-presentation summary computed in a dedicated worker, so each button stays disabled -- with a visible, explained reason -- until that summary is ready.
 
 ## Static hosting
 

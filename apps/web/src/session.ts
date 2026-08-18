@@ -1,10 +1,9 @@
-import {
-  analysisRequestSchema,
-  reportSchema,
-  type AnalysisResult,
-  type NormalizedModel,
-  type Report,
-  type SessionArchiveLimits,
+import type { ModelComparisonPresentationSummary } from "@voxelspy/analysis";
+import type {
+  AnalysisResult,
+  NormalizedModel,
+  Report,
+  SessionArchiveLimits,
 } from "@voxelspy/contracts";
 import {
   createSessionArchive,
@@ -13,6 +12,7 @@ import {
   type OpenedSessionArchive,
   type SessionArchiveErrorCode,
 } from "@voxelspy/session-archive";
+import { brandId, buildComparisonReport } from "./report";
 import type { SessionImportSpec } from "./worker-client";
 
 /**
@@ -47,11 +47,26 @@ export const SESSION_FILE_MEDIA_TYPE = "application/zip";
  * content-derived would be a coordinated contracts change, not this one.
  */
 const SESSION_TIMESTAMP = "1970-01-01T00:00:00.000Z";
-const SESSION_GENERATOR_ID = "voxelspy-web";
-const SESSION_GENERATOR_VERSION = "0.1.0";
-const SESSION_VIEW_NAME = "Default view";
-const DISPLAY_NAME_MAX = 200;
-const TITLE_MAX = 200;
+
+/**
+ * Fixed `Report["id"]` embedded in every saved session's report.
+ *
+ * `buildComparisonReport` deliberately leaves report identity to its
+ * caller. The interactive "Export report" action (see `ComparisonFlow.tsx`)
+ * mints a fresh `crypto.randomUUID()`-derived id per export, because each
+ * export is a distinct document the user is choosing to create right now.
+ * A session is different: there is exactly one report per session archive
+ * by construction, saving the same comparison twice must be byte-identical
+ * (asserted by this module's tests), and nothing in this application ever
+ * needs to distinguish one session's embedded report from another by id --
+ * the archive's own model source digests are its real content-identity
+ * signal. Deriving the id from `analysis.requestId` (as an earlier version
+ * of this function did) would still have been deterministic, but it would
+ * entangle report identity with analysis-request identity for no product
+ * benefit. A single fixed literal is the most honest option: it does not
+ * imply a uniqueness this application does not need or provide.
+ */
+const SESSION_REPORT_ID = brandId<Report["id"]>("report.session");
 
 /**
  * Caller-supplied archive limits (the contracts package has no implicit
@@ -81,6 +96,14 @@ export interface SessionComparison {
   baseline: NormalizedModel;
   candidate: NormalizedModel;
   analysis: AnalysisResult;
+  /**
+   * The same presentation summary the workbench displays for this
+   * comparison. Computing it is heavy enough that this application always
+   * derives it off the main thread (see `summary-worker-client.ts`); this
+   * module stays a plain function of an already-computed summary so it has
+   * no worker or browser dependency of its own.
+   */
+  summary: ModelComparisonPresentationSummary;
 }
 
 export interface SaveSessionInput extends SessionComparison {
@@ -93,138 +116,40 @@ export interface SavedSession {
   fileName: string;
 }
 
-function truncate(value: string, max: number): string {
-  return value.length > max ? value.slice(0, max) : value;
-}
-
-function displayNameFor(sourceName: string): string {
-  return truncate(sourceName, DISPLAY_NAME_MAX);
-}
-
-function mediaTypeForFormat(formatId: string): string {
-  if (formatId === "stl") return "model/stl";
-  if (formatId === "obj") return "model/obj";
-  return "application/octet-stream";
-}
-
-function sourcePathFor(role: "baseline" | "candidate", formatId: string) {
-  return `models/${role}.${formatId}`;
-}
-
-function analysisRequestFromResult(result: AnalysisResult) {
-  return analysisRequestSchema.parse({
-    contractVersion: 1,
-    requestId: result.requestId,
-    baseline: result.baseline,
-    candidate: result.candidate,
-    method: result.outcome.requestedMethod,
-    tolerance: result.outcome.requestedTolerance,
+/**
+ * Builds the versioned `Report` a saved session embeds.
+ *
+ * This delegates entirely to the same `buildComparisonReport` engine the
+ * interactive "Export report" action uses (see `ComparisonFlow.tsx`), so a
+ * saved session now embeds the same rich findings, overview saved view,
+ * and geometry-summary narrative an exported report would show for an
+ * identical comparison -- there is no separate, thinner "session report"
+ * format to keep in sync. Only the `id` and `createdAt` differ from an
+ * interactive export, and both are fixed constants rather than
+ * clock/random-derived: this module never reads the wall clock or `crypto`,
+ * so saving the same comparison twice is still byte-for-byte deterministic
+ * (asserted by this module's tests). See `SESSION_REPORT_ID` and
+ * `SESSION_TIMESTAMP` above for why each is fixed rather than derived.
+ *
+ * The product has no markup or saved-view authoring UI yet, so `markups`
+ * and `figures` stay empty and there is always exactly one saved view (the
+ * engine's overview view); reopening a session does not depend on that
+ * view's framing being anything specific -- the workbench frames the
+ * restored models with its usual default camera, exactly as it does for a
+ * freshly completed comparison.
+ */
+export function buildSessionReport(input: SessionComparison): Report {
+  return buildComparisonReport({
+    id: SESSION_REPORT_ID,
+    createdAt: SESSION_TIMESTAMP,
+    baseline: input.baseline,
+    candidate: input.candidate,
+    analysis: input.analysis,
+    summary: input.summary,
   });
 }
 
-function reportModelFor(
-  model: NormalizedModel,
-  role: "baseline" | "candidate",
-) {
-  const digest = model.provenance.sourceDigest;
-  if (!digest)
-    throw new Error(
-      `The ${role} model was imported without a source digest and cannot be saved in a portable session.`,
-    );
-  return {
-    modelId: model.id,
-    role,
-    displayName: displayNameFor(model.provenance.sourceName),
-    sourceName: model.provenance.sourceName,
-    sourceMediaType: mediaTypeForFormat(model.provenance.formatId),
-    sourcePath: sourcePathFor(role, model.provenance.formatId),
-    sourceDigest: digest,
-    normalizationProvenance: model.provenance,
-  };
-}
-
-/**
- * Builds the versioned `Report` a saved session embeds. This is a pure,
- * deterministic function of its inputs — no timestamps, random IDs, or
- * other nondeterminism — so saving the same comparison twice produces the
- * same report and, in turn, byte-identical archive output.
- *
- * The product has no markup, finding, or saved-view authoring UI yet, so
- * those contract-required collections are empty except for the single
- * mandatory saved view (`savedViews` requires at least one entry), which
- * uses a fixed default camera framing. Reopening a session does not depend
- * on that placeholder: the workbench frames the restored models with its
- * usual default camera, exactly as it does for a freshly completed
- * comparison.
- */
-export function buildSessionReport({
-  baseline,
-  candidate,
-  analysis,
-}: SessionComparison): Report {
-  const requestId = analysis.requestId;
-  const reportId = `report.${requestId}`;
-  const viewId = `view.${requestId}`;
-  const title = truncate(
-    `${displayNameFor(baseline.provenance.sourceName)} vs ${displayNameFor(candidate.provenance.sourceName)}`,
-    TITLE_MAX,
-  );
-  const view = {
-    contractVersion: 1 as const,
-    id: viewId,
-    name: SESSION_VIEW_NAME,
-    createdAt: SESSION_TIMESTAMP,
-    frame: "comparison" as const,
-    camera: {
-      position: [1, 1, 1] as [number, number, number],
-      target: [0, 0, 0] as [number, number, number],
-      up: [0, 0, 1] as [number, number, number],
-      projection: {
-        kind: "perspective" as const,
-        verticalFieldOfViewDegrees: 38,
-      },
-    },
-    visibility: [
-      { modelId: baseline.id, visible: true },
-      { modelId: candidate.id, visible: true },
-    ],
-    selectedFindingIds: [],
-    selectedMarkupIds: [],
-    sectionPlanes: [],
-    selectedRegionIds: [],
-    displayMode: "overlay" as const,
-  };
-  const raw = {
-    contractVersion: 1,
-    id: reportId,
-    title,
-    createdAt: SESSION_TIMESTAMP,
-    generator: {
-      id: SESSION_GENERATOR_ID,
-      version: SESSION_GENERATOR_VERSION,
-    },
-    analysis: {
-      request: analysisRequestFromResult(analysis),
-      result: analysis,
-    },
-    models: [
-      reportModelFor(baseline, "baseline"),
-      reportModelFor(candidate, "candidate"),
-    ],
-    markups: [],
-    findings: [],
-    savedViews: [view],
-    figures: [],
-    review: {
-      activeSavedViewId: viewId,
-      notes: "",
-      status: "draft" as const,
-    },
-  };
-  return reportSchema.parse(raw);
-}
-
-function slug(value: string | undefined): string {
+export function slug(value: string | undefined): string {
   const cleaned = (value ?? "")
     .replace(/\.[^./]+$/u, "")
     .toLocaleLowerCase("en-US")

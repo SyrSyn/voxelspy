@@ -1,12 +1,21 @@
-import type { SourceAxis, SourceUnit } from "@voxelspy/contracts";
+import type { ModelComparisonPresentationSummary } from "@voxelspy/analysis";
+import type { Report, SourceAxis, SourceUnit } from "@voxelspy/contracts";
 import { SessionArchiveError } from "@voxelspy/session-archive";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import {
+  boundedEntityId,
+  brandId,
+  buildComparisonReport,
+  renderReportHtml,
+  ReportBuildError,
+} from "./report";
 import {
   asArrayBufferBacked,
   describeSessionError,
   openSession,
   saveSession,
   sessionImportSpecFor,
+  slug,
   SESSION_FILE_MEDIA_TYPE,
   type SavedSession,
   type SessionSourceModels,
@@ -215,6 +224,34 @@ function describeSessionFailure(reason: unknown, action: "open" | "save") {
     : "The session could not be saved safely.";
 }
 
+/** File name for a downloaded report export: mirrors `sessionFileName`'s convention. */
+function reportFileName(report: Report): string {
+  const baseline = report.models.find((model) => model.role === "baseline");
+  const candidate = report.models.find((model) => model.role === "candidate");
+  return `voxelspy-report-${slug(baseline?.sourceName)}-vs-${slug(candidate?.sourceName)}.html`;
+}
+
+/** Downloads a rendered report as a self-contained `.html` file via a revocable Blob URL. */
+function downloadReportHtml(report: Report, html: string) {
+  const blob = new Blob([html], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = reportFileName(report);
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  // See `downloadSessionArchive` above for why the revoke is deferred.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function describeReportFailure(reason: unknown): string {
+  if (reason instanceof ReportBuildError) return reason.message;
+  if (reason instanceof Error) return reason.message;
+  return "The report could not be built safely.";
+}
+
 export function ComparisonFlow() {
   const [baseline, setBaseline] = useState(emptySource);
   const [candidate, setCandidate] = useState(emptySource);
@@ -227,6 +264,10 @@ export function ComparisonFlow() {
     "idle",
   );
   const [saveError, setSaveError] = useState<string>();
+  const [exportStatus, setExportStatus] = useState<
+    "idle" | "exporting" | "error"
+  >("idle");
+  const [exportError, setExportError] = useState<string>();
   const [openProgress, setOpenProgress] = useState<ComparisonProgress>();
   const [openError, setOpenError] = useState<string>();
   const [analysisMemoryMiB, setAnalysisMemoryMiB] = useState(
@@ -235,6 +276,7 @@ export function ComparisonFlow() {
   const activeRunRef = useRef<AbortController | null>(null);
   const activeOpenRunRef = useRef<AbortController | null>(null);
   const saveInFlightRef = useRef(false);
+  const exportInFlightRef = useRef(false);
   const baselineCapability = useMemo(
     () => sourceCapability(baseline),
     [baseline],
@@ -294,6 +336,8 @@ export function ComparisonFlow() {
       });
       setSaveStatus("idle");
       setSaveError(undefined);
+      setExportStatus("idle");
+      setExportError(undefined);
       setResult(next);
     } catch (reason) {
       if (reason instanceof ComparisonCancelledError) {
@@ -354,6 +398,8 @@ export function ComparisonFlow() {
       setSourceModels({ baseline: baselineBytes, candidate: candidateBytes });
       setSaveStatus("idle");
       setSaveError(undefined);
+      setExportStatus("idle");
+      setExportError(undefined);
       setResult({
         baseline: baselineModelResult,
         candidate: candidateModelResult,
@@ -372,7 +418,7 @@ export function ComparisonFlow() {
     }
   };
 
-  const handleSaveSession = () => {
+  const handleSaveSession = (summary: ModelComparisonPresentationSummary) => {
     if (!result || !sourceModels || saveInFlightRef.current) return;
     saveInFlightRef.current = true;
     setSaveStatus("saving");
@@ -383,6 +429,7 @@ export function ComparisonFlow() {
           baseline: result.baseline,
           candidate: result.candidate,
           analysis: result.analysis,
+          summary,
           sourceModels,
         });
         downloadSessionArchive(saved);
@@ -394,6 +441,45 @@ export function ComparisonFlow() {
         saveInFlightRef.current = false;
       }
     })();
+  };
+
+  // Building and rendering a `Report` (`buildComparisonReport` and
+  // `renderReportHtml`) is synchronous and pure; the only asynchronous
+  // dependency is the presentation summary the caller already waited for
+  // before invoking this. `id` uses a fresh `crypto.randomUUID()` -- unlike
+  // a saved session, an interactive export has no determinism requirement,
+  // and each export is a distinct document the user is choosing to create
+  // right now -- mapped into the contract's entity-id format with the
+  // report engine's own `boundedEntityId` helper. `createdAt` is the real
+  // wall-clock time: the engine itself never reads a clock, so supplying it
+  // here is exactly the caller-side policy `buildComparisonReport` expects,
+  // and "when this document was produced" is honest, useful metadata for an
+  // exported artifact (unlike a session archive, which must stay
+  // byte-identical across resaves; see `session.ts`).
+  const handleExportReport = (summary: ModelComparisonPresentationSummary) => {
+    if (!result || exportInFlightRef.current) return;
+    exportInFlightRef.current = true;
+    setExportStatus("exporting");
+    setExportError(undefined);
+    try {
+      const report = buildComparisonReport({
+        id: brandId<Report["id"]>(
+          boundedEntityId("report", crypto.randomUUID()),
+        ),
+        createdAt: new Date().toISOString(),
+        baseline: result.baseline,
+        candidate: result.candidate,
+        analysis: result.analysis,
+        summary,
+      });
+      downloadReportHtml(report, renderReportHtml(report));
+      setExportStatus("idle");
+    } catch (reason) {
+      setExportStatus("error");
+      setExportError(describeReportFailure(reason));
+    } finally {
+      exportInFlightRef.current = false;
+    }
   };
 
   if (result)
@@ -414,6 +500,11 @@ export function ComparisonFlow() {
             status: saveStatus,
             error: saveError,
           }}
+          reportPanel={{
+            onExport: handleExportReport,
+            status: exportStatus,
+            error: exportError,
+          }}
           onReset={() => {
             setResult(undefined);
             setError(undefined);
@@ -422,6 +513,8 @@ export function ComparisonFlow() {
             setSourceModels(undefined);
             setSaveStatus("idle");
             setSaveError(undefined);
+            setExportStatus("idle");
+            setExportError(undefined);
           }}
         />
       </Suspense>

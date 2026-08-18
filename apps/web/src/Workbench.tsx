@@ -45,9 +45,22 @@ type CompleteOutcome = Extract<
 type ChangeRegion = CompleteOutcome["regions"][number];
 type AnalysisMetric = CompleteOutcome["metrics"][number];
 
+/**
+ * Both the "Save session" and "Export report" actions build a `Report` from
+ * the same async geometry-presentation summary the workbench computes for
+ * display (see `summaryState` below), so each callback only fires once that
+ * summary is `"ready"` -- the workbench passes it in directly rather than
+ * making every caller re-derive or re-check readiness itself.
+ */
 export interface WorkbenchSessionPanelProps {
-  onSave: () => void;
+  onSave: (summary: ModelComparisonPresentationSummary) => void;
   status: "idle" | "saving" | "error";
+  error?: string | undefined;
+}
+
+export interface WorkbenchReportPanelProps {
+  onExport: (summary: ModelComparisonPresentationSummary) => void;
+  status: "idle" | "exporting" | "error";
   error?: string | undefined;
 }
 
@@ -62,6 +75,7 @@ export interface WorkbenchProps {
   variant?: "default" | "sample";
   enableKeyboardShortcuts?: boolean;
   sessionPanel?: WorkbenchSessionPanelProps;
+  reportPanel?: WorkbenchReportPanelProps;
 }
 
 const identity = new Matrix4();
@@ -761,6 +775,22 @@ type GeometrySummaryState =
   | { status: "ready"; summary: ModelComparisonPresentationSummary }
   | { status: "error"; message: string };
 
+/**
+ * Both "Save session" and "Export report" build a `Report`, which requires
+ * the geometry-presentation summary; that summary is computed asynchronously
+ * (see `summaryState` in `Workbench`), so each button stays disabled -- with
+ * a visible, honest reason -- until it settles. Returns `undefined` once the
+ * summary is ready, so callers can use this directly as a `title` attribute
+ * that disappears when there is nothing to explain.
+ */
+function summaryGateTitle(state: GeometrySummaryState): string | undefined {
+  if (state.status === "loading")
+    return "Waiting for the geometry summary to finish computing before session and report actions are available.";
+  if (state.status === "error")
+    return `Geometry summary unavailable, so session and report actions are disabled: ${state.message}`;
+  return undefined;
+}
+
 function GeometrySummary({ state }: { state: GeometrySummaryState }) {
   if (state.status === "loading") {
     return (
@@ -1082,6 +1112,7 @@ export function Workbench({
   variant = "default",
   enableKeyboardShortcuts = true,
   sessionPanel,
+  reportPanel,
 }: WorkbenchProps) {
   const baselineToComparison = useMemo(
     () => new Matrix4().fromArray(analysis.baseline.modelToComparison),
@@ -1301,26 +1332,82 @@ export function Workbench({
           {headerAction}
         </div>
       </header>
-      {sessionPanel && (
+      {(sessionPanel || reportPanel) && (
         <div className="session-panel">
-          <button
-            type="button"
-            className="button button-secondary"
-            onClick={sessionPanel.onSave}
-            disabled={sessionPanel.status === "saving"}
-          >
-            {sessionPanel.status === "saving"
-              ? "Saving session…"
-              : "Save session"}
-          </button>
+          {sessionPanel && (
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => {
+                if (summaryState.status !== "ready") return;
+                sessionPanel.onSave(summaryState.summary);
+              }}
+              disabled={
+                sessionPanel.status === "saving" ||
+                summaryState.status !== "ready"
+              }
+              aria-describedby={
+                summaryState.status === "ready"
+                  ? undefined
+                  : "report-actions-status"
+              }
+              title={summaryGateTitle(summaryState)}
+            >
+              {sessionPanel.status === "saving"
+                ? "Saving session…"
+                : "Save session"}
+            </button>
+          )}
+          {reportPanel && (
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => {
+                if (summaryState.status !== "ready") return;
+                reportPanel.onExport(summaryState.summary);
+              }}
+              disabled={
+                reportPanel.status === "exporting" ||
+                summaryState.status !== "ready"
+              }
+              aria-describedby={
+                summaryState.status === "ready"
+                  ? undefined
+                  : "report-actions-status"
+              }
+              title={summaryGateTitle(summaryState)}
+            >
+              {reportPanel.status === "exporting"
+                ? "Exporting report…"
+                : "Export report"}
+            </button>
+          )}
           <p className="boundary-note">
             Saving embeds both models&rsquo; original geometry in the downloaded
-            file, so sharing a saved session shares that model data.
+            file, so sharing a saved session shares that model data. Exporting a
+            report embeds provenance, findings, and a geometry summary, not the
+            raw model geometry.
           </p>
-          {sessionPanel.status === "error" && sessionPanel.error && (
+          {summaryState.status !== "ready" && (
+            <p
+              id="report-actions-status"
+              className="report-actions-status"
+              role="status"
+              aria-live="polite"
+            >
+              {summaryGateTitle(summaryState)}
+            </p>
+          )}
+          {sessionPanel?.status === "error" && sessionPanel.error && (
             <div className="comparison-error" role="alert">
               <strong>Session could not be saved</strong>
               <p>{sessionPanel.error}</p>
+            </div>
+          )}
+          {reportPanel?.status === "error" && reportPanel.error && (
+            <div className="comparison-error" role="alert">
+              <strong>Report could not be exported</strong>
+              <p>{reportPanel.error}</p>
             </div>
           )}
         </div>

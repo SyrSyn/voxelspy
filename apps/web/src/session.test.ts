@@ -1,4 +1,8 @@
-import { analyzeModelPair, SURFACE_DISTANCE_METHOD } from "@voxelspy/analysis";
+import {
+  analyzeModelPair,
+  summarizeModelComparison,
+  SURFACE_DISTANCE_METHOD,
+} from "@voxelspy/analysis";
 import {
   IDENTITY_MAT4,
   analysisRequestSchema,
@@ -39,6 +43,7 @@ interface Fixture {
   baseline: NormalizedModel;
   candidate: NormalizedModel;
   analysis: AnalysisResult;
+  summary: ReturnType<typeof summarizeModelComparison>;
   sourceModels: { baseline: Uint8Array; candidate: Uint8Array };
 }
 
@@ -76,10 +81,12 @@ async function buildFixture(): Promise<Fixture> {
     tolerance: { distanceMillimetres: 0.1 },
   });
   const analysis = analyzeModelPair({ request, baseline, candidate });
+  const summary = summarizeModelComparison(baseline, candidate, analysis);
   return {
     baseline,
     candidate,
     analysis,
+    summary,
     sourceModels: { baseline: baselineBytes, candidate: candidateBytes },
   };
 }
@@ -95,8 +102,12 @@ describe("buildSessionReport", () => {
     expect(report.savedViews).toHaveLength(1);
     expect(report.review.activeSavedViewId).toBe(report.savedViews[0]!.id);
     expect(report.markups).toEqual([]);
-    expect(report.findings).toEqual([]);
     expect(report.figures).toEqual([]);
+    // The session report is now built by the same engine as an interactive
+    // export, so it carries real findings derived from the analysis result
+    // (previously always empty) and a non-empty geometry-summary narrative.
+    expect(report.findings.length).toBeGreaterThan(0);
+    expect(report.review.notes.length).toBeGreaterThan(0);
   });
 
   it("is a pure, deterministic function of its inputs", async () => {
