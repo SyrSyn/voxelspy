@@ -215,6 +215,14 @@ export const docs: DocPage[] = [
         ],
       },
       {
+        id: "measure-and-section",
+        title: "Measuring and sectioning one model",
+        paragraphs: [
+          "Measure & Section (/tools/measure-section/) answers click-to-measure and cross-section questions against one loaded model's own tessellated surface: exact snap-to-vertex/edge/face results, exact point-to-point distances, and exact cross-section loops from an exact triangle/plane intersection -- none of it sampled, unlike Compare's or Clearance & Fit's surface-distance methods.",
+          "“Exact” there is still a claim about the mesh as imported, not about any original curved or CAD geometry that mesh approximates: a section through a part that was originally a cylinder still returns straight polyline segments through its triangulated facets, not a reconstructed arc. A plane that lies exactly in one or more faces contributes no segment from those faces on its own -- reported as a coincident-triangle count and a warning rather than a guessed outline.",
+        ],
+      },
+      {
         id: "evidence",
         title: "Prefer reproducible evidence",
         paragraphs: [
@@ -299,8 +307,8 @@ export const tools: Tool[] = [
     name: "Measure & Section",
     description: "Take dimensions and cross-sections straight off a model.",
     summary:
-      "Place point-to-point and section-plane measurements directly on a model's geometry, with source units preserved. Measure & Section is not built yet.",
-    status: "planned",
+      "Load a single local model, click its surface (or type coordinates) to build exact point-to-point measurements with their axis deltas, and cut a section plane to see cross-section loops with perimeter, closed/terminated status, and area where available. Runs entirely in your browser.",
+    status: "available",
     question: "How big is this, and what does it look like sliced open?",
   },
   {
@@ -354,6 +362,7 @@ export const routes = [
   ...inspectFocusPages.map((page) => page.path),
   "/tools/file-forensics/",
   "/tools/clearance-fit/",
+  "/tools/measure-section/",
   "/docs/",
   ...docs.map((doc) => doc.path),
 ];

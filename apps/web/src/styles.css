@@ -2071,6 +2071,36 @@ a.tool-card-available:hover {
   overflow: hidden;
 }
 
+/* Measure & Section (/tools/measure-section/): the click-to-measure/section
+   viewport, the plane-normal radio group, and the section-loop point
+   buttons. Reuses `.viewport-canvas`/`.method-card`/`.placement-grid`/
+   `.diagnostic-list`/`.clearance-caveat`/`.geometry-summary` conventions
+   wherever the shape already matches; only genuinely new shapes get new
+   rules here. */
+.measure-section-viewport {
+  margin: 1rem 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.section-normal-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  margin-top: 0.5rem;
+}
+.section-normal-choices label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+.section-normal-choices input[type="radio"] {
+  accent-color: var(--green);
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

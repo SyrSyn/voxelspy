@@ -6,6 +6,7 @@ import { ComparisonFlow } from "./ComparisonFlow";
 import { ForensicsFlow } from "./ForensicsFlow";
 import { HomeDemo } from "./HomeDemo";
 import { InspectFlow } from "./InspectFlow";
+import { MeasureSectionFlow } from "./MeasureSectionFlow";
 import {
   docs,
   inspectFocusPages,
@@ -47,6 +48,11 @@ const baseMetadata = {
     title: "Clearance & Fit — VoxelSpy",
     description:
       "Check whether two local parts fit: minimum clearance with its closest-point pair, ranked tight regions, and exact triangle-pair interference evidence.",
+  },
+  "/tools/measure-section/": {
+    title: "Measure & Section — VoxelSpy",
+    description:
+      "Click-to-measure and cross-section one local model: exact point-to-point distances with axis deltas, and section-plane loops with perimeter and area.",
   },
   "/docs/": {
     title: "Documentation — VoxelSpy",
@@ -484,6 +490,10 @@ export function App() {
           ))}
           <Route path="/tools/file-forensics/" element={<ForensicsFlow />} />
           <Route path="/tools/clearance-fit/" element={<ClearanceFlow />} />
+          <Route
+            path="/tools/measure-section/"
+            element={<MeasureSectionFlow />}
+          />
           <Route path="/docs/" element={<DocsIndex />} />
           {docs.map((doc) => (
             <Route

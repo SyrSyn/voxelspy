@@ -34,6 +34,7 @@ const ROUTES = [
   "/tools/watertight/",
   "/tools/file-forensics/",
   "/tools/clearance-fit/",
+  "/tools/measure-section/",
   "/docs/",
   "/docs/getting-started/",
   "/docs/privacy/",
