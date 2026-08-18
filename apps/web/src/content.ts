@@ -203,6 +203,7 @@ export const docs: DocPage[] = [
         paragraphs: [
           "Inspect reports on one model without a baseline: bounds and dimensions, surface area, volume (or the reasons volume is withheld), placed vertex/triangle/mesh/instance/component counts, a bounded list of topology findings, a watertightness verdict, and a per-mesh breakdown, alongside the file's provenance and the unit/axis interpretation actually applied.",
           "Topology findings and the watertightness verdict use the same exact-coordinate adjacency as comparison: two triangle corners are the same point only when their coordinates are bit-for-bit identical, with no tolerance-based welding anywhere in the pipeline. A model assembled from parts that are geometrically touching but not exactly coincident can therefore report open boundary edges even though it looks closed when rendered.",
+          "File Forensics (/tools/file-forensics/) complements Inspect rather than duplicating it: instead of geometric measurements, it reports the file's own structural and provenance truth -- the format this importer detected, mesh and instance structure, the declared-vs-resolved unit and axis with the exact applied transform, and every warning, note, or refused input the importer recorded. It reports what this importer saw, not a general verdict on the file: a file it accepts may still be rejected elsewhere, and vice versa.",
         ],
       },
       {
@@ -331,8 +332,8 @@ export const tools: Tool[] = [
     name: "File Forensics",
     description: "Understand what a model file actually encodes, byte by byte.",
     summary:
-      "Inspect a file's declared format, units, axes, precision, embedded metadata, and import warnings, when the question is about the file itself rather than the shape it encodes. File Forensics is not built yet.",
-    status: "planned",
+      "Open a single STL or OBJ file from your device and see what this importer actually saw: the detected format, byte size against its declared ceilings, content digest, mesh and instance structure, the declared-vs-resolved unit and axis with the exact applied transform, and every warning, note, and refused input. Runs entirely in your browser.",
+    status: "available",
     question: "What is this file actually telling me, and can I trust it?",
   },
 ];
@@ -343,6 +344,7 @@ export const routes = [
   "/compare/",
   "/tools/inspect/",
   ...inspectFocusPages.map((page) => page.path),
+  "/tools/file-forensics/",
   "/docs/",
   ...docs.map((doc) => doc.path),
 ];

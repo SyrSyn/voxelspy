@@ -332,9 +332,10 @@ test("the tools catalog represents the focus pages as entry points into Inspect,
 }) => {
   await page.goto("/tools/");
 
-  // Exactly two available, real tool cards: Compare and Inspect. The three
-  // focus pages must not inflate this count.
-  await expect(page.locator("a.tool-card-available")).toHaveCount(2);
+  // Exactly three available, real tool cards: Compare, Inspect, and File
+  // Forensics (see tests/forensics.spec.ts). The three Inspect focus pages
+  // must not inflate this count.
+  await expect(page.locator("a.tool-card-available")).toHaveCount(3);
 
   const inspectCard = page
     .locator("a.tool-card-available")

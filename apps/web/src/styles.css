@@ -1714,6 +1714,23 @@ a.tool-card-available:hover {
   font-weight: 800;
 }
 
+/* File Forensics' standing "what this importer supports" panel: reuses
+   .comparison-card's box but not its hero-scaled h2 (reserved for a page's
+   primary step heading), since this panel is reference context, not a step. */
+.importer-support {
+  margin-bottom: 2rem;
+}
+.importer-support.comparison-card h2 {
+  max-width: 40ch;
+  margin: 0 0 0.5rem;
+  font-size: 1.6rem;
+  letter-spacing: normal;
+}
+.importer-support > p {
+  margin: 0 0 1rem;
+  color: var(--muted);
+}
+
 .not-found {
   min-height: 70vh;
   display: flex;

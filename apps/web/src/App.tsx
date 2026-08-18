@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Route, Routes, useLocation } from "react-router";
 import { Wordmark } from "./Brand";
 import { ComparisonFlow } from "./ComparisonFlow";
+import { ForensicsFlow } from "./ForensicsFlow";
 import { HomeDemo } from "./HomeDemo";
 import { InspectFlow } from "./InspectFlow";
 import {
@@ -35,6 +36,11 @@ const baseMetadata = {
     title: "Inspect a model — VoxelSpy",
     description:
       "Load one local model and get a full local report: dimensions, volume, watertightness, and topology findings.",
+  },
+  "/tools/file-forensics/": {
+    title: "File Forensics — VoxelSpy",
+    description:
+      "See what this importer actually saw in one local STL or OBJ file: detected format, structure, provenance, and every warning or refused input.",
   },
   "/docs/": {
     title: "Documentation — VoxelSpy",
@@ -470,6 +476,7 @@ export function App() {
               element={<InspectFlow focus={page.id} />}
             />
           ))}
+          <Route path="/tools/file-forensics/" element={<ForensicsFlow />} />
           <Route path="/docs/" element={<DocsIndex />} />
           {docs.map((doc) => (
             <Route

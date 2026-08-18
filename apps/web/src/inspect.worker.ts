@@ -1,10 +1,17 @@
 /// <reference lib="webworker" />
 
 import { diagnoseMeshHealth, inspectModel } from "@voxelspy/analysis";
-import { importRequestSchema, modelIdSchema } from "@voxelspy/contracts";
+import {
+  importRequestSchema,
+  modelIdSchema,
+  type NormalizedModel,
+} from "@voxelspy/contracts";
 import { importModel } from "@voxelspy/importers";
 
 import type {
+  ForensicsInstanceSummary,
+  ForensicsMeshSummary,
+  ForensicsOutcome,
   InspectWorkerRequest,
   InspectWorkerResponse,
 } from "./inspect-worker-client";
@@ -50,13 +57,20 @@ async function handle(data: InspectWorkerRequest) {
         ok: true,
         outcome: { inspection, warnings: imported.model.warnings },
       };
-    } else {
+    } else if (kind === "diagnose") {
       const diagnosis = diagnoseMeshHealth(imported.model);
       response = {
         requestId,
         kind,
         ok: true,
         outcome: { model: imported.model, diagnosis },
+      };
+    } else {
+      response = {
+        requestId,
+        kind,
+        ok: true,
+        outcome: buildForensicsOutcome(imported.model),
       };
     }
   } catch (error) {
@@ -71,4 +85,42 @@ async function handle(data: InspectWorkerRequest) {
     };
   }
   scope.postMessage(response);
+}
+
+/**
+ * Builds the file Forensics report from an imported model, entirely from
+ * data the importer already produced: `provenance` and `warnings` are passed
+ * through verbatim, and the per-mesh/per-instance summary is derived from
+ * the model's own typed-array buffers -- never from a second pass or a
+ * separate validator. The buffers themselves (`positions`/`indices`) are
+ * read only for their `.length` here and never included in the outcome, so
+ * no geometry travels back to the main thread for this report kind.
+ */
+function buildForensicsOutcome(model: NormalizedModel): ForensicsOutcome {
+  const meshes: ForensicsMeshSummary[] = model.meshes.map((mesh) => ({
+    meshId: mesh.id,
+    vertexCount: mesh.geometry.positions.length / 3,
+    triangleCount: mesh.geometry.indices.length / 3,
+  }));
+  const instances: ForensicsInstanceSummary[] =
+    model.placement.kind === "flat"
+      ? model.placement.instances.map((instance) => ({
+          instanceId: instance.id,
+          meshId: instance.meshId,
+          transformKind: "meshToModel" as const,
+          transform: [...instance.meshToModel],
+        }))
+      : model.placement.instances.map((instance) => ({
+          instanceId: instance.id,
+          meshId: instance.meshId,
+          transformKind: "meshToNode" as const,
+          transform: [...instance.meshToNode],
+        }));
+  return {
+    provenance: model.provenance,
+    warnings: model.warnings,
+    placementKind: model.placement.kind,
+    meshes,
+    instances,
+  };
 }

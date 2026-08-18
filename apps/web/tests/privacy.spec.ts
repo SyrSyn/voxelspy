@@ -32,6 +32,7 @@ const ROUTES = [
   "/tools/scale/",
   "/tools/volume/",
   "/tools/watertight/",
+  "/tools/file-forensics/",
   "/docs/",
   "/docs/getting-started/",
   "/docs/privacy/",
