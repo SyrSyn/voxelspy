@@ -1,4 +1,7 @@
-import { pointTriangleDistanceSquared } from "./geometry.js";
+import {
+  pointTriangleDistanceSquared,
+  rayTriangleIntersectionT,
+} from "./geometry.js";
 import type { FlatGeometry, WorkUnitCounter } from "./geometry.js";
 
 export type { WorkUnitCounter } from "./geometry.js";
@@ -20,6 +23,11 @@ export class NumericRangeExceededError extends Error {
 
 const LEAF_TRIANGLE_COUNT = 8;
 const MORTON_AXIS_SCALE = 1023;
+
+/** Charged per node visited during `castRayNearest`'s traversal -- matches `nearestTriangle`'s per-node charge. */
+const RAY_NODE_WORK_UNITS = 1;
+/** Charged per triangle tested against a ray at a leaf -- matches `RAY_TRIANGLE_WORK_UNITS` in `src/measure.ts`'s linear-scan ray cast; the per-triangle Moller-Trumbore cost is identical whichever traversal reaches it. */
+const RAY_TRIANGLE_TEST_WORK_UNITS = 12;
 
 interface Bounds6 {
   readonly minX: number;
@@ -284,6 +292,139 @@ export class TriangleSpatialIndex {
     }
     return candidates;
   }
+
+  /**
+   * Exact nearest ray/triangle intersection, accelerated by the same BVH
+   * `nearestTriangle` traverses. Uses `rayTriangleIntersectionT`
+   * (`src/geometry.js`) -- the identical Moller-Trumbore test and
+   * touching-counts convention `src/measure.ts`'s `castRay` (an independent
+   * full linear scan) applies -- so the two are expected to agree on every
+   * ray; `test/spatial-index-ray-property.test.ts` confirms this against an
+   * independent brute-force scan built from the same shared primitive,
+   * matching the discipline `distance`/`nearestTriangle` already have there.
+   *
+   * `excludeTriangleIndex`, when supplied, is skipped entirely, as if it did
+   * not exist. This is for a ray whose origin lies exactly on a known
+   * source triangle (e.g. `assessPrintability`'s inward wall-thickness
+   * probe, cast from a triangle's own centroid): without exclusion, that
+   * triangle would register a spurious `t = 0` self-hit.
+   *
+   * Node traversal is ordered by each child's own ray-entry distance
+   * (nearer child visited first, mirroring `nearestTriangle`'s
+   * distance-ordered traversal) so a ray that hits something early prunes
+   * the farther subtree without visiting it. `direction` need not be unit
+   * length -- `t` is in units of `direction`'s own length, exactly as the
+   * `origin + t * direction` parametrization implies -- but callers that
+   * want `t` to read directly as a distance (as `assessPrintability` does)
+   * should pass a unit `direction`.
+   */
+  castRayNearest(
+    ox: number,
+    oy: number,
+    oz: number,
+    dx: number,
+    dy: number,
+    dz: number,
+    work: WorkUnitCounter,
+    excludeTriangleIndex?: number,
+  ): { readonly t: number; readonly triangleIndex: number } | undefined {
+    const geometry = this.#geometry;
+    const order = this.#order;
+    const positions = geometry.positions;
+    const indices = geometry.indices;
+    const zeroX = dx === 0;
+    const zeroY = dy === 0;
+    const zeroZ = dz === 0;
+    const invDx = zeroX ? 0 : 1 / dx;
+    const invDy = zeroY ? 0 : 1 / dy;
+    const invDz = zeroZ ? 0 : 1 / dz;
+
+    let bestT = Number.POSITIVE_INFINITY;
+    let bestTriangle = -1;
+
+    const stack: SpatialNode[] = [this.#root];
+    while (stack.length > 0) {
+      const node = stack.pop()!;
+      work.charge(RAY_NODE_WORK_UNITS);
+      const entry = rayEntryDistance(
+        ox,
+        oy,
+        oz,
+        invDx,
+        invDy,
+        invDz,
+        zeroX,
+        zeroY,
+        zeroZ,
+        node,
+      );
+      if (entry > bestT) continue;
+
+      if (node.left === undefined || node.right === undefined) {
+        for (let index = node.start; index < node.end; index += 1) {
+          const triangle = order[index]!;
+          if (triangle === excludeTriangleIndex) continue;
+          work.charge(RAY_TRIANGLE_TEST_WORK_UNITS);
+          const base = triangle * 3;
+          const ia = indices[base]!;
+          const ib = indices[base + 1]!;
+          const ic = indices[base + 2]!;
+          const t = rayTriangleIntersectionT(
+            ox,
+            oy,
+            oz,
+            dx,
+            dy,
+            dz,
+            positions,
+            ia,
+            ib,
+            ic,
+          );
+          if (t !== undefined && t < bestT) {
+            bestT = t;
+            bestTriangle = triangle;
+          }
+        }
+        continue;
+      }
+
+      const leftEntry = rayEntryDistance(
+        ox,
+        oy,
+        oz,
+        invDx,
+        invDy,
+        invDz,
+        zeroX,
+        zeroY,
+        zeroZ,
+        node.left,
+      );
+      const rightEntry = rayEntryDistance(
+        ox,
+        oy,
+        oz,
+        invDx,
+        invDy,
+        invDz,
+        zeroX,
+        zeroY,
+        zeroZ,
+        node.right,
+      );
+      if (leftEntry <= rightEntry) {
+        if (rightEntry <= bestT) stack.push(node.right);
+        if (leftEntry <= bestT) stack.push(node.left);
+      } else {
+        if (leftEntry <= bestT) stack.push(node.left);
+        if (rightEntry <= bestT) stack.push(node.right);
+      }
+    }
+
+    if (bestTriangle === -1) return undefined;
+    return { t: bestT, triangleIndex: bestTriangle };
+  }
 }
 
 function boundsOverlap(
@@ -432,6 +573,74 @@ function expandMortonBits(value: number): number {
   expanded = (expanded | (expanded << 4)) & 0x030c30c3;
   expanded = (expanded | (expanded << 2)) & 0x09249249;
   return expanded;
+}
+
+/**
+ * The ray-entry parameter `t` (distance along `direction`, clamped to `>=
+ * 0` since the ray starts at its own origin) at which the ray
+ * `origin + t * direction` first enters `bounds`, via the standard
+ * slab method -- or `Number.POSITIVE_INFINITY` when the ray never enters
+ * `bounds` at all, used as a sentinel so callers can compare it directly
+ * against a running best `t` without a separate "did it hit" check
+ * (mirroring how `distanceToBoundsSquared`'s ordinary numeric return is
+ * compared directly in `nearestTriangle`).
+ *
+ * Each axis with a zero direction component is handled explicitly (`zeroX`/
+ * `zeroY`/`zeroZ`) rather than relying on IEEE-754 arithmetic with an
+ * infinite reciprocal: `(min - origin) * Infinity` produces `NaN`, not a
+ * usable sentinel, whenever `origin` lands exactly on that slab's boundary
+ * (`min - origin === 0`), which is a real, reachable case (an axis-aligned
+ * probe origin sitting exactly on a node's bounding box face).
+ */
+function rayEntryDistance(
+  ox: number,
+  oy: number,
+  oz: number,
+  invDx: number,
+  invDy: number,
+  invDz: number,
+  zeroX: boolean,
+  zeroY: boolean,
+  zeroZ: boolean,
+  bounds: Bounds6,
+): number {
+  let tMin = 0;
+  let tMax = Number.POSITIVE_INFINITY;
+
+  if (zeroX) {
+    if (ox < bounds.minX || ox > bounds.maxX) return Number.POSITIVE_INFINITY;
+  } else {
+    const t0 = (bounds.minX - ox) * invDx;
+    const t1 = (bounds.maxX - ox) * invDx;
+    const lo = Math.min(t0, t1);
+    const hi = Math.max(t0, t1);
+    if (lo > tMin) tMin = lo;
+    if (hi < tMax) tMax = hi;
+  }
+
+  if (zeroY) {
+    if (oy < bounds.minY || oy > bounds.maxY) return Number.POSITIVE_INFINITY;
+  } else {
+    const t0 = (bounds.minY - oy) * invDy;
+    const t1 = (bounds.maxY - oy) * invDy;
+    const lo = Math.min(t0, t1);
+    const hi = Math.max(t0, t1);
+    if (lo > tMin) tMin = lo;
+    if (hi < tMax) tMax = hi;
+  }
+
+  if (zeroZ) {
+    if (oz < bounds.minZ || oz > bounds.maxZ) return Number.POSITIVE_INFINITY;
+  } else {
+    const t0 = (bounds.minZ - oz) * invDz;
+    const t1 = (bounds.maxZ - oz) * invDz;
+    const lo = Math.min(t0, t1);
+    const hi = Math.max(t0, t1);
+    if (lo > tMin) tMin = lo;
+    if (hi < tMax) tMax = hi;
+  }
+
+  return tMin <= tMax ? tMin : Number.POSITIVE_INFINITY;
 }
 
 function distanceToBoundsSquared(

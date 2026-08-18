@@ -287,6 +287,106 @@ export function squareChannelModel(
   );
 }
 
+/**
+ * Two disjoint closed boxes: a `firstMax`-sized box at the origin and a
+ * `secondMax`-sized box translated by `secondOffset` (far enough away, by
+ * default, that the two never touch or overlap). Reuses `BOX_INDICES`
+ * twice, index-shifted for the second box's eight vertices, so both shells
+ * are exactly the same well-formed closed, consistently oriented solid
+ * `boxModel` itself produces. Used for island/component-count fixtures that
+ * need each component to independently report a real triangle count,
+ * bounding extent, and volume.
+ */
+export function twoDisjointBoxesModel(
+  id: string,
+  firstMax: readonly [number, number, number] = [10, 10, 10],
+  secondMax: readonly [number, number, number] = [4, 4, 4],
+  secondOffset: readonly [number, number, number] = [100, 0, 0],
+): NormalizedModel {
+  const cornerFractions: readonly (readonly [number, number, number])[] = [
+    [0, 0, 0],
+    [1, 0, 0],
+    [1, 1, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+    [1, 0, 1],
+    [1, 1, 1],
+    [0, 1, 1],
+  ];
+  const boxPositions = (
+    max: readonly [number, number, number],
+    offset: readonly [number, number, number],
+  ): number[] =>
+    cornerFractions.flatMap(([fx, fy, fz]) => [
+      fx * max[0] + offset[0],
+      fy * max[1] + offset[1],
+      fz * max[2] + offset[2],
+    ]);
+  const positions = new Float64Array([
+    ...boxPositions(firstMax, [0, 0, 0]),
+    ...boxPositions(secondMax, secondOffset),
+  ]);
+  const indices = new Uint32Array([
+    ...BOX_INDICES,
+    ...[...BOX_INDICES].map((index) => index + 8),
+  ]);
+  return generatedMeshModel(
+    id,
+    positions,
+    indices,
+    "generated-fixture",
+    "Two disjoint closed boxes, for island/component-count fixtures.",
+  );
+}
+
+/**
+ * A single flat rectangular panel (two triangles) whose exact outward
+ * normal is tilted `angleFromVerticalDegrees` away from vertical, measured
+ * the same way `assessPrintability`'s overhang check measures it: `0`
+ * degrees is a vertical wall (normal perpendicular to +Z), `90` degrees is
+ * a flat downward-facing ceiling (normal exactly `-Z`). Constructed so the
+ * outward normal is exactly `(cos(theta), 0, -sin(theta))` for
+ * `theta = angleFromVerticalDegrees` in radians -- an exact, closed-form
+ * geometric fact about this fixture, not something measured after the
+ * fact, so a test asserting the overhang check's reported angle can compare
+ * against `angleFromVerticalDegrees` directly.
+ */
+export function tiltedPanelModel(
+  id: string,
+  angleFromVerticalDegrees: number,
+  size = 10,
+): NormalizedModel {
+  const theta = (angleFromVerticalDegrees * Math.PI) / 180;
+  // In-plane basis for the panel: `u` and `v` both perpendicular to the
+  // intended outward normal `(cos(theta), 0, -sin(theta))`, with
+  // `cross(u, v) === normal` exactly (verified in this function's doc
+  // comment's derivation), so triangle winding `(a, b, c)`/`(a, c, d)`
+  // below produces that exact outward normal, not just a parallel one.
+  const u: Vec3 = [-Math.sin(theta), 0, -Math.cos(theta)];
+  const v: Vec3 = [0, 1, 0];
+  const base: Vec3 = [0, 0, size * 2];
+  const add = (a: Vec3, b: Vec3, scale: number): Vec3 => [
+    a[0] + b[0] * scale,
+    a[1] + b[1] * scale,
+    a[2] + b[2] * scale,
+  ];
+  const corner = (uScale: number, vScale: number): Vec3 =>
+    add(add(base, u, uScale), v, vScale);
+  const a = corner(0, 0);
+  const b = corner(size, 0);
+  const c = corner(size, size);
+  const d = corner(0, size);
+  const positions = new Float64Array([...a, ...b, ...c, ...a, ...c, ...d]);
+  const indices = new Uint32Array([0, 1, 2, 3, 4, 5]);
+  return generatedMeshModel(
+    id,
+    positions,
+    indices,
+    "generated-fixture",
+    `Single tilted rectangular panel at ${angleFromVerticalDegrees} degrees from vertical, for overhang-check fixtures.`,
+  );
+}
+
 function generatedMeshModel(
   id: string,
   positions: Float64Array,

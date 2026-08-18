@@ -479,3 +479,105 @@ export function closestPointOnTriangle(
     az + abz * v + acz * w,
   ];
 }
+
+/**
+ * Threshold on `det^2 / (|direction|^2 * |normal|^2)` (approximately `sin^2`
+ * of the angle between the ray direction and the triangle's plane) below
+ * which a ray is treated as parallel to the triangle's plane and the
+ * triangle is skipped. Mirrors `RAY_PARALLEL_RELATIVE_EPSILON` in
+ * `src/measure.ts`'s independent linear-scan ray cast -- see that
+ * constant's doc comment for the full rationale -- kept as a second copy
+ * here (not exported/shared) because `src/measure.ts` depends on this
+ * module, not the reverse, and the two ray casts are intentionally
+ * independent implementations that happen to need the identical
+ * relative-magnitude discipline.
+ */
+const RAY_TRIANGLE_PARALLEL_RELATIVE_EPSILON = 1e-20;
+
+/**
+ * Exact Moller-Trumbore ray/triangle intersection parameter `t` (Moller &
+ * Trumbore, "Fast, Minimum Storage Ray-Triangle Intersection", Journal of
+ * Graphics Tools, 1997) for the ray `origin + t * direction` against the
+ * triangle `ia`/`ib`/`ic` in `positions`, or `undefined` when the ray does
+ * not hit the triangle. Touching an edge or vertex counts as a hit (`u`,
+ * `v`, `u + v` all tested inclusively, the same touching-counts convention
+ * `trianglesIntersect` in `src/triangle-triangle.ts` and `src/measure.ts`'s
+ * `castRay` use); only intersections at or ahead of the origin (`t >= 0`)
+ * are returned.
+ *
+ * The single-triangle primitive behind `TriangleSpatialIndex.castRayNearest`'s
+ * BVH-pruned traversal (`src/spatial-index.ts`) -- and structurally
+ * identical to (though not shared code with) `src/measure.ts`'s `castRay`,
+ * which performs the same per-triangle test as a full linear scan. Because
+ * both ray casts apply this same math per candidate triangle, differing
+ * only in which triangles they visit, a brute-force scan built from this
+ * exported function (see `test/spatial-index-ray-property.test.ts`) is a
+ * meaningful ground truth for the BVH traversal specifically -- the same
+ * relationship `pointTriangleDistanceSquared` already has to
+ * `TriangleSpatialIndex.distance`/`nearestTriangle`.
+ */
+export function rayTriangleIntersectionT(
+  ox: number,
+  oy: number,
+  oz: number,
+  dx: number,
+  dy: number,
+  dz: number,
+  positions: Float64Array,
+  ia: number,
+  ib: number,
+  ic: number,
+): number | undefined {
+  const ax = positions[ia * 3]!;
+  const ay = positions[ia * 3 + 1]!;
+  const az = positions[ia * 3 + 2]!;
+  const bx = positions[ib * 3]!;
+  const by = positions[ib * 3 + 1]!;
+  const bz = positions[ib * 3 + 2]!;
+  const cx = positions[ic * 3]!;
+  const cy = positions[ic * 3 + 1]!;
+  const cz = positions[ic * 3 + 2]!;
+
+  const e1x = bx - ax;
+  const e1y = by - ay;
+  const e1z = bz - az;
+  const e2x = cx - ax;
+  const e2y = cy - ay;
+  const e2z = cz - az;
+
+  const nx = e1y * e2z - e1z * e2y;
+  const ny = e1z * e2x - e1x * e2z;
+  const nz = e1x * e2y - e1y * e2x;
+  const normalLengthSquared = nx * nx + ny * ny + nz * nz;
+
+  const pvx = dy * e2z - dz * e2y;
+  const pvy = dz * e2x - dx * e2z;
+  const pvz = dx * e2y - dy * e2x;
+  const det = e1x * pvx + e1y * pvy + e1z * pvz;
+  const dirLengthSquared = dx * dx + dy * dy + dz * dz;
+  if (
+    det * det <=
+    RAY_TRIANGLE_PARALLEL_RELATIVE_EPSILON *
+      dirLengthSquared *
+      normalLengthSquared
+  ) {
+    return undefined;
+  }
+  const invDet = 1 / det;
+
+  const tvx = ox - ax;
+  const tvy = oy - ay;
+  const tvz = oz - az;
+  const u = (tvx * pvx + tvy * pvy + tvz * pvz) * invDet;
+  if (u < 0 || u > 1) return undefined;
+
+  const qvx = tvy * e1z - tvz * e1y;
+  const qvy = tvz * e1x - tvx * e1z;
+  const qvz = tvx * e1y - tvy * e1x;
+  const v = (dx * qvx + dy * qvy + dz * qvz) * invDet;
+  if (v < 0 || u + v > 1) return undefined;
+
+  const t = (e2x * qvx + e2y * qvy + e2z * qvz) * invDet;
+  if (t < 0) return undefined;
+  return t;
+}
