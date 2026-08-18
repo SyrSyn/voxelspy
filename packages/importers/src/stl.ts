@@ -6,8 +6,10 @@ import {
 } from "./parse.js";
 import type { ParsedMesh } from "./parse.js";
 
-const BINARY_HEADER_BYTES = 84;
-const BINARY_FACET_BYTES = 50;
+/** Exported for reuse by `src/export.ts`, which writes the same binary STL layout. */
+export const BINARY_HEADER_BYTES = 84;
+/** Exported for reuse by `src/export.ts`, which writes the same binary STL layout. */
+export const BINARY_FACET_BYTES = 50;
 const MAX_LINE_LENGTH = 1_000_000;
 
 export function parseStl(

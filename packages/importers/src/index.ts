@@ -26,6 +26,22 @@ import { parseObj } from "./obj.js";
 import type { ParsedMesh } from "./parse.js";
 import { parseStl } from "./stl.js";
 
+export {
+  exportModel,
+  formatNumber,
+  EXPORTER_SAFETY_LIMITS,
+  type ExportFormat,
+  type ExportGeometryCounts,
+  type ExportOptions,
+  type ExportResult,
+} from "./export.js";
+export {
+  ExportInputError,
+  ExportResourceLimitError,
+  ExportUnsupportedTargetError,
+  UnsupportedInputError,
+} from "./errors.js";
+
 export const IMPORTER_SAFETY_LIMITS = Object.freeze({
   inputBytes: 32 * 1024 * 1024,
   triangleCount: 500_000,
