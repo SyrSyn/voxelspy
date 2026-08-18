@@ -55,9 +55,11 @@ jobs:
           restore-keys: pnpm-store-${{ runner.os }}-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Install Playwright Chromium
-        run: pnpm --filter @voxelspy/web exec playwright install --with-deps chromium
+      - name: Install Playwright browsers
+        run: pnpm --filter @voxelspy/web exec playwright install --with-deps chromium firefox webkit
       - name: Build the web application
         run: pnpm --filter @voxelspy/web build
-      - name: Run browser tests
-        run: pnpm --filter @voxelspy/web test:e2e
+      - name: Run browser tests on every engine
+        run: pnpm --filter @voxelspy/web exec playwright test --config=playwright.cross-browser.config.ts
+      - name: Run browser tests under the shipped security headers
+        run: pnpm --filter @voxelspy/web exec playwright test --config=playwright.csp.config.ts
