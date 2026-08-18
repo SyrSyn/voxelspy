@@ -19,6 +19,7 @@ import {
   facetLocalBoxModel,
   facetLocalTripleJunctionModel,
   finePanelModel,
+  negativeZeroFacetLocalBoxModel,
   flippedWindingBoxModel,
   ulpFragmentedFacetLocalSquareModel,
 } from "./adversarial-fixtures.js";
@@ -281,6 +282,36 @@ describe("adversarial: one-ULP vertex perturbation fragments exact-edge connecti
     for (const region of added) {
       expect(region.geometry?.triangleIndices).toHaveLength(1);
     }
+  });
+});
+
+describe("adversarial: negative-zero coordinates in exact-coordinate keys", () => {
+  it("treats negative and positive zero as the same point in both topology validators", () => {
+    // Negative zero is the same point as positive zero, and both render as
+    // "0" when a coordinate becomes part of an exact-coordinate edge key, so
+    // a box whose facet-local copies spell their zeros differently must still
+    // read as one closed surface -- and must read that way identically in the
+    // analysis validation and the geometry summary, which build their keys in
+    // separate modules.
+    const baseline = facetLocalBoxModel("baseline");
+    const candidate = negativeZeroFacetLocalBoxModel("candidate");
+    const result = analyzeModelPair({
+      request: request("surface-distance"),
+      baseline,
+      candidate,
+    });
+    expect(result.outcome.state).toBe("complete");
+    if (result.outcome.state !== "complete") return;
+    for (const assessment of result.outcome.validation) {
+      expect(assessment.closed).toBe(true);
+      expect(assessment.boundaryEdgeCount).toBe(0);
+      expect(assessment.nonManifoldEdgeCount).toBe(0);
+    }
+    // The summary keys coordinates in its own module; it must agree.
+    const summary = summarizeModelGeometry(candidate);
+    expect(summary.volume.available).toBe(true);
+    // Differing only in the sign of zero is not a geometric difference.
+    expect(result.outcome.regions).toEqual([]);
   });
 });
 

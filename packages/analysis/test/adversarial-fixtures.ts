@@ -293,6 +293,28 @@ export function facetLocalBoxModel(
 }
 
 /**
+ * Facet-local box whose private vertex copies store negative zero wherever
+ * the shared-index original stores positive zero. Negative and positive zero
+ * are the same point geometrically, and JavaScript renders both as "0" when a
+ * coordinate is converted to a string, so exact-coordinate edge keys must
+ * still match across the two spellings.
+ */
+export function negativeZeroFacetLocalBoxModel(
+  id: string,
+  size: readonly [number, number, number] = [2, 2, 2],
+): NormalizedModel {
+  const source = facetLocalBoxModel(id, size);
+  const mesh = source.meshes[0]!;
+  const positions = Float64Array.from(mesh.geometry.positions, (value) =>
+    value === 0 ? -0 : value,
+  );
+  return {
+    ...source,
+    meshes: [{ ...mesh, geometry: { ...mesh.geometry, positions } }],
+  };
+}
+
+/**
  * Three facet-local (private-vertex-copy) triangles that all share one
  * coordinate edge, A(0,0,0)-B(1,0,0) -- a genuine non-manifold junction
  * (three facets meeting along one edge) -- but, being fully facet-local,
