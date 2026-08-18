@@ -474,3 +474,100 @@ export function request(
 export function translation(x: number, y = 0, z = 0): Mat4 {
   return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1];
 }
+
+/**
+ * Plain-string-id mirror of `NormalizedModel["placement"]`'s shape, used
+ * only as `customModel`'s parameter type: the contracts schema's actual
+ * `ModelPlacement` type uses branded id types (`MeshId`/`InstanceId`/
+ * `NodeId`), which only a value already validated by that schema can carry,
+ * so a fixture *building* a not-yet-validated placement from plain string
+ * literals needs this unbranded shape instead -- `normalizedModelSchema.parse`
+ * below both validates and brands it.
+ */
+export type CustomPlacement =
+  | {
+      readonly kind: "flat";
+      readonly instances: readonly {
+        readonly id: string;
+        readonly meshId: string;
+        readonly meshToModel: Mat4;
+      }[];
+    }
+  | {
+      readonly kind: "hierarchy";
+      readonly instances: readonly {
+        readonly id: string;
+        readonly meshId: string;
+        readonly meshToNode: Mat4;
+      }[];
+      readonly rootIds: readonly string[];
+      readonly nodes: readonly {
+        readonly id: string;
+        readonly childIds: readonly string[];
+        readonly instanceIds: readonly string[];
+        readonly localToParent: Mat4;
+      }[];
+    };
+
+/**
+ * A generic multi-mesh, arbitrary-placement model builder -- unlike the
+ * single-mesh, single-instance helpers above, this takes the full
+ * `meshes`/`placement` shape directly, for fixtures (e.g.
+ * `test/flatten-order.test.ts`, `test/triangle-locator.test.ts`) that need
+ * more than one mesh, more than one instance, or a hierarchy placement with
+ * explicit nodes.
+ */
+export function customModel(
+  id: string,
+  meshes: readonly {
+    readonly id: string;
+    readonly positions: readonly number[];
+    readonly indices: readonly number[];
+  }[],
+  placement: CustomPlacement,
+): NormalizedModel {
+  return normalizedModelSchema.parse({
+    contractVersion: 1,
+    id,
+    frame: CANONICAL_FRAME,
+    meshes: meshes.map((mesh) => ({
+      id: mesh.id,
+      geometry: {
+        positions: new Float64Array(mesh.positions),
+        indices: new Uint32Array(mesh.indices),
+      },
+    })),
+    placement,
+    warnings: [],
+    provenance: {
+      formatId: "generated-fixture",
+      importerId: "analysis-test-fixture",
+      importerVersion: "1.0.0",
+      sourceName: `${id}.generated`,
+      detectedSourceUnit: "millimetre",
+      detectedSourceAxis: "right-handed-z-up",
+      sourceUnit: "millimetre",
+      sourceAxis: "right-handed-z-up",
+      sourceResolution: { unit: "embedded", axis: "embedded" },
+      appliedSourceToModel: IDENTITY_MAT4,
+      notes: [`Procedurally generated custom-placement fixture for ${id}.`],
+    },
+  });
+}
+
+/** One right triangle, local vertices `(0,0,0), (1,0,0), (0,1,0)` -- easy to translate by hand and check exactly (pure integer arithmetic, no floating-point tolerance needed). */
+export const UNIT_TRIANGLE: { positions: number[]; indices: number[] } = {
+  positions: [0, 0, 0, 1, 0, 0, 0, 1, 0],
+  indices: [0, 1, 2],
+};
+
+/** Same shape as `UNIT_TRIANGLE`, but its local vertices are already offset by `(anchorX, 0, 0)` -- used so a mesh's identity is visible directly in its world-space coordinates even under an identity placement transform. */
+export function anchoredTriangle(anchorX: number): {
+  positions: number[];
+  indices: number[];
+} {
+  return {
+    positions: [anchorX, 0, 0, anchorX + 1, 0, 0, anchorX, 1, 0],
+    indices: [0, 1, 2],
+  };
+}

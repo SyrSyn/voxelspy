@@ -60,41 +60,57 @@ export function countExpandedGeometry(model: NormalizedModel): {
   return { vertices, triangles };
 }
 
-interface QueuedInstance {
-  readonly meshId: string;
+/** Branded id types re-derived from the contract shape, matching `InspectionResult`/`MeshBreakdownEntry`'s convention (`src/inspect.ts`) of exposing the schema's own branded id types rather than widening to plain `string`. */
+export type PlacedMeshId = NormalizedModel["meshes"][number]["id"];
+export type PlacedInstanceId =
+  NormalizedModel["placement"]["instances"][number]["id"];
+
+export interface QueuedInstance {
+  readonly meshId: PlacedMeshId;
+  readonly instanceId: PlacedInstanceId;
   readonly transform: AffineTransform;
 }
 
 /**
- * Flattens a model's mesh instances into one comparison-frame typed-array
- * buffer. The mesh-instance walk itself is O(instances): mesh sizes come
- * from typed-array `.length`, never per-element iteration. The O(vertices +
- * triangles) work is the transform-and-copy fill pass below, which charges
- * `work` in chunks before touching each chunk so an insufficient budget
- * fails closed before most (in the worst case, before any) of that work
- * runs.
+ * Collects every mesh instance `model.placement` places, resolved to
+ * `(meshId, instanceId, instance-to-comparison transform)` triples, in the
+ * exact order `flattenModel` walks and flattens them -- see that function's
+ * doc comment for the full, binding statement of what this order is and why
+ * it is a stability guarantee. `flattenModel` and `flattenedTriangleLocator`
+ * (`src/triangle-locator.ts`) both call this one function rather than each
+ * re-deriving the walk, so there is exactly one implementation of this order
+ * and the two can never silently diverge on it.
+ *
+ * An instance referencing an unknown mesh id is silently skipped (defensive:
+ * schema-valid input, per `normalizedModelSchema`, cannot reach this), which
+ * is why this is O(instances) plus one `Map` lookup per instance, never
+ * O(vertices + triangles).
  */
-export function flattenModel(
+export function collectPlacedInstances(
   model: NormalizedModel,
   modelToComparison: RigidTransform,
-  work: WorkUnitCounter,
-): FlatGeometry {
+): QueuedInstance[] {
   const meshes = new Map<string, NormalizedModel["meshes"][number]>(
     model.meshes.map((mesh) => [mesh.id, mesh]),
   );
   const instances: QueuedInstance[] = [];
 
-  const queueInstance = (meshId: string, instanceToModel: AffineTransform) => {
+  const queueInstance = (
+    meshId: PlacedMeshId,
+    instanceId: PlacedInstanceId,
+    instanceToModel: AffineTransform,
+  ) => {
     if (!meshes.has(meshId)) return;
     instances.push({
       meshId,
+      instanceId,
       transform: multiply(modelToComparison, instanceToModel),
     });
   };
 
   if (model.placement.kind === "flat") {
     for (const instance of model.placement.instances) {
-      queueInstance(instance.meshId, instance.meshToModel);
+      queueInstance(instance.meshId, instance.id, instance.meshToModel);
     }
   } else {
     const nodes = new Map(model.placement.nodes.map((node) => [node.id, node]));
@@ -115,6 +131,7 @@ export function flattenModel(
         if (instance !== undefined) {
           queueInstance(
             instance.meshId,
+            instance.id,
             multiply(nodeToModel, instance.meshToNode),
           );
         }
@@ -127,6 +144,68 @@ export function flattenModel(
       }
     }
   }
+
+  return instances;
+}
+
+/**
+ * Flattens a model's mesh instances into one comparison-frame typed-array
+ * buffer.
+ *
+ * **Traversal order -- a stability guarantee.** Every `triangleIndex` this
+ * package reports anywhere (region evidence, topology examples, interference
+ * pairs, island components, and so on) is an index into the flattened
+ * `indices` array this function produces, for a specific `(model,
+ * modelToComparison)` pair. Consumers -- including UIs mapping a reported
+ * index back to a specific mesh triangle to draw a highlight -- may rely on
+ * the exact order below. Changing it is a breaking change to this package's
+ * contract, not an internal refactor:
+ *
+ * 1. **Instance order** (which mesh instance contributes which contiguous
+ *    run of the output): see `collectPlacedInstances` above for the precise
+ *    walk --
+ *    - `placement.kind === "flat"`: `placement.instances`, in array order.
+ *    - `placement.kind === "hierarchy"`: a pre-order depth-first walk
+ *      starting from `placement.rootIds` in array order; at each node, its
+ *      own `instanceIds` are queued (in array order) before descending into
+ *      its `childIds` (in array order, each child's entire subtree queued
+ *      before moving to the next child).
+ * 2. **Within each instance**, vertices are appended in that instance's own
+ *    mesh's `geometry.positions` order (mesh-local vertex `0, 1, 2, ...`),
+ *    and triangles are appended in that mesh's `geometry.indices` order
+ *    (mesh-local triangle `0, 1, 2, ...`), each triangle's three vertex
+ *    indices offset by that instance's cumulative vertex count so far.
+ *
+ * Consequently, each queued instance contributes one contiguous,
+ * non-overlapping run of flattened triangle indices, in the order above,
+ * whose length equals that instance's own mesh's triangle count -- so
+ * flattened triangle index `i` always denotes mesh-local triangle
+ * `i - (cumulative triangle count of every instance queued before it)` of
+ * the instance found at that cumulative position. A consumer that needs to
+ * resolve a reported `triangleIndex` back to `(meshId, instanceId,
+ * meshLocalTriangleIndex, world-space vertex positions)` should call
+ * `flattenedTriangleLocator` / `resolveFlattenedTriangle`
+ * (`src/triangle-locator.ts`) rather than re-deriving this walk itself --
+ * that is the one supported, tested way to do it, kept correct by
+ * construction because it calls `collectPlacedInstances` and `flattenModel`
+ * -- this same function -- rather than a second copy of either.
+ *
+ * The mesh-instance walk itself is O(instances): mesh sizes come from
+ * typed-array `.length`, never per-element iteration. The O(vertices +
+ * triangles) work is the transform-and-copy fill pass below, which charges
+ * `work` in chunks before touching each chunk so an insufficient budget
+ * fails closed before most (in the worst case, before any) of that work
+ * runs.
+ */
+export function flattenModel(
+  model: NormalizedModel,
+  modelToComparison: RigidTransform,
+  work: WorkUnitCounter,
+): FlatGeometry {
+  const meshes = new Map<string, NormalizedModel["meshes"][number]>(
+    model.meshes.map((mesh) => [mesh.id, mesh]),
+  );
+  const instances = collectPlacedInstances(model, modelToComparison);
 
   let vertexCount = 0;
   let triangleCount = 0;

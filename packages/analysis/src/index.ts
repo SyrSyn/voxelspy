@@ -178,6 +178,17 @@ export {
   PrintabilityResourceLimitError,
   assessPrintability,
 } from "./printability.js";
+export {
+  TriangleLocatorInputError,
+  TriangleLocatorResourceLimitError,
+  flattenedTriangleLocator,
+  resolveFlattenedTriangle,
+} from "./triangle-locator.js";
+export type {
+  FlattenedTriangleLocation,
+  FlattenedTriangleLocator,
+  FlattenedTriangleLocatorOptions,
+} from "./triangle-locator.js";
 export type {
   AssessPrintabilityOptions,
   BuildVolumeCheck,
