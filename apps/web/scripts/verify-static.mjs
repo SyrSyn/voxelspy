@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -104,6 +105,42 @@ for (const directive of [
     `_headers Content-Security-Policy is missing "${directive}"`,
   );
 }
+// Every inline script the build emits must be covered by a hash in the
+// policy. Without this check an edit to the theme guard ships a policy that
+// blocks the site's own script, which only fails in a browser.
+for (const route of routes) {
+  const html = await readFile(
+    path.join(root, "dist", route, "index.html"),
+    "utf8",
+  );
+  for (const [, body] of html.matchAll(
+    /<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/gu,
+  )) {
+    const digest = createHash("sha256").update(body, "utf8").digest("base64");
+    assert.ok(
+      cspLine.includes(`'sha256-${digest}'`),
+      `${route || "/"} has an inline script whose hash sha256-${digest} is not allowed by the Content-Security-Policy`,
+    );
+  }
+}
+
+// Hashed asset filenames are content-addressed and may be cached forever;
+// route documents must revalidate so a deployment is visible immediately.
+assert.match(
+  headers,
+  /^\/assets\/\*$/m,
+  "_headers must declare a caching rule for hashed assets",
+);
+assert.match(
+  headers,
+  /Cache-Control: public, max-age=31536000, immutable/,
+  "hashed assets must be immutably cacheable",
+);
+assert.match(
+  headers,
+  /Cache-Control: no-cache/,
+  "route documents must revalidate before reuse",
+);
 assert.match(
   headers,
   /Referrer-Policy: no-referrer/,
