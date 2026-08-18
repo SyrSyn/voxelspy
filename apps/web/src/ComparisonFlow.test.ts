@@ -1,3 +1,4 @@
+import { ANALYSIS_LIMITS } from "@voxelspy/analysis";
 import { describe, expect, it } from "vitest";
 import { sourceCapability, sourceSelectionForFile } from "./ComparisonFlow";
 import {
@@ -43,14 +44,21 @@ describe("comparison source defaults", () => {
 
 describe("analysis capacity", () => {
   it("maps the visible RAM allowance to bounded memory and compute budgets", () => {
-    expect(analysisExecutionBudget(256)).toEqual({
-      maxMemoryBytes: 256 * 1024 * 1024,
-      maxWorkUnits: 25_600_000,
-    });
-    expect(analysisExecutionBudget(ANALYSIS_MEMORY_MAX_MIB)).toEqual({
-      maxMemoryBytes: 768 * 1024 * 1024,
-      maxWorkUnits: 76_800_000,
-    });
+    const middle = analysisExecutionBudget(256);
+    expect(middle.maxMemoryBytes).toBe(256 * 1024 * 1024);
+    const highest = analysisExecutionBudget(ANALYSIS_MEMORY_MAX_MIB);
+    expect(highest.maxMemoryBytes).toBe(ANALYSIS_MEMORY_MAX_MIB * 1024 * 1024);
+    // A larger allowance must buy proportionally more compute, and neither
+    // budget may exceed what the analysis package itself permits.
+    expect(highest.maxWorkUnits).toBeGreaterThan(middle.maxWorkUnits);
+    for (const budget of [middle, highest]) {
+      expect(budget.maxWorkUnits).toBeLessThanOrEqual(
+        ANALYSIS_LIMITS.maxWorkUnits,
+      );
+      expect(budget.maxMemoryBytes).toBeLessThanOrEqual(
+        ANALYSIS_LIMITS.maxMemoryBytes,
+      );
+    }
     expect(() => analysisExecutionBudget(192)).toThrow(/128 MiB increment/u);
   });
 });

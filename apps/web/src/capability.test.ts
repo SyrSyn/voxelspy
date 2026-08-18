@@ -232,7 +232,12 @@ describe("estimateAnalysisFit", () => {
 
   it("is a strict boundary: exactly matching the allowance does not count as exceeding it", () => {
     const allowanceMiB = 256;
-    const totalInputBytes = (allowanceMiB * 1024 * 1024) / 8; // ESTIMATED_WORKING_SET_BYTES_PER_INPUT_BYTE
+    // Derived from the module's own multiplier so the boundary behavior is
+    // tested rather than a particular constant.
+    const perInputByte =
+      estimateAnalysisFit(1024 * 1024, 1).estimatedMiB * (1024 * 1024);
+    const totalInputBytes =
+      (allowanceMiB * 1024 * 1024 * 1024 * 1024) / perInputByte;
     const result = estimateAnalysisFit(totalInputBytes, allowanceMiB);
     expect(result.estimatedMiB).toBe(allowanceMiB);
     expect(result.likelyExceedsAllowance).toBe(false);

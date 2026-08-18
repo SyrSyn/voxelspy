@@ -240,14 +240,14 @@ export function readEnvironmentReadings(): EnvironmentReadings {
  * in-memory working set `@voxelspy/analysis` builds from them (flattened
  * Float64Array positions, Uint32Array indices, spatial-index construction
  * buffers, and per-triangle deviation tracking). Grounded in the analysis
- * package's own accounting of ~24 bytes/vertex + ~300 bytes/triangle of
+ * package's own accounting of ~36 bytes/vertex + ~450 bytes/triangle of
  * working memory against a typical binary-STL on-disk encoding of ~50
- * bytes/triangle (worst case ~3 unshared vertices/triangle) -- roughly 7.4x,
+ * bytes/triangle (worst case ~3 unshared vertices/triangle) -- roughly 11.2x,
  * rounded up here for margin. OBJ and ASCII STL are usually less dense on
  * disk, so this intentionally over-estimates for those formats rather than
  * under-estimates for any of them. This is advisory only: it is not the
  * fail-closed check the analysis package itself performs before running. */
-const ESTIMATED_WORKING_SET_BYTES_PER_INPUT_BYTE = 8;
+const ESTIMATED_WORKING_SET_BYTES_PER_INPUT_BYTE = 12;
 
 export interface AnalysisFitEstimate {
   /** Rough estimated working-set memory, in MiB, for the given input size. */

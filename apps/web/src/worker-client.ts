@@ -67,7 +67,18 @@ export const ANALYSIS_MEMORY_MAX_MIB = 768;
 export const ANALYSIS_MEMORY_STEP_MIB = 128;
 export const DEFAULT_ANALYSIS_MEMORY_MIB = 256;
 export const MAX_CHANGED_REGIONS = 24;
-const WORK_UNITS_PER_MIB = 100_000;
+/**
+ * Work units granted per MiB of the requested analysis allowance.
+ *
+ * Chosen so that memory, not an unrelated work cap, is what bounds a
+ * comparison: the analysis package's scaling benchmark measures its
+ * documented ceiling (one million combined triangles) at roughly 1.9 billion
+ * work units against a 446 MiB estimate, about 4.3 million units per
+ * estimated MiB. Work grows faster than memory with model size, so this rate
+ * is generous for small comparisons and close to the measured requirement at
+ * the ceiling. The package's own ceiling still clamps the result.
+ */
+const WORK_UNITS_PER_MIB = 4_500_000;
 
 /** Grace period given to the worker to acknowledge cancellation before it is terminated. */
 export const CANCEL_GRACE_PERIOD_MS = 500;
