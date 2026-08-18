@@ -71,6 +71,25 @@ It reuses the same placed-geometry walk and topology census as `summarizeModelGe
 
 **Determinism.** Identical `model`/`modelToComparison`/`desiredClearanceMillimetres`/`options` input produces a deeply equal `ClearanceCheckResult` every time: sampling walks each part's own triangle order, region grouping and ranking use full deterministic tie-breaking, and interference candidate gathering/testing walks triangles and AABB-overlap candidates in a fixed order.
 
+## Deliberate alignment
+
+`estimateAlignment(input, options?)` answers "what rigid transform would bring this part onto that one?" -- and only answers it. **It never applies the transform it computes.** It never mutates a model, never recenters or rescales geometry, and never runs a comparison. It returns a computed `RigidTransform` (the same validated `rigidTransformSchema` shape `ClearancePlacement.modelToComparison` and `AnalysisRequest` model bindings already use, so it can be fed straight back as a placement) plus evidence, and leaves the decision to use it entirely to the caller. This exists because scan-versus-CAD inspection -- the largest professional use of surface deviation measurement -- routinely starts with two parts in unrelated coordinate frames, and this package's hard rule is that geometry is never silently recentred, rescaled, aligned, or repaired: alignment must be opt-in, explicit, and its resulting transform auditable. A caller that accepts an estimated alignment and uses it to place a part for `checkClearance` or `analyzeModelPair` should record that transform in its own provenance -- this package does not do that bookkeeping on the caller's behalf.
+
+**Two explicit methods, selected by the caller via `input.method`; there is no automatic fallback between them.**
+
+- **`correspondence-points`**: a single closed-form least-squares rigid fit (rotation plus translation, **no scale**) from at least three caller-supplied point pairs (`CorrespondencePoint`: a point on the moving part's surface, in the moving model's own unplaced frame, matched to its intended counterpart on the fixed part's surface, in the comparison frame the fixed part is already trustedly placed in). This is Horn's closed-form absolute-orientation solution (B.K.P. Horn, 1987): build the symmetric 4x4 matrix from the correspondences' centered cross-covariance terms, take the unit-quaternion eigenvector of its largest eigenvalue via this module's own bounded, self-contained Jacobi eigenvalue solver (`jacobiEigenSymmetric` in `src/alignment.ts` -- no new dependency, no general-purpose SVD needed for a 4x4 matrix), and convert that quaternion to a rotation matrix. This always yields a proper rotation (orthonormal columns, determinant +1), never a reflection, satisfying `rigidTransformSchema` by construction. Degenerate input is rejected with `AlignmentInputError`: fewer than `MIN_CORRESPONDENCES` (3) points, more than `MAX_CORRESPONDENCES` (1,024), a duplicate moving or fixed point, or a moving or fixed point set that is collinear or coincident (rank less than 2, assessed from that point set's own centered-covariance eigenvalues, scale-independent) -- any of these leaves at least one rotational degree of freedom undetermined, so this package refuses to guess.
+- **`iterative-closest-point`**: refines an initial transform (identity by default, or a caller-supplied seed -- commonly a `correspondence-points` result, for a coarse-to-fine alignment) by repeated closest-point matching: transform the moving part's deterministic sample points by the current estimate, find each one's nearest point on the fixed part's tessellated surface via its `TriangleSpatialIndex`, solve the same closed-form rigid fit between the sample points and their matches, and compose that increment onto the current estimate. Bounded by `maxIterations` (default `DEFAULT_MAX_ICP_ITERATIONS` = 50, ceiling `MAX_ICP_ITERATIONS` = 500) and a convergence displacement tolerance in millimetres, `convergenceToleranceMillimetres` (default `DEFAULT_ICP_CONVERGENCE_TOLERANCE_MILLIMETRES` = 1e-4, ceiling `MAX_ICP_CONVERGENCE_TOLERANCE_MILLIMETRES` = 1,000) -- iteration stops as soon as every sample point's displacement from that iteration's increment falls at or below the tolerance, or when `maxIterations` is reached, whichever comes first; an out-of-range option throws `RangeError`, matching `InspectOptions`/`MeshHealthOptions`. **Deterministic**: sample points are the moving part's own triangle vertices and centroids, in triangle order -- the same "vertices-and-triangle-centroids" sampling `surface-distance` and `checkClearance` already use, reused rather than a third scheme -- never a random subset, and the closed-form fit at each step has no random component either.
+
+**Rigid only, and why.** Neither method ever returns or applies a scale factor. Scaling geometry would change measurements -- exactly what this package exists to report accurately -- so a rigid-only result is the only answer that cannot silently distort a subsequent comparison. When correspondence points imply a uniform scale mismatch between the moving and fixed point sets, that is reported as evidence (`AlignmentEvidence.impliedScale`, the least-squares scale minimizing residual given the already-recovered rotation) and, when it deviates from 1 by more than 1%, as an explicit `alignment.implied-scale-mismatch` warning -- never applied to the returned transform. A caller seeing a large implied scale should treat it as a signal the two parts may be expressed in different units, not as a correction to make.
+
+**Poor-fit and non-convergence are reported honestly, not hidden behind a still-returned transform.** `AlignmentEvidence.converged` is `false` (with an `alignment.not-converged` warning naming the iteration ceiling and tolerance) whenever `iterative-closest-point` reaches `maxIterations` without meeting the convergence tolerance -- `correspondence-points` is a single closed-form solve, so it reports `iterations: 0` and `converged: true` unconditionally, since there is no iteration loop to fail. Independently, `AlignmentEvidence.poorFit` is set whenever the after-fit root-mean-square residual (`residualsAfterMillimetres.rmsMillimetres`) exceeds `POOR_FIT_RESIDUAL_RATIO` (2%) of the aligned geometry's own bounding-box diagonal, with `poorFitReason` naming the exact numbers and threshold and an `alignment.poor-fit` warning carrying the same details -- a converged, low-iteration-count result can still be a poor fit when the two parts are not actually the same shape (residual is measured relative to scale, not as an absolute millimetre threshold, because the same absolute error reads as a good fit on a large part and a bad one on a small part). This is a disclosed heuristic, not a certified shape-match verdict -- exactly the same "bounded, not just disclosed in prose" discipline this package applies to sampling and interference evidence elsewhere -- and it exists so a UI can warn instead of implying a confirmed match.
+
+**Every result also reports** `method`, `parameters` (the effective `maxIterations`/`convergenceToleranceMillimetres` for `iterative-closest-point`; empty for `correspondence-points`), `correspondenceCount` (the number of point pairs used, or the sample count for `iterative-closest-point`), and `residualsBeforeMillimetres`/`residualsAfterMillimetres` (root-mean-square and maximum residual distance, measured before any fitting and after the returned transform is applied to the same points/samples) -- so a caller can see exactly how much the fit improved, not just its final number.
+
+**Resource discipline.** `iterative-closest-point` reuses `ANALYSIS_LIMITS` (expanded vertex/triangle ceilings and the estimated-memory ceiling, via `checkExpandedGeometryBudget`) and the same charge-before-work `WorkBudget` this package uses throughout: flattening both models, building the fixed part's `TriangleSpatialIndex`, building the moving part's deterministic sample set, and every iteration's closest-point queries and displacement checks are all charged to one budget constructed before any O(vertices + triangles) work runs. An expanded-geometry ceiling violation throws `AlignmentResourceLimitError` before any such work runs; an exhausted budget throws `WorkBudgetExceeded` (reused unchanged from `src/analyze.ts`, not redefined); empty geometry after flattening (either part) throws `AlignmentGeometryError`. `correspondence-points` has no comparable geometry-sized cost -- its cost is proportional only to the (already bounded) correspondence count.
+
+**Determinism.** Identical input produces a deeply equal `AlignmentEstimate` every time for both methods: `correspondence-points` is a closed-form solve with a fixed-order, bounded eigenvalue solver; `iterative-closest-point` samples in a fixed triangle order, queries the fixed part's spatial index deterministically (the same `TriangleSpatialIndex` every other method in this package uses), and never introduces randomness at any step.
+
 ## Resource behavior
 
 The package validates model and request contracts before analysis. It expands assembly instances into the comparison frame without recentering, rescaling, alignment, repair, or reinterpretation. The flattened comparison-frame geometry is held in typed arrays (packed vertex positions and triangle indices), not per-vertex or per-triangle objects. A single charged work budget is constructed before any expansion work runs and covers the full pipeline: flattening assembly instances into that buffer, the manifold edge census, spatial-index construction, spatial traversal, exact triangle tests, and connectivity work; reported regions are bounded separately. A caller-supplied budget too small to complete this work fails closed before the corresponding pass runs rather than after. The current implementation ceilings are 3,000,000 expanded vertices, 1,000,000 expanded triangles, 768 MiB of estimated working memory, and 2,200,000,000 charged work units. A request may impose smaller execution budgets. Unsupported methods, failed method preconditions, exhausted budgets, and out-of-range numeric calculations fail closed as `indeterminate` outcomes. `numeric-range-exceeded` is reserved for failures the code itself detects as a genuine numeric-range problem (for example, a computed distance overflowing to a non-finite value); any other unexpected exception during analysis fails closed as `internal-error` instead, so a real defect is never misreported as an input-magnitude problem it did not cause.
@@ -170,4 +189,39 @@ if (fit.state !== "indeterminate") {
     console.log(pair.firstTriangleIndex, pair.secondTriangleIndex);
   }
 }
+```
+
+```ts
+import { estimateAlignment } from "@voxelspy/analysis";
+
+// estimateAlignment only computes a transform -- it never applies it. The
+// caller decides whether to accept it and feed it back as a placement.
+const seed = estimateAlignment({
+  method: "correspondence-points",
+  correspondences: [
+    { moving: [0, 0, 0], fixed: [12.4, 3.1, 0.2] },
+    { moving: [10, 0, 0], fixed: [22.1, 3.6, 0.4] },
+    { moving: [0, 10, 0], fixed: [12.8, 13.0, 0.1] },
+  ],
+});
+console.log(
+  seed.evidence.impliedScale,
+  seed.evidence.residualsAfterMillimetres,
+);
+
+const refined = estimateAlignment({
+  method: "iterative-closest-point",
+  moving: scan,
+  fixed: { model: cad, modelToComparison: cadPlacement },
+  initialTransform: seed.transform,
+});
+if (!refined.evidence.converged || refined.evidence.poorFit) {
+  console.warn("Review before use:", refined.warnings);
+}
+// Only now, deliberately, use the result as a placement:
+const fit = checkClearance({
+  first: { model: scan, modelToComparison: refined.transform },
+  second: { model: cad, modelToComparison: cadPlacement },
+  desiredClearanceMillimetres: 0.2,
+});
 ```

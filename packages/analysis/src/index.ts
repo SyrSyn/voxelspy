@@ -91,3 +91,28 @@ export type {
   ClearanceWarning,
   ClosestPointPair,
 } from "./clearance.js";
+export {
+  AlignmentGeometryError,
+  AlignmentInputError,
+  AlignmentResourceLimitError,
+  DEFAULT_ICP_CONVERGENCE_TOLERANCE_MILLIMETRES,
+  DEFAULT_MAX_ICP_ITERATIONS,
+  MAX_CORRESPONDENCES,
+  MAX_ICP_CONVERGENCE_TOLERANCE_MILLIMETRES,
+  MAX_ICP_ITERATIONS,
+  MIN_CORRESPONDENCES,
+  POOR_FIT_RESIDUAL_RATIO,
+  estimateAlignment,
+} from "./alignment.js";
+export type {
+  AlignmentEstimate,
+  AlignmentEvidence,
+  AlignmentResidualStats,
+  AlignmentTargetPlacement,
+  AlignmentWarning,
+  CorrespondencePoint,
+  CorrespondencePointsInput,
+  EstimateAlignmentInput,
+  EstimateAlignmentOptions,
+  IterativeClosestPointInput,
+} from "./alignment.js";
