@@ -175,7 +175,11 @@ export function inspectModel(
   };
 }
 
-function checkResourceCeiling(model: NormalizedModel): void {
+/**
+ * Shared by `diagnoseMeshHealth` (`src/diagnose.ts`) so the two entry points
+ * enforce identical expanded-geometry ceilings rather than drifting apart.
+ */
+export function checkResourceCeiling(model: NormalizedModel): void {
   const { vertices, triangles } = countExpandedGeometry(model);
   if (vertices > ANALYSIS_LIMITS.maxExpandedVertices) {
     throw new InspectionResourceLimitError(
@@ -189,7 +193,8 @@ function checkResourceCeiling(model: NormalizedModel): void {
   }
 }
 
-function resolveBound(
+/** Shared by `diagnoseMeshHealth` (`src/diagnose.ts`) for identical option-bound validation. */
+export function resolveBound(
   value: number | undefined,
   fallback: number,
   ceiling: number,

@@ -153,6 +153,8 @@ interface EdgeRecord {
   readonly triangleIndices: number[];
   /** The two endpoint points as first encountered; identical on every later hit, since this key is exact-coordinate. */
   readonly samplePoints: readonly [Vec3, Vec3];
+  /** The two endpoints' `collectPlacedGeometry` vertex keys, same order as `samplePoints`. Used only by boundary-loop tracing (`diagnoseMeshHealth`). */
+  readonly endpointKeys: readonly [string, string];
 }
 
 interface PlacedGeometry {
@@ -160,6 +162,36 @@ interface PlacedGeometry {
   readonly triangles: TriangleRecord[];
   readonly vertexCount: number;
   readonly triangleCount: number;
+}
+
+/**
+ * A bounded edge segment for grouped topology-issue visualization: the
+ * edge's two endpoint positions plus every triangle usage that shares the
+ * exact edge (mirrors `TopologyExampleLocation.triangleIndices`).
+ */
+export interface TopologyEdgeSegment {
+  readonly endpointsMillimetres: readonly [Vec3, Vec3];
+  readonly triangleIndices: readonly number[];
+}
+
+/** A bounded degenerate-triangle entry: its ordinal walk index plus its three corner positions. */
+export interface TopologyDegenerateTriangle {
+  readonly triangleIndex: number;
+  readonly positionsMillimetres: readonly [Vec3, Vec3, Vec3];
+}
+
+/**
+ * Every boundary edge (not a bounded sample), carrying both endpoint
+ * positions and the exact-coordinate vertex keys `collectPlacedGeometry`
+ * already assigns them. Internal to this module and `diagnoseMeshHealth`
+ * (`src/diagnose.ts`), which traces these into ordered boundary loops; never
+ * exposed as its own bounded "examples" list because loop tracing needs the
+ * complete boundary-edge set to tell a closed loop from a terminated one.
+ */
+export interface TopologyBoundaryEdge {
+  readonly endpointsMillimetres: readonly [Vec3, Vec3];
+  readonly endpointKeys: readonly [string, string];
+  readonly triangleIndices: readonly number[];
 }
 
 export interface TopologyComputation {
@@ -174,6 +206,23 @@ export interface TopologyComputation {
   readonly nonManifoldEdgeExamples: readonly TopologyExampleLocation[];
   readonly inconsistentEdgeExamples: readonly TopologyExampleLocation[];
   readonly degenerateTriangleExamples: readonly TopologyExampleLocation[];
+  /**
+   * Populated only when `computeTopology` is called with a defined
+   * `diagnosticEvidenceMaxItemsPerKind` (i.e. via
+   * `summarizeModelGeometryWithDiagnosticEvidence`); `undefined` otherwise,
+   * including for every existing `summarizeModelGeometry` /
+   * `summarizeModelGeometryWithEvidence` call site. `boundaryEdges` is the
+   * complete boundary-edge set (unbounded by `diagnosticEvidenceMaxItemsPerKind`,
+   * since loop tracing needs it all); the other three are bounded the same
+   * way `*Examples` above are, just with the richer per-kind shape a UI needs
+   * to draw a highlight rather than place a single marker.
+   */
+  readonly boundaryEdges?: readonly TopologyBoundaryEdge[] | undefined;
+  readonly nonManifoldEdgeSegments?: readonly TopologyEdgeSegment[] | undefined;
+  readonly inconsistentEdgeSegments?:
+    readonly TopologyEdgeSegment[] | undefined;
+  readonly degenerateTriangleEntries?:
+    readonly TopologyDegenerateTriangle[] | undefined;
 }
 
 /**
@@ -286,6 +335,7 @@ function collectPlacedGeometry(
 function computeTopology(
   triangles: readonly TriangleRecord[],
   maxExamplesPerKind: number,
+  diagnosticEvidenceMaxItemsPerKind?: number,
 ): TopologyComputation {
   const edges = new Map<string, EdgeRecord>();
   const components = new DisjointSet(triangles.length);
@@ -293,6 +343,8 @@ function computeTopology(
   const signedVolume = new CompensatedSum();
   let degenerateTriangleCount = 0;
   const degenerateTriangleExamples: TopologyExampleLocation[] = [];
+  const degenerateTriangleEntries: TopologyDegenerateTriangle[] | undefined =
+    diagnosticEvidenceMaxItemsPerKind === undefined ? undefined : [];
 
   triangles.forEach((triangle, triangleIndex) => {
     const [first, second, third] = triangle.points;
@@ -306,6 +358,15 @@ function computeTopology(
         centroidOf(first, second, third),
         [triangleIndex],
       );
+      if (
+        degenerateTriangleEntries !== undefined &&
+        degenerateTriangleEntries.length < diagnosticEvidenceMaxItemsPerKind!
+      ) {
+        degenerateTriangleEntries.push({
+          triangleIndex,
+          positionsMillimetres: [first, second, third],
+        });
+      }
     }
     signedVolume.add(dot(first, cross(second, third)) / 6);
     const [firstKey, secondKey, thirdKey] = triangle.vertexKeys;
@@ -320,6 +381,12 @@ function computeTopology(
   const boundaryEdgeExamples: TopologyExampleLocation[] = [];
   const nonManifoldEdgeExamples: TopologyExampleLocation[] = [];
   const inconsistentEdgeExamples: TopologyExampleLocation[] = [];
+  const boundaryEdges: TopologyBoundaryEdge[] | undefined =
+    diagnosticEvidenceMaxItemsPerKind === undefined ? undefined : [];
+  const nonManifoldEdgeSegments: TopologyEdgeSegment[] | undefined =
+    diagnosticEvidenceMaxItemsPerKind === undefined ? undefined : [];
+  const inconsistentEdgeSegments: TopologyEdgeSegment[] | undefined =
+    diagnosticEvidenceMaxItemsPerKind === undefined ? undefined : [];
   for (const edge of edges.values()) {
     const [firstTriangle, ...neighbors] = edge.triangleIndices;
     if (firstTriangle !== undefined) {
@@ -336,6 +403,16 @@ function computeTopology(
         midpointOf(edge.samplePoints[0], edge.samplePoints[1]),
         edge.triangleIndices,
       );
+      // Every boundary edge is collected (not bounded by
+      // `diagnosticEvidenceMaxItemsPerKind`): `diagnoseMeshHealth` needs the
+      // complete set to trace loops correctly. The boundary-edge count is
+      // already bounded by this package's expanded-triangle ceiling before
+      // `computeTopology` ever runs (see `checkExpandedGeometryCeiling`).
+      boundaryEdges?.push({
+        endpointsMillimetres: edge.samplePoints,
+        endpointKeys: edge.endpointKeys,
+        triangleIndices: [...edge.triangleIndices],
+      });
     } else if (total > 2) {
       nonManifoldEdgeCount += 1;
       pushExample(
@@ -344,6 +421,15 @@ function computeTopology(
         midpointOf(edge.samplePoints[0], edge.samplePoints[1]),
         edge.triangleIndices,
       );
+      if (
+        nonManifoldEdgeSegments !== undefined &&
+        nonManifoldEdgeSegments.length < diagnosticEvidenceMaxItemsPerKind!
+      ) {
+        nonManifoldEdgeSegments.push({
+          endpointsMillimetres: edge.samplePoints,
+          triangleIndices: [...edge.triangleIndices],
+        });
+      }
     } else if (edge.forward !== 1 || edge.reverse !== 1) {
       inconsistentEdgeCount += 1;
       pushExample(
@@ -352,6 +438,15 @@ function computeTopology(
         midpointOf(edge.samplePoints[0], edge.samplePoints[1]),
         edge.triangleIndices,
       );
+      if (
+        inconsistentEdgeSegments !== undefined &&
+        inconsistentEdgeSegments.length < diagnosticEvidenceMaxItemsPerKind!
+      ) {
+        inconsistentEdgeSegments.push({
+          endpointsMillimetres: edge.samplePoints,
+          triangleIndices: [...edge.triangleIndices],
+        });
+      }
     }
   }
 
@@ -367,6 +462,10 @@ function computeTopology(
     nonManifoldEdgeExamples,
     inconsistentEdgeExamples,
     degenerateTriangleExamples,
+    boundaryEdges,
+    nonManifoldEdgeSegments,
+    inconsistentEdgeSegments,
+    degenerateTriangleEntries,
   };
 }
 
@@ -448,6 +547,32 @@ export function summarizeModelGeometryWithEvidence(
 } {
   const placed = collectPlacedGeometry(model, modelToComparison);
   const topo = computeTopology(placed.triangles, maxExamplesPerKind);
+  return {
+    summary: buildPresentationSummary(model, placed, topo),
+    evidence: topo,
+  };
+}
+
+/**
+ * Same computation as `summarizeModelGeometry` and
+ * `summarizeModelGeometryWithEvidence` -- one walk of the model's placed
+ * geometry, one topology census, never a forked reimplementation --
+ * additionally returning the richer, per-kind diagnostic evidence
+ * (`TopologyComputation.boundaryEdges` / `*Segments` / `*Entries`) that
+ * `diagnoseMeshHealth` (`src/diagnose.ts`) needs to draw grouped issue sets
+ * and trace boundary loops. Not part of the package's public surface, same
+ * as `summarizeModelGeometryWithEvidence`.
+ */
+export function summarizeModelGeometryWithDiagnosticEvidence(
+  model: NormalizedModel,
+  modelToComparison: Mat4,
+  maxIssueItemsPerKind: number,
+): {
+  readonly summary: ModelPresentationSummary;
+  readonly evidence: TopologyComputation;
+} {
+  const placed = collectPlacedGeometry(model, modelToComparison);
+  const topo = computeTopology(placed.triangles, 0, maxIssueItemsPerKind);
   return {
     summary: buildPresentationSummary(model, placed, topo),
     evidence: topo,
@@ -666,6 +791,7 @@ function addEdge(
     reverse: 0,
     triangleIndices: [],
     samplePoints: forward ? [fromPoint, toPoint] : [toPoint, fromPoint],
+    endpointKeys: forward ? [from, to] : [to, from],
   };
   if (forward) edge.forward += 1;
   else edge.reverse += 1;

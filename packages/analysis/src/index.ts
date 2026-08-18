@@ -44,3 +44,24 @@ export type {
   WatertightnessReason,
   WatertightnessVerdict,
 } from "./inspect.js";
+export {
+  DEFAULT_MAX_BOUNDARY_LOOPS,
+  DEFAULT_MAX_BOUNDARY_LOOP_POINTS,
+  DEFAULT_MAX_ISSUE_ITEMS,
+  MAX_BOUNDARY_LOOPS,
+  MAX_BOUNDARY_LOOP_POINTS,
+  MAX_ISSUE_ITEMS,
+  diagnoseMeshHealth,
+} from "./diagnose.js";
+export type {
+  BoundaryLoop,
+  BoundaryLoopSet,
+  DegenerateTriangleSet,
+  EdgeSegmentSet,
+  MeshHealthDiagnosis,
+  MeshHealthOptions,
+} from "./diagnose.js";
+export type {
+  TopologyDegenerateTriangle,
+  TopologyEdgeSegment,
+} from "./summary.js";
