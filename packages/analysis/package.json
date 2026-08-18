@@ -16,6 +16,7 @@
     }
   },
   "scripts": {
+    "bench": "node --expose-gc bench/scaling.mjs",
     "build": "tsc -p tsconfig.build.json",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "lint": "tsc -p tsconfig.json --noEmit",

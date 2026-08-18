@@ -28,6 +28,35 @@ The package validates model and request contracts before analysis. It expands as
 
 These ceilings are implementation safety limits, not model-size support claims or memory reservations. Browser clients should expose conservative request budgets because available memory and practical runtime vary by device. Production accuracy and device tiers still require accepted fixtures and browser benchmarks.
 
+## Benchmark
+
+`bench/scaling.mjs` is a manually-run measurement script, not a test -- it never runs under `pnpm test` or `pnpm check`, so it cannot slow CI down. It measures `analyzeModelPair`'s `surface-distance` method against seeded, deterministic synthetic model pairs (a tessellated 3D terrain panel with a single deliberately raised region in the candidate) at several sizes, and reports, per tier:
+
+- Baseline+candidate combined triangle and vertex counts and detected changed-region count.
+- Median wall-clock milliseconds across a few in-process iterations (the last iteration is also the one measured for memory).
+- The documented **estimated** working memory for that tier (`vertices * 24 + triangles * 300` bytes, mirroring the constants documented above and in `src/analyze.ts`'s `BYTES_PER_VERTEX`/`BYTES_PER_TRIANGLE`).
+- The **measured** peak heap delta (`process.memoryUsage().heapUsed` sampled immediately before and after the call), and whether it stayed within the estimate (PASS) or exceeded it (WARN).
+- A scaling summary in milliseconds per 1,000 combined triangles, so a superlinear regression between tiers is visible at a glance.
+
+It also runs two fixed, cheap robustness checks: a repeatability check (the same seeded tier run twice in one process must produce byte-identical outcomes), and a fail-closed check (a deliberately tiny `executionBudget.maxWorkUnits` on a non-trivial-scale pair must return an `indeterminate`/`resource-budget-exceeded` result in milliseconds, not hang or exhaust memory).
+
+Run it with:
+
+```sh
+node --expose-gc packages/analysis/bench/scaling.mjs            # default tiers, roughly 1k/10k/50k triangles per side
+node --expose-gc packages/analysis/bench/scaling.mjs --large    # also attempts the roughly 200k-triangles-per-side tier
+pnpm --filter @voxelspy/analysis bench                          # same as the first form
+```
+
+`--expose-gc` is optional but strongly recommended: without it, memory numbers are raw, un-forced `heapUsed` deltas, and the script labels them unreliable instead of reporting GC noise as if it were a measurement.
+
+**These are single-machine, single-Node.js-process measurements.** They are not browser measurements, not device-tier claims, and not a substitute for the browser and hostile-input benchmarks called for elsewhere in this project's plan. A result here says only what happened on the machine that ran it.
+
+As of this writing, running the benchmark surfaces two findings that are evidence for review, not something this benchmark script fixes:
+
+- Measured working memory exceeds the documented per-element estimate at every tier that completes, by roughly 1.6x-3x. `BYTES_PER_VERTEX`/`BYTES_PER_TRIANGLE` in `src/analyze.ts` are not conservative bounds in practice on this benchmark's geometry.
+- The fixed default charged work-unit budget (`ANALYSIS_LIMITS.maxWorkUnits`, 76,800,000, which every request is clamped to regardless of a caller's requested budget) is exhausted by non-trivial 3D terrain geometry at roughly 70,000-130,000 combined triangles -- a small fraction of the documented 1,000,000-triangle expansion ceiling -- even though wall-clock time at that scale is a few seconds and well-behaved. Model pairs approaching the documented size ceiling can fail closed as `resource-budget-exceeded` today for reasons unrelated to actual memory or runtime cost.
+
 ## Example
 
 ```ts
