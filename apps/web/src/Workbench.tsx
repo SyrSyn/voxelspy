@@ -535,6 +535,8 @@ function Scene({
   palette,
   baselineToComparison,
   candidateToComparison,
+  accessibleLabel,
+  describedBy,
 }: WorkbenchProps & {
   kind: ViewKind;
   camera: CameraState;
@@ -548,6 +550,8 @@ function Scene({
   palette: (typeof modelPalettes)[ModelPaletteId];
   baselineToComparison: Matrix4;
   candidateToComparison: Matrix4;
+  accessibleLabel: string;
+  describedBy?: string | undefined;
 }) {
   const [available, setAvailable] = useState(false);
   useEffect(() => setAvailable(probeWebGLAvailability()), []);
@@ -588,6 +592,9 @@ function Scene({
   return (
     <RenderBoundary fallback={fallback}>
       <Canvas
+        role="img"
+        aria-label={accessibleLabel}
+        aria-describedby={describedBy}
         camera={{
           position: camera.position,
           fov: 38,
@@ -1248,6 +1255,13 @@ export function Workbench({
       : "indeterminate";
   const selectedRegion = selected ? regions.get(selected) : undefined;
   const tolerance = analysis.outcome.requestedTolerance.distanceMillimetres;
+  const viewportAccessibleLabel = (kind: ViewKind) => {
+    if (kind === "baseline")
+      return `3D preview of the reference model, ${baseline.provenance.sourceName}. Not a substitute for the ranked findings list.`;
+    if (kind === "candidate")
+      return `3D preview of the candidate model, ${candidate.provenance.sourceName}. Not a substitute for the ranked findings list.`;
+    return `3D preview comparing the reference model, ${baseline.provenance.sourceName}, against the candidate model, ${candidate.provenance.sourceName}, with added, removed, and deviation regions highlighted.`;
+  };
   const renderViewport = (kind: ViewKind) => (
     <section className={`viewport viewport-${kind}`} key={kind}>
       <header>
@@ -1277,6 +1291,10 @@ export function Workbench({
           palette={modelPalettes[paletteId]}
           baselineToComparison={baselineToComparison}
           candidateToComparison={candidateToComparison}
+          accessibleLabel={viewportAccessibleLabel(kind)}
+          describedBy={
+            kind === "difference" ? "findings-equivalent-note" : undefined
+          }
         />
         <span className="canvas-scroll-pad" aria-hidden="true">
           <i />
@@ -1499,6 +1517,10 @@ export function Workbench({
               </div>
               <strong>{ordered.length}</strong>
             </header>
+            <p id="findings-equivalent-note" className="visually-hidden">
+              This ranked list of changed regions is the accessible, text
+              equivalent of the difference preview above.
+            </p>
             {analysis.outcome.state === "indeterminate" ? (
               <div className="indeterminate" role="status">
                 <h3>Region analysis unavailable</h3>

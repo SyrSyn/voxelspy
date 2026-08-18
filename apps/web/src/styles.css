@@ -21,11 +21,23 @@
   --green-bright: #42d77d;
   --green-ink: #062c17;
   --green-soft: rgba(21, 169, 87, 0.1);
-  --orange: #ef9e43;
+  --orange: #b76a12;
   --shadow: 0 24px 72px rgba(20, 48, 32, 0.12);
   --radius: 0.85rem;
   --radius-large: 1.35rem;
   --shell: min(1180px, calc(100% - 3rem));
+  /* Difference-category and status colors: the light-theme values below are
+     deliberately darker than their dark-theme counterparts (see the
+     `:root[data-theme="dark"]` override) so both the legend swatches and the
+     finding-list cues clear the 3:1 non-text contrast minimum against the
+     light surfaces they render on; the original brighter values already
+     clear it against the app's dark surfaces and the always-dark 3D
+     viewport background, so dark theme keeps them unchanged. */
+  --diff-added: #1d8d53;
+  --diff-removed: #e01326;
+  --diff-deviation: #a749ff;
+  --diff-shared: #73807a;
+  --danger-text: #cf001a;
   background: var(--bg);
   color: var(--text);
 }
@@ -44,6 +56,12 @@
   --green-ink: #072a17;
   --green-soft: rgba(80, 225, 138, 0.1);
   --shadow: 0 26px 80px rgba(0, 0, 0, 0.35);
+  --orange: #ef9e43;
+  --diff-added: #35d07f;
+  --diff-removed: #ff5a67;
+  --diff-deviation: #c783ff;
+  --diff-shared: #a7b0ac;
+  --danger-text: #ff7c86;
 }
 
 * {
@@ -66,6 +84,13 @@ button,
 input,
 select {
   font: inherit;
+}
+/* Native range thumbs render thin; padding the control's own box (rather
+   than just its visible track) keeps the full 44px touch target draggable
+   without changing the track's visual thickness. */
+input[type="range"] {
+  min-height: 2.75rem;
+  padding-block: 1rem;
 }
 a {
   color: inherit;
@@ -102,6 +127,17 @@ select {
 }
 .skip-link:focus {
   transform: none;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .ambient {
   position: fixed;
@@ -212,7 +248,7 @@ select {
 }
 .github-link {
   display: inline-flex;
-  min-height: 2.7rem;
+  min-height: 2.75rem;
   align-items: center;
   gap: 0.55rem;
   padding: 0.45rem 0.72rem;
@@ -230,7 +266,7 @@ select {
 }
 .theme-button,
 .menu-button {
-  min-height: 2.7rem;
+  min-height: 2.75rem;
   padding: 0.45rem 0.72rem;
   border: 1px solid var(--line);
   border-radius: 0.5rem;
@@ -243,7 +279,7 @@ select {
 }
 .theme-button {
   display: grid;
-  width: 2.7rem;
+  width: 2.75rem;
   padding: 0;
   place-items: center;
 }
@@ -394,6 +430,14 @@ main {
 }
 .source-file:hover {
   border-color: var(--green);
+}
+/* The real <input type="file"> inside this label is visually hidden to 1px
+   (see `.source-file input` below) so keyboard focus can land on it without
+   a visible native control; showing the focus ring on the label instead
+   keeps it perceivable to sighted keyboard users. */
+.source-file:has(input:focus-visible) {
+  outline: 3px solid var(--green);
+  outline-offset: 3px;
 }
 .source-file > span:first-child {
   max-width: 100%;
@@ -614,6 +658,10 @@ main {
 .session-open-input:hover {
   border-color: var(--green);
 }
+.session-open-input:has(input:focus-visible) {
+  outline: 3px solid var(--green);
+  outline-offset: 3px;
+}
 .session-open-input > span:first-child {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -727,7 +775,7 @@ main {
   gap: 0.6rem;
 }
 .workbench-actions .button {
-  min-height: 2.55rem;
+  min-height: 2.75rem;
   padding-block: 0.55rem;
 }
 .workbench-toolbar {
@@ -927,18 +975,18 @@ main {
   width: 0.6rem;
   height: 0.6rem;
   border-radius: 0.12rem;
-  background: #a7b0ac;
+  background: var(--diff-shared);
 }
 .change-legend .legend-added,
 .cue-added {
-  background: #35d07f;
+  background: var(--diff-added);
 }
 .change-legend .legend-removed,
 .cue-removed {
-  background: #ff5a67;
+  background: var(--diff-removed);
 }
 .change-legend .legend-deviation {
-  background: #c783ff;
+  background: var(--diff-deviation);
 }
 .geometry-summary {
   margin-top: 1rem;
@@ -1061,14 +1109,14 @@ main {
   width: 0.72rem;
   height: 0.72rem;
   border-radius: 0.12rem;
-  background: #35d07f;
+  background: var(--diff-added);
 }
 .finding-cue.cue-removed {
-  background: #ff5a67;
+  background: var(--diff-removed);
 }
 .cue-deviation {
   border-radius: 50%;
-  background: #c783ff;
+  background: var(--diff-deviation);
 }
 .findings button strong {
   display: block;
@@ -1091,7 +1139,7 @@ main {
   font-size: 0.75rem;
 }
 .indeterminate > strong {
-  color: #ff7c86;
+  color: var(--danger-text);
   font:
     750 0.68rem ui-monospace,
     monospace;
@@ -1517,5 +1565,18 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
+  }
+  /* Belt-and-suspenders reset: disables any transition/animation an
+     interactive state change (hover, focus, aria-pressed, aria-expanded,
+     etc.) might trigger, current or future, without touching layout. */
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.001ms !important;
+    transition-delay: 0s !important;
+    animation-duration: 0.001ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
   }
 }

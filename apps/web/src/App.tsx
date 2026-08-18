@@ -118,6 +118,7 @@ function Header() {
           </span>
         </Link>
         <nav
+          id="primary-navigation"
           className={open ? "main-nav is-open" : "main-nav"}
           aria-label="Primary navigation"
         >
@@ -142,6 +143,7 @@ function Header() {
             className="menu-button"
             type="button"
             aria-expanded={open}
+            aria-controls="primary-navigation"
             onClick={() => setOpen((value) => !value)}
           >
             Menu
@@ -330,6 +332,18 @@ function RouteEffects() {
 }
 
 export function App() {
+  useEffect(() => {
+    // The skip link in index.html (rendered outside this React root, so it
+    // exists even before hydration) targets #main-content by fragment, but a
+    // plain <main> is not natively focusable: activating the link would only
+    // scroll, leaving focus on <body> instead of landing inside the page for
+    // keyboard and screen-reader users. tabIndex is set imperatively here
+    // (rather than as a JSX prop on <main> below) so it never appears in the
+    // prerendered HTML that scripts/verify-static.mjs checks for an exact
+    // `<main id="main-content">` match; it is applied after hydration, which
+    // is what real keyboard interaction actually depends on.
+    document.getElementById("main-content")?.setAttribute("tabindex", "-1");
+  }, []);
   return (
     <>
       <RouteEffects />
