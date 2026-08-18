@@ -207,6 +207,14 @@ export const docs: DocPage[] = [
         ],
       },
       {
+        id: "clearance-and-fit",
+        title: "Checking clearance between two parts",
+        paragraphs: [
+          "Clearance & Fit (/tools/clearance-fit/) checks two independently placed parts against each other: the minimum surface-to-surface distance with its closest-point pair, regions below a desired clearance, and interference evidence. Each part's placement transform is an explicit, deliberate input -- both parts start at the identity placement and this tool never auto-positions or auto-aligns either one.",
+          "Two different kinds of precision live in one result. Interference (intersecting triangle pairs) is detected with an exact triangle-triangle intersection test, independent of tessellation. The minimum distance and tight regions are sampled the same way surface comparison is, so they carry the same sample-spacing bound described above: when that spacing exceeds the desired clearance, a small feature can violate it without being reported, and a “clear” verdict is flagged as not a geometric guarantee at that tessellation. No interference volume is computed for either verdict -- only concrete intersecting triangle pairs are ever reported as interference evidence.",
+        ],
+      },
+      {
         id: "evidence",
         title: "Prefer reproducible evidence",
         paragraphs: [
@@ -251,12 +259,12 @@ export const docs: DocPage[] = [
 ];
 
 /** The VoxelSpy toolbox: tools for understanding, validating, measuring, and
- *  comparing 3D geometry. `Compare` and `Inspect` are built today -- every
- *  other entry is `planned` and says so plainly; the catalog page renders
- *  planned tools as non-link cards rather than dead links. Keep this
- *  honest: add a tool here only once it is real, and flip `status` to
- *  `"available"` (and add its `path` to `routes` below) only once the
- *  route actually exists. */
+ *  comparing 3D geometry. `Compare`, `Inspect`, `File Forensics`, and
+ *  `Clearance & Fit` are built today -- every other entry is `planned` and
+ *  says so plainly; the catalog page renders planned tools as non-link cards
+ *  rather than dead links. Keep this honest: add a tool here only once it is
+ *  real, and flip `status` to `"available"` (and add its `path` to `routes`
+ *  below) only once the route actually exists. */
 export const tools: Tool[] = [
   {
     id: "compare",
@@ -301,8 +309,8 @@ export const tools: Tool[] = [
     name: "Clearance & Fit",
     description: "Check the gap or interference between two parts.",
     summary:
-      "Test whether two models fit together the way they are supposed to: minimum clearance, overlap volume, and where along the surface the fit gets tight. Clearance & Fit is not built yet.",
-    status: "planned",
+      "Load two local parts, place each one deliberately, and check whether they fit: minimum surface-to-surface clearance with its closest-point pair, ranked tight regions, and exact triangle-pair interference evidence -- with no interference volume claimed and no auto-alignment. Runs entirely in your browser.",
+    status: "available",
     question: "Will these two parts actually fit together?",
   },
   {
@@ -345,6 +353,7 @@ export const routes = [
   "/tools/inspect/",
   ...inspectFocusPages.map((page) => page.path),
   "/tools/file-forensics/",
+  "/tools/clearance-fit/",
   "/docs/",
   ...docs.map((doc) => doc.path),
 ];

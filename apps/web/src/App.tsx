@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Route, Routes, useLocation } from "react-router";
 import { Wordmark } from "./Brand";
+import { ClearanceFlow } from "./ClearanceFlow";
 import { ComparisonFlow } from "./ComparisonFlow";
 import { ForensicsFlow } from "./ForensicsFlow";
 import { HomeDemo } from "./HomeDemo";
@@ -41,6 +42,11 @@ const baseMetadata = {
     title: "File Forensics — VoxelSpy",
     description:
       "See what this importer actually saw in one local STL or OBJ file: detected format, structure, provenance, and every warning or refused input.",
+  },
+  "/tools/clearance-fit/": {
+    title: "Clearance & Fit — VoxelSpy",
+    description:
+      "Check whether two local parts fit: minimum clearance with its closest-point pair, ranked tight regions, and exact triangle-pair interference evidence.",
   },
   "/docs/": {
     title: "Documentation — VoxelSpy",
@@ -477,6 +483,7 @@ export function App() {
             />
           ))}
           <Route path="/tools/file-forensics/" element={<ForensicsFlow />} />
+          <Route path="/tools/clearance-fit/" element={<ClearanceFlow />} />
           <Route path="/docs/" element={<DocsIndex />} />
           {docs.map((doc) => (
             <Route

@@ -1824,10 +1824,14 @@ a.tool-card-available:hover {
   .method-card {
     grid-template-columns: 1fr;
   }
-  .analysis-capacity {
+  .analysis-capacity,
+  .clearance-desired-input {
     padding: 0.8rem 0 0;
     border-top: 1px solid var(--line);
     border-left: 0;
+  }
+  .placement-grid {
+    grid-template-columns: 1fr;
   }
   .docs-layout {
     grid-template-columns: 1fr;
@@ -1960,6 +1964,111 @@ a.tool-card-available:hover {
   .workbench-footer span:last-child {
     margin-left: 0;
   }
+}
+
+/* Clearance & Fit (/tools/clearance-fit/): per-part deliberate placement
+   controls, the desired-clearance input, the fit verdict badge, and the
+   sampling caveat callout. Reuses `.source-card`/`.method-card`/
+   `.watertight-badge`/`.boundary-note`/`.mesh-health-viewport` conventions
+   wherever the shape already matches (see each rule below); only genuinely
+   new shapes get new rules here. */
+.placement-card > p {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.placement-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+  margin-top: 0.75rem;
+}
+.placement-grid fieldset {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+.placement-grid legend {
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.placement-grid label {
+  display: block;
+  margin-top: 0.5rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+.placement-grid input,
+.clearance-desired-input input {
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+  color: var(--text);
+  background: var(--surface-solid);
+  font: inherit;
+}
+.placement-transform {
+  margin-top: 0.85rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.placement-transform code {
+  display: block;
+  margin-top: 0.3rem;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 0.7rem;
+}
+.clearance-desired-input {
+  padding-left: 1rem;
+  border-left: 1px solid var(--line);
+}
+.clearance-desired-input label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 830;
+}
+.clearance-badge.clearance-clear i {
+  background: var(--green);
+}
+.clearance-badge.clearance-tight i {
+  background: var(--orange);
+}
+.clearance-badge.clearance-interfering i {
+  background: var(--diff-removed);
+}
+.clearance-caveat {
+  margin-top: 0.75rem;
+  padding: 0.9rem 1rem;
+  border-left: 3px solid var(--orange);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--orange) 8%, transparent);
+}
+.clearance-caveat strong {
+  display: block;
+  color: var(--text);
+  font-size: 0.82rem;
+}
+.clearance-caveat p {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.clearance-viewport {
+  margin: 1rem 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
 @media (prefers-reduced-motion: reduce) {

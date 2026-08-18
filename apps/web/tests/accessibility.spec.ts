@@ -305,6 +305,7 @@ const routes = [
   "/tools/volume/",
   "/tools/watertight/",
   "/tools/file-forensics/",
+  "/tools/clearance-fit/",
   "/docs/",
   "/docs/getting-started/",
   "/nope/",
