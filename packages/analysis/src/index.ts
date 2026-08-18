@@ -208,3 +208,25 @@ export type {
   WallThicknessFinding,
   WallThicknessOptions,
 } from "./printability.js";
+export {
+  CERTIFICATION_DISCLAIMER,
+  CERTIFICATION_METHOD_ID,
+  CERTIFICATION_METHOD_VERSION,
+  MAX_SIMPLIFY_INPUT_TRIANGLES,
+  SIMPLIFY_METHOD_ID,
+  SIMPLIFY_METHOD_VERSION,
+  SimplifyInputError,
+  SimplifyResourceLimitError,
+  simplifyModel,
+} from "./simplify.js";
+export type {
+  DirectionalDeviation,
+  SimplificationCertification,
+  SimplificationParameters,
+  SimplificationResult,
+  SimplifyGeometryCounts,
+  SimplifyOptions,
+  SimplifyReduction,
+  SimplifyTarget,
+  SimplifyWarning,
+} from "./simplify.js";
