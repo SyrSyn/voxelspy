@@ -293,6 +293,39 @@ export function facetLocalBoxModel(
 }
 
 /**
+ * Three facet-local (private-vertex-copy) triangles that all share one
+ * coordinate edge, A(0,0,0)-B(1,0,0) -- a genuine non-manifold junction
+ * (three facets meeting along one edge) -- but, being fully facet-local,
+ * never share a single vertex INDEX with each other or with themselves
+ * across triangles. Demonstrates that non-manifold detection itself changed
+ * shape under exact-coordinate edge keying: see "coordinate keying changes
+ * what counts as non-manifold" in adversarial.test.ts.
+ */
+export function facetLocalTripleJunctionModel(id: string): NormalizedModel {
+  const positions = new Float64Array([
+    // Triangle 1: shared edge A-B, apex at (0,1,0).
+    0, 0, 0, 1, 0, 0, 0, 1, 0,
+    // Triangle 2: shared edge A-B, apex at (0,-1,0).
+    0, 0, 0, 1, 0, 0, 0, -1, 0,
+    // Triangle 3: shared edge A-B, apex at (0,0,1).
+    0, 0, 0, 1, 0, 0, 0, 0, 1,
+  ]);
+  const indices = Uint32Array.from({ length: 9 }, (_, index) => index);
+  return buildModel(
+    id,
+    [{ id: `${id}.mesh`, positions, indices }],
+    [
+      {
+        id: `${id}.instance`,
+        meshId: `${id}.mesh`,
+        meshToModel: IDENTITY_MAT4,
+      },
+    ],
+    "Three facet-local triangles sharing one coordinate edge (A-B) via bit-identical duplicated corners, with no shared vertex index between any pair -- a genuine three-facet non-manifold junction.",
+  );
+}
+
+/**
  * A closed outer box containing a second, fully interior closed box surface
  * -- an internal void/cavity boundary modeled as a second disjoint mesh
  * instance, not a boolean-subtracted solid.

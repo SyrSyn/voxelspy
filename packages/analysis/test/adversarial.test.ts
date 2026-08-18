@@ -7,12 +7,17 @@ import {
 import type { NormalizedModel, Vec3 } from "@voxelspy/contracts";
 import { describe, expect, it } from "vitest";
 
-import { SAMPLE_SPACING_EDGE_FACTOR, analyzeModelPair } from "../src/index.js";
+import {
+  SAMPLE_SPACING_EDGE_FACTOR,
+  analyzeModelPair,
+  summarizeModelGeometry,
+} from "../src/index.js";
 import {
   boxWithInternalVoidModel,
   duplicatePerFaceVertexBoxModel,
   duplicatedFaceBoxModel,
   facetLocalBoxModel,
+  facetLocalTripleJunctionModel,
   finePanelModel,
   flippedWindingBoxModel,
   ulpFragmentedFacetLocalSquareModel,
@@ -146,35 +151,29 @@ describe("adversarial: coincident surfaces", () => {
   });
 });
 
-describe("adversarial: facet-local (index-per-triangle) closed meshes are misclassified by MeshAssessment", () => {
-  it("documents a real cross-module discrepancy: MeshAssessment.closed uses vertex-INDEX identity, not coordinate identity, so a geometrically watertight facet-local box is reported as not closed", () => {
+describe("adversarial: facet-local (index-per-triangle) closed meshes are consistently classified", () => {
+  it("keys MeshAssessment's edge census by exact vertex coordinate, so a watertight facet-local box validates as closed, matching summarizeModelGeometry", () => {
     // `assessGeometry` in analyze.ts (which produces `MeshAssessment`, the
     // `validation` evidence attached to every `AnalysisResult`) keys its
-    // edge census purely by raw vertex INDEX: `addEdge(edges, a, b)` where
-    // `a`/`b` come straight from `geometry.indices`. It never inspects
-    // coordinates. `summarizeModelGeometry` in summary.ts, by contrast,
-    // keys its own edge census by exact vertex COORDINATE string
-    // (`pointKey`), specifically so that facet-local meshes -- e.g. STL
-    // imports, which duplicate vertex data per triangle instead of sharing
-    // indices -- are still recognized as watertight when their duplicated
-    // corners coincide exactly. That coordinate-based behavior is directly
-    // exercised by "recognizes exact shared edges in facet-local closed
-    // geometry" in summary.test.ts, which reports `volume.available: true`
-    // for exactly this shape (a facet-local box).
+    // edge census by exact vertex COORDINATE (`pointKeyAt` /
+    // `canonicalEdgeKey`), the same exact-coordinate approach used by
+    // region connectivity (`exactEdgeKeyAt`, below) and by
+    // `summarizeModelGeometry` in summary.ts (`pointKey`). Two triangle
+    // corners connect if and only if their coordinates are bit-for-bit
+    // identical -- no tolerance welding -- and index-level topology
+    // (whether two triangles happen to share a vertex INDEX) is not what
+    // either validator reports.
     //
-    // Because the two modules use different edge-matching strategies, the
-    // SAME facet-local box -- 36 vertices (one full triangle-local copy of
-    // every corner), 12 triangles, no two triangles sharing any vertex
-    // index at all -- is reported watertight by `summarizeModelGeometry`
-    // but comes back `closed: false` (every one of its 36 edges counted as
-    // an unmatched boundary edge) from `analyzeModelPair`'s
-    // `MeshAssessment`. A caller who checks only one of the two would draw
-    // the opposite conclusion about the same input than one who checks the
-    // other. This is not a distance-accuracy defect -- every measured
-    // surface distance from this mesh is still numerically correct -- but
-    // it is a genuine, undocumented semantic inconsistency between the two
-    // topology validators shipped in this package, worth flagging for
-    // maintainer review rather than silently working around in a fixture.
+    // A fully facet-local box -- 36 vertices (one private copy of every
+    // triangle corner), 12 triangles, no two triangles sharing any vertex
+    // index at all, the representation many importers (e.g. binary STL)
+    // naturally produce -- is therefore recognized as watertight by BOTH
+    // validators: `summarizeModelGeometry` (directly exercised by
+    // "recognizes exact shared edges in facet-local closed geometry" in
+    // summary.test.ts, which reports `volume.available: true` for exactly
+    // this shape) and `assessGeometry`'s `MeshAssessment`, checked here. A
+    // caller who checks only one of the two now draws the same conclusion
+    // as one who checks the other.
     const facetLocalBox = facetLocalBoxModel("facet-local-box");
     const result = analyzeModelPair({
       request: request("surface-distance", { candidateId: "facet-local-box" }),
@@ -183,9 +182,55 @@ describe("adversarial: facet-local (index-per-triangle) closed meshes are miscla
     });
     expect(result.outcome.validation[1]).toMatchObject({
       modelId: "facet-local-box",
-      closed: false,
-      boundaryEdgeCount: 36,
+      closed: true,
+      consistentlyOriented: true,
+      boundaryEdgeCount: 0,
       nonManifoldEdgeCount: 0,
+    });
+
+    const summary = summarizeModelGeometry(facetLocalBox);
+    expect(summary.volume).toMatchObject({
+      available: true,
+      topology: {
+        boundaryEdgeCount: 0,
+        nonManifoldEdgeCount: 0,
+        inconsistentEdgeCount: 0,
+      },
+    });
+  });
+});
+
+describe("adversarial: coordinate keying changes what counts as non-manifold", () => {
+  it("flags a three-facet coordinate junction as non-manifold, which raw-index keying could never detect across facet-local copies", () => {
+    // Coordinate keying doesn't only fix false negatives (facet-local
+    // closed meshes reported open, above) -- it changes what non-manifold
+    // detection can even see. Under the old raw-INDEX keying, two facets
+    // could only be seen sharing an edge if they happened to reuse the
+    // same vertex INDEX; three fully facet-local triangles (private vertex
+    // copies, no index ever shared) meeting along one real coordinate edge
+    // would each contribute a lone, unmatched "boundary" half-edge --
+    // three separate boundary edges, zero non-manifold edges, an honestly
+    // wrong read of a genuine three-facet junction. Under exact-coordinate
+    // keying, the three facet-local copies of that shared edge collapse
+    // into one edge entry with three incident triangles: a real
+    // non-manifold edge, correctly detected for the first time. The
+    // junction's six other edges (each triangle's two non-shared sides)
+    // remain unique per triangle and still report as ordinary boundary
+    // edges.
+    const triple = facetLocalTripleJunctionModel("triple-junction");
+    const result = analyzeModelPair({
+      request: request("surface-distance", {
+        candidateId: "triple-junction",
+      }),
+      baseline: boxModel("baseline"),
+      candidate: triple,
+    });
+    expect(result.outcome.validation[1]).toMatchObject({
+      modelId: "triple-junction",
+      closed: false,
+      nonManifoldEdgeCount: 1,
+      boundaryEdgeCount: 6,
+      reasons: expect.arrayContaining(["non-manifold-edges", "boundary-edges"]),
     });
   });
 });
@@ -340,7 +385,7 @@ describe("adversarial: exact axis-aligned-box adapter preconditions", () => {
     });
   });
 
-  it("rejects a duplicate-per-face-vertex box, both for its vertex count and because index-keyed validation sees its cross-face edges as unmatched boundary", () => {
+  it("rejects a duplicate-per-face-vertex box for its vertex/triangle count alone, even though coordinate-keyed validation now sees it as closed", () => {
     // The exact adapter's precondition check requires exactly 8 vertices
     // and 12 triangles (see `validatedAxisAlignedBox`) -- it validates the
     // indexed REPRESENTATION, not just the resulting shape. A box
@@ -349,19 +394,18 @@ describe("adversarial: exact axis-aligned-box adapter preconditions", () => {
     // axis-aligned box, but is honestly rejected rather than silently
     // welded or reinterpreted into the canonical form.
     //
-    // It is rejected for a SECOND, compounding reason too:
-    // `MeshAssessment.closed` itself comes back `false` here, because
-    // `assessGeometry`'s edge census (analyze.ts) keys edges by raw vertex
-    // INDEX, not by coordinate -- see the dedicated
-    // "facet-local closed meshes are misclassified by MeshAssessment"
-    // test below. Since this fixture gives each face its own private
-    // vertex block, the 12 true cube edges where two faces meet never
-    // share an index across faces and are each counted as two unmatched
-    // boundary edges (24 boundary edges total), even though every one of
-    // those edges is coordinate-identical on both sides and the shape is
-    // genuinely watertight. So the adapter's rejection message here
-    // doesn't cleanly separate "wrong vertex count" from "not closed" --
-    // both fire from the same representation choice.
+    // `assessGeometry`'s edge census (analyze.ts) now keys edges by exact
+    // vertex COORDINATE, not by raw index -- see the dedicated
+    // "facet-local closed meshes are consistently classified" test above.
+    // This fixture gives each face its own private vertex block, so no two
+    // faces share a vertex INDEX, but every one of the 12 true cube edges
+    // where two faces meet is coordinate-identical on both sides. Under
+    // coordinate keying those matching half-edges merge back into 12
+    // correctly paired edges, so `MeshAssessment.closed` now comes back
+    // `true`: the adapter's rejection here is driven purely by the
+    // vertex/triangle-count precondition (24 vertices, not 8), not by a
+    // false "not closed" report -- unlike before this change, when the two
+    // reasons compounded.
     const baseline = boxModel("baseline");
     const candidate = duplicatePerFaceVertexBoxModel("candidate");
     const result = analyzeModelPair({
@@ -374,8 +418,9 @@ describe("adversarial: exact axis-aligned-box adapter preconditions", () => {
       code: "solid-precondition-failed",
     });
     expect(result.outcome.validation[1]).toMatchObject({
-      closed: false,
-      boundaryEdgeCount: 24,
+      closed: true,
+      boundaryEdgeCount: 0,
+      nonManifoldEdgeCount: 0,
       consistentlyOriented: true,
       degenerateTriangleCount: 0,
     });

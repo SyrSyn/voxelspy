@@ -241,8 +241,18 @@ function checkResourceBudget(
   return undefined;
 }
 
-/** Charged per triangle in the edge census below (three Map lookups/writes). */
-const EDGE_CENSUS_TRIANGLE_WORK_UNITS = 6;
+/**
+ * Charged per triangle in the edge census below. The census keys edges by
+ * exact vertex COORDINATE (see `pointKeyAt`/`canonicalEdgeKey`), consistent
+ * with region connectivity and `summarizeModelGeometry`: it builds one
+ * coordinate-string key per triangle corner (three Float64 reads plus a
+ * string join, done once per corner and reused for both edges touching that
+ * corner) and one canonicalized edge key plus a Map lookup/write per edge.
+ * That coordinate-string construction costs materially more than the
+ * previous raw-index keying (integer min/max), so this is charged higher
+ * than a plain three-Map-operations estimate would suggest.
+ */
+const EDGE_CENSUS_TRIANGLE_WORK_UNITS = 12;
 /**
  * Preprocessing charges (here and in `flattenModel`) are applied in chunks
  * of this many elements, not per element (millions of `charge` calls would
@@ -252,6 +262,22 @@ const EDGE_CENSUS_TRIANGLE_WORK_UNITS = 6;
  */
 const PREPROCESSING_CHUNK_ELEMENTS = 1024;
 
+/**
+ * Assesses closedness, orientation consistency, and degeneracy from
+ * `geometry`'s own triangle data.
+ *
+ * The edge census below keys each triangle edge by its two endpoints' exact
+ * vertex COORDINATES (`pointKeyAt`/`canonicalEdgeKey`), not by raw vertex
+ * index -- the same exact-coordinate approach used by region connectivity
+ * (`exactEdgeKeyAt` below) and by `summarizeModelGeometry` in summary.ts.
+ * Two triangle corners connect if and only if their coordinates are
+ * bit-for-bit identical; no tolerance welding is performed. This means a
+ * facet-local mesh (one private vertex copy per triangle corner, as binary
+ * STL import commonly produces) is recognized as closed when its duplicated
+ * corners coincide exactly, matching what `summarizeModelGeometry` already
+ * reports for the same input. It also means index-level topology (whether
+ * two triangles happen to share a vertex INDEX) is not what this reports.
+ */
 function assessGeometry(
   modelId: NormalizedModel["id"],
   geometry: FlatGeometry,
@@ -279,9 +305,12 @@ function assessGeometry(
       const a = geometry.indices[base]!;
       const b = geometry.indices[base + 1]!;
       const c = geometry.indices[base + 2]!;
-      addEdge(edges, a, b);
-      addEdge(edges, b, c);
-      addEdge(edges, c, a);
+      const keyA = pointKeyAt(geometry, a);
+      const keyB = pointKeyAt(geometry, b);
+      const keyC = pointKeyAt(geometry, c);
+      addEdge(edges, keyA, keyB);
+      addEdge(edges, keyB, keyC);
+      addEdge(edges, keyC, keyA);
     }
   }
   let boundaryEdgeCount = 0;
@@ -329,14 +358,12 @@ function assessGeometry(
 
 function addEdge(
   edges: Map<string, { forward: number; reverse: number }>,
-  from: number,
-  to: number,
+  fromKey: string,
+  toKey: string,
 ): void {
-  const lower = Math.min(from, to);
-  const upper = Math.max(from, to);
-  const key = `${lower}:${upper}`;
+  const { key, forward } = canonicalEdgeKey(fromKey, toKey);
   const edge = edges.get(key) ?? { forward: 0, reverse: 0 };
-  if (from === lower) edge.forward += 1;
+  if (forward) edge.forward += 1;
   else edge.reverse += 1;
   edges.set(key, edge);
 }
@@ -846,11 +873,30 @@ function exactEdgeKeyAt(
   firstVertex: number,
   secondVertex: number,
 ): string {
-  const firstKey = pointKeyAt(geometry, firstVertex);
-  const secondKey = pointKeyAt(geometry, secondVertex);
-  return compareText(firstKey, secondKey) <= 0
-    ? `${firstKey}|${secondKey}`
-    : `${secondKey}|${firstKey}`;
+  return canonicalEdgeKey(
+    pointKeyAt(geometry, firstVertex),
+    pointKeyAt(geometry, secondVertex),
+  ).key;
+}
+
+/**
+ * Canonicalizes an edge between two exact-coordinate vertex keys into one
+ * orientation-independent Map key, plus whether `fromKey -> toKey` is the
+ * "forward" traversal under that canonical order. Shared by `assessGeometry`
+ * (which needs `forward` to detect inconsistent orientation) and
+ * `exactEdgeKeyAt` (which only needs the undirected key, for region
+ * connectivity), so both stay keyed on the exact same coordinate identity
+ * with no risk of drifting apart.
+ */
+function canonicalEdgeKey(
+  fromKey: string,
+  toKey: string,
+): { key: string; forward: boolean } {
+  const forward = compareText(fromKey, toKey) <= 0;
+  return {
+    key: forward ? `${fromKey}|${toKey}` : `${toKey}|${fromKey}`,
+    forward,
+  };
 }
 
 function compareSurfaceRegion(
