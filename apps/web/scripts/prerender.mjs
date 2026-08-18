@@ -1,20 +1,11 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { render } from "../.ssr/entry-server.js";
+import { render, routes } from "../.ssr/entry-server.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dist = path.join(root, "dist");
 const template = await readFile(path.join(dist, "index.html"), "utf8");
-const routes = [
-  "/",
-  "/compare/",
-  "/docs/",
-  "/docs/getting-started/",
-  "/docs/privacy/",
-  "/docs/geometry/",
-];
-
 const escapeAttribute = (value) =>
   value
     .replaceAll("&", "&amp;")

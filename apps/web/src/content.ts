@@ -89,10 +89,51 @@ export const docs: DocPage[] = [
         ],
       },
       {
+        id: "sampling-semantics",
+        title: "Sampled distance has a spacing bound",
+        paragraphs: [
+          "Surface comparison measures sampled points on each triangle against the opposite surface. Every reported distance is exact for the points it measured, but a feature smaller than the spacing between samples can fall between them and go unreported.",
+          "Each result states the worst-case sample spacing in millimetres next to the tolerance you requested. When the spacing is larger than the tolerance, the result carries an explicit warning that features below that size can be missed. Finding no changed regions therefore means no change was observed at that sampling density, which is not the same as proving two models identical.",
+        ],
+      },
+      {
         id: "evidence",
         title: "Prefer reproducible evidence",
         paragraphs: [
           "Fixtures, deterministic outputs, hostile-input limits, cancellation, and recovery behavior are acceptance evidence. A convincing render cannot substitute for correct data.",
+        ],
+      },
+    ],
+  },
+  {
+    path: "/docs/limits/",
+    eyebrow: "Resource boundary",
+    title: "Limits and control",
+    description:
+      "What this release accepts, how much it will spend, and how to stop it.",
+    sections: [
+      {
+        id: "supported-input",
+        title: "Supported input",
+        paragraphs: [
+          "This release imports binary and text STL and a documented OBJ subset of vertices and faces. Each source file is accepted up to 32 MiB and 500,000 triangles. Content outside those subsets, including materials, curves, and free-form surfaces, is refused with a stated reason rather than partially interpreted.",
+          "Neither format authoritatively declares units or an up-axis, so import begins with millimetres and right-handed Z-up and exposes other interpretations as expert settings. The interpretation you choose stays attached to the result.",
+        ],
+      },
+      {
+        id: "allowance",
+        title: "The analysis allowance",
+        paragraphs: [
+          "Comparison runs inside a memory allowance you control, between 128 and 768 MiB. The starting value is recommended from what your browser reports about the device, and is deliberately conservative when a reading is unavailable. The recommendation is never a cap: the whole range stays available.",
+          "The allowance is a fail-closed ceiling on an estimate, not reserved memory. A comparison that would exceed it stops with an explicit resource outcome instead of returning a partial or misleading difference. Raising it lets a capable device attempt more work; it does not make an exhausted browser tab succeed.",
+        ],
+      },
+      {
+        id: "stopping-work",
+        title: "Stopping and recovering",
+        paragraphs: [
+          "A running comparison can be cancelled from the interface, and leaving the page stops the work rather than leaving it running. Cancellation returns the page to a ready state without an error.",
+          "If the comparison worker fails or stops responding, the interface reports a structured failure and recovers instead of waiting indefinitely. Comparison itself is bounded, deterministic, and repeatable: the same inputs and settings produce the same result.",
         ],
       },
     ],

@@ -1,17 +1,31 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const routes = [
-  "",
-  "compare/",
-  "docs/",
-  "docs/getting-started/",
-  "docs/privacy/",
-  "docs/geometry/",
-];
+// Discovered from what the build actually emitted, so every prerendered page
+// is verified even as routes are added. The prerenderer derives its own list
+// from the application's declared routes, so a declared page that failed to
+// render never reaches this step.
+const routes = (
+  await readdir(path.join(root, "dist"), {
+    recursive: true,
+    withFileTypes: true,
+  })
+)
+  .filter((entry) => entry.isFile() && entry.name === "index.html")
+  .map((entry) =>
+    path
+      .relative(
+        path.join(root, "dist"),
+        path.join(entry.parentPath, entry.name),
+      )
+      .replace(/index\.html$/u, "")
+      .replaceAll(path.sep, "/"),
+  )
+  .sort();
+assert.ok(routes.length >= 6, "static build must emit every declared route");
 for (const route of routes) {
   const html = await readFile(
     path.join(root, "dist", route, "index.html"),
