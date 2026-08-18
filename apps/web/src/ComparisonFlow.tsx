@@ -1,7 +1,25 @@
-import type { ModelComparisonPresentationSummary } from "@voxelspy/analysis";
-import type { Report, SourceAxis, SourceUnit } from "@voxelspy/contracts";
+import {
+  estimateAlignment,
+  AlignmentInputError,
+  MIN_CORRESPONDENCES,
+  type AlignmentEstimate,
+  type AlignmentWarning,
+  type CorrespondencePoint,
+  type ModelComparisonPresentationSummary,
+} from "@voxelspy/analysis";
+import {
+  IDENTITY_MAT4,
+  type Mat4,
+  type Report,
+  type SourceAxis,
+  type SourceUnit,
+} from "@voxelspy/contracts";
 import { SessionArchiveError } from "@voxelspy/session-archive";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlignmentCancelledError,
+  estimateIcpAlignmentAsync,
+} from "./alignment-worker-client";
 import {
   estimateAnalysisFit,
   evaluateCapabilityPreflight,
@@ -277,6 +295,229 @@ function describeReportFailure(reason: unknown): string {
   return "The report could not be built safely.";
 }
 
+// ---------------------------------------------------------------------------
+// Alignment (opt-in, off by default). A user may enter at least
+// `MIN_CORRESPONDENCES` numeric correspondence-point pairs -- candidate
+// ("moving") coordinates paired with baseline ("fixed") coordinates -- and
+// review `estimateAlignment`'s (`@voxelspy/analysis`) closed-form rigid fit
+// before optionally refining it with iterative-closest-point using the
+// already-imported baseline/candidate geometry. Nothing here ever runs
+// automatically: `estimateAlignment` only ever returns a transform plus its
+// evidence for review; only this module's explicit "Accept this alignment"
+// action (see `acceptAlignment` below) can make a transform part of a
+// comparison request, and only as the candidate's `modelToComparison` --
+// the same per-model placement field every comparison already carries, per
+// AGENTS.md's "never silently recenter, rescale, align, repair, or
+// reinterpret geometry" rule.
+// ---------------------------------------------------------------------------
+
+/**
+ * What, if anything, a completed comparison's `candidate.modelToComparison`
+ * reflects. `"with-evidence"` is set when this session itself computed and
+ * accepted the alignment (its full `AlignmentEvidence` is still in memory).
+ * `"transform-only"` is set when a reopened saved session's analysis result
+ * already carries a non-identity candidate placement: the transform itself
+ * round-trips through the session archive (it lives in the same
+ * `modelToComparison` field every analysis request/result already carries),
+ * but the alignment evidence that produced it (iterations, residuals,
+ * warnings) is not part of the session or report contract and is not
+ * recoverable after reopening -- this variant is how that honest limit is
+ * surfaced rather than papered over.
+ */
+type AppliedAlignmentInfo =
+  | { readonly kind: "with-evidence"; readonly estimate: AlignmentEstimate }
+  | { readonly kind: "transform-only"; readonly transform: Mat4 };
+
+interface CorrespondenceRow {
+  readonly key: number;
+  readonly moving: [number, number, number];
+  readonly fixed: [number, number, number];
+}
+
+function emptyCorrespondenceRow(key: number): CorrespondenceRow {
+  return { key, moving: [NaN, NaN, NaN], fixed: [NaN, NaN, NaN] };
+}
+
+function initialCorrespondenceRows(): CorrespondenceRow[] {
+  return Array.from({ length: MIN_CORRESPONDENCES }, (_unused, index) =>
+    emptyCorrespondenceRow(index),
+  );
+}
+
+export function correspondenceRowsReady(
+  rows: readonly CorrespondenceRow[],
+): boolean {
+  return (
+    rows.length >= MIN_CORRESPONDENCES &&
+    rows.every(
+      (row) =>
+        row.moving.every((value) => Number.isFinite(value)) &&
+        row.fixed.every((value) => Number.isFinite(value)),
+    )
+  );
+}
+
+export function correspondenceRowsToPoints(
+  rows: readonly CorrespondenceRow[],
+): CorrespondencePoint[] {
+  return rows.map((row) => ({
+    moving: [...row.moving] as CorrespondencePoint["moving"],
+    fixed: [...row.fixed] as CorrespondencePoint["fixed"],
+  }));
+}
+
+export function isIdentityTransform(matrix: readonly number[]): boolean {
+  return (
+    matrix.length === IDENTITY_MAT4.length &&
+    matrix.every((value, index) => value === IDENTITY_MAT4[index])
+  );
+}
+
+function describeAlignmentFailure(reason: unknown): string {
+  if (reason instanceof AlignmentInputError) return reason.message;
+  if (reason instanceof AlignmentCancelledError) return reason.message;
+  if (reason instanceof Error) return reason.message;
+  return "Alignment estimate failed safely.";
+}
+
+/**
+ * A non-converged or poor-fit estimate -- or one carrying any warning --
+ * must read as "review this", never as success: this is the single
+ * predicate the evidence panel's styling and heading text below key off of,
+ * so "looks fine" and "is actually flagged" can never silently diverge.
+ */
+export function alignmentNeedsReview(estimate: AlignmentEstimate): boolean {
+  return (
+    !estimate.evidence.converged ||
+    estimate.evidence.poorFit ||
+    estimate.warnings.length > 0
+  );
+}
+
+function formatAlignmentNumber(value: number): string {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 }).format(
+    value,
+  );
+}
+
+function alignmentMethodLabel(
+  method: AlignmentEstimate["evidence"]["method"],
+): string {
+  return method === "correspondence-points"
+    ? "Correspondence points"
+    : "Iterative closest point (refined)";
+}
+
+function AlignmentWarningList({
+  warnings,
+}: {
+  warnings: readonly AlignmentWarning[];
+}) {
+  if (warnings.length === 0) return null;
+  return (
+    <ul className="alignment-warning-list">
+      {warnings.map((warning) => (
+        <li key={warning.code}>
+          <strong>{warning.code}</strong>
+          <p>{warning.message}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * Full, honest evidence for one `AlignmentEstimate`: every number
+ * `AlignmentEvidence` carries, plus every warning, rendered before any
+ * accept/discard choice is offered -- an estimate is never presented as if
+ * it were already a confirmed result.
+ */
+function AlignmentEvidencePanel({ estimate }: { estimate: AlignmentEstimate }) {
+  const needsReview = alignmentNeedsReview(estimate);
+  const { evidence } = estimate;
+  return (
+    <div
+      className={
+        needsReview
+          ? "alignment-evidence alignment-evidence-review"
+          : "alignment-evidence"
+      }
+      role={needsReview ? "alert" : undefined}
+    >
+      <p className="alignment-evidence-heading">
+        <strong>{alignmentMethodLabel(evidence.method)} estimate</strong>
+        {needsReview
+          ? " -- review before accepting."
+          : " -- review the evidence below before accepting."}
+      </p>
+      <dl className="alignment-evidence-list">
+        <div>
+          <dt>Correspondences / samples</dt>
+          <dd>{evidence.correspondenceCount}</dd>
+        </div>
+        <div>
+          <dt>Iterations</dt>
+          <dd>{evidence.iterations}</dd>
+        </div>
+        <div>
+          <dt>Converged</dt>
+          <dd>
+            {evidence.converged ? "Yes" : "No -- reached its iteration ceiling"}
+          </dd>
+        </div>
+        <div>
+          <dt>Residual RMS, before / after</dt>
+          <dd>
+            {formatAlignmentNumber(
+              evidence.residualsBeforeMillimetres.rmsMillimetres,
+            )}{" "}
+            mm /{" "}
+            {formatAlignmentNumber(
+              evidence.residualsAfterMillimetres.rmsMillimetres,
+            )}{" "}
+            mm
+          </dd>
+        </div>
+        <div>
+          <dt>Residual maximum, before / after</dt>
+          <dd>
+            {formatAlignmentNumber(
+              evidence.residualsBeforeMillimetres.maxMillimetres,
+            )}{" "}
+            mm /{" "}
+            {formatAlignmentNumber(
+              evidence.residualsAfterMillimetres.maxMillimetres,
+            )}{" "}
+            mm
+          </dd>
+        </div>
+        {evidence.impliedScale !== undefined && (
+          <div>
+            <dt>Implied scale (never applied)</dt>
+            <dd>{formatAlignmentNumber(evidence.impliedScale)}&times;</dd>
+          </div>
+        )}
+        <div>
+          <dt>Fit quality</dt>
+          <dd>
+            {evidence.poorFit
+              ? "Poor fit -- review before accepting"
+              : "Within the poor-fit threshold"}
+          </dd>
+        </div>
+      </dl>
+      {evidence.poorFitReason && (
+        <p className="alignment-evidence-reason">{evidence.poorFitReason}</p>
+      )}
+      <AlignmentWarningList warnings={estimate.warnings} />
+      <p className="placement-transform">
+        <strong>Estimated transform (not yet applied):</strong>{" "}
+        <code>{estimate.transform.map(formatAlignmentNumber).join(" ")}</code>
+      </p>
+    </div>
+  );
+}
+
 export function ComparisonFlow() {
   const [baseline, setBaseline] = useState(emptySource);
   const [candidate, setCandidate] = useState(emptySource);
@@ -344,6 +585,180 @@ export function ComparisonFlow() {
     };
   }, []);
 
+  // --- Alignment (opt-in, off by default) -----------------------------
+  const [alignmentEnabled, setAlignmentEnabled] = useState(false);
+  const [correspondenceRows, setCorrespondenceRows] = useState<
+    CorrespondenceRow[]
+  >(initialCorrespondenceRows);
+  const nextCorrespondenceKeyRef = useRef(MIN_CORRESPONDENCES);
+  const [correspondenceError, setCorrespondenceError] = useState<string>();
+  const [alignmentEstimate, setAlignmentEstimate] =
+    useState<AlignmentEstimate>();
+  const [icpBusy, setIcpBusy] = useState(false);
+  const [icpError, setIcpError] = useState<string>();
+  const [acceptedAlignment, setAcceptedAlignment] =
+    useState<AlignmentEstimate>();
+  const [appliedAlignment, setAppliedAlignment] =
+    useState<AppliedAlignmentInfo>();
+  const alignmentRunRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      alignmentRunRef.current?.abort();
+    };
+  }, []);
+
+  const resetAlignmentState = () => {
+    alignmentRunRef.current?.abort();
+    alignmentRunRef.current = null;
+    setAlignmentEnabled(false);
+    setCorrespondenceRows(initialCorrespondenceRows());
+    nextCorrespondenceKeyRef.current = MIN_CORRESPONDENCES;
+    setCorrespondenceError(undefined);
+    setAlignmentEstimate(undefined);
+    setIcpBusy(false);
+    setIcpError(undefined);
+    setAcceptedAlignment(undefined);
+  };
+
+  const updateBaseline = (next: SourceSelection) => {
+    setBaseline(next);
+    resetAlignmentState();
+  };
+  const updateCandidate = (next: SourceSelection) => {
+    setCandidate(next);
+    resetAlignmentState();
+  };
+
+  const updateCorrespondencePoint = (
+    key: number,
+    side: "moving" | "fixed",
+    axis: 0 | 1 | 2,
+    value: number,
+  ) => {
+    setCorrespondenceRows((rows) =>
+      rows.map((row) => {
+        if (row.key !== key) return row;
+        const nextPoint: [number, number, number] = [...row[side]];
+        nextPoint[axis] = value;
+        return { ...row, [side]: nextPoint };
+      }),
+    );
+    setCorrespondenceError(undefined);
+    setAlignmentEstimate(undefined);
+    setIcpError(undefined);
+    setAcceptedAlignment(undefined);
+  };
+
+  const addCorrespondenceRow = () => {
+    setCorrespondenceRows((rows) => [
+      ...rows,
+      emptyCorrespondenceRow(nextCorrespondenceKeyRef.current++),
+    ]);
+    setAlignmentEstimate(undefined);
+    setAcceptedAlignment(undefined);
+  };
+
+  const removeCorrespondenceRow = (key: number) => {
+    setCorrespondenceRows((rows) =>
+      rows.length > MIN_CORRESPONDENCES
+        ? rows.filter((row) => row.key !== key)
+        : rows,
+    );
+    setAlignmentEstimate(undefined);
+    setAcceptedAlignment(undefined);
+  };
+
+  const estimateFromPoints = () => {
+    setCorrespondenceError(undefined);
+    setIcpError(undefined);
+    setAcceptedAlignment(undefined);
+    try {
+      const correspondences = correspondenceRowsToPoints(correspondenceRows);
+      const next = estimateAlignment({
+        method: "correspondence-points",
+        correspondences,
+      });
+      setAlignmentEstimate(next);
+    } catch (reason) {
+      setAlignmentEstimate(undefined);
+      setCorrespondenceError(describeAlignmentFailure(reason));
+    }
+  };
+
+  const canRefineWithIcp =
+    Boolean(alignmentEstimate) &&
+    !icpBusy &&
+    baselineCapability.ready &&
+    candidateCapability.ready &&
+    capability.analysisSupported;
+
+  const refineWithIcp = async () => {
+    if (
+      !alignmentEstimate ||
+      !baseline.file ||
+      !baseline.unit ||
+      !baseline.axis ||
+      !candidate.file ||
+      !candidate.unit ||
+      !candidate.axis
+    )
+      return;
+    alignmentRunRef.current?.abort();
+    const controller = new AbortController();
+    alignmentRunRef.current = controller;
+    setIcpBusy(true);
+    setIcpError(undefined);
+    try {
+      const refined = await estimateIcpAlignmentAsync(
+        {
+          moving: {
+            file: candidate.file,
+            unit: candidate.unit,
+            axis: candidate.axis,
+            frameSource: candidate.frameSource,
+          },
+          fixed: {
+            file: baseline.file,
+            unit: baseline.unit,
+            axis: baseline.axis,
+            frameSource: baseline.frameSource,
+          },
+          initialTransform: alignmentEstimate.transform,
+        },
+        controller.signal,
+      );
+      setAlignmentEstimate(refined);
+      setAcceptedAlignment(undefined);
+    } catch (reason) {
+      if (!(reason instanceof AlignmentCancelledError)) {
+        setIcpError(describeAlignmentFailure(reason));
+      }
+    } finally {
+      setIcpBusy(false);
+      if (alignmentRunRef.current === controller)
+        alignmentRunRef.current = null;
+    }
+  };
+
+  const cancelIcpRefine = () => {
+    alignmentRunRef.current?.abort();
+  };
+
+  const acceptAlignment = () => {
+    if (!alignmentEstimate) return;
+    setAcceptedAlignment(alignmentEstimate);
+  };
+
+  const discardAlignment = () => {
+    setAcceptedAlignment(undefined);
+  };
+
+  /** Never applied unless the opt-in toggle is still on: unchecking it
+   *  discards any previously accepted estimate from taking effect, even if
+   *  the estimate itself is still shown for review. */
+  const activeAlignment = alignmentEnabled ? acceptedAlignment : undefined;
+
   const compare = async () => {
     if (
       !ready ||
@@ -364,6 +779,11 @@ export function ComparisonFlow() {
     setNotice(undefined);
     setOpenError(undefined);
     setProgress({ stage: "starting", message: "Starting local comparison" });
+    // Captured once at the start of this run: `activeAlignment` reflects
+    // whatever was accepted (and the opt-in toggle still on) at the moment
+    // "Validate and compare" was clicked, so a later edit to the alignment
+    // section cannot retroactively change what this specific run used.
+    const usedAlignment = activeAlignment;
     try {
       const next = await runComparison(
         baseline as ComparisonSource,
@@ -371,6 +791,7 @@ export function ComparisonFlow() {
         setProgress,
         analysisMemoryMiB,
         controller.signal,
+        usedAlignment?.transform,
       );
       // Re-read the original files (Blobs are immutable and freely
       // re-readable) so a portable session can be saved later without
@@ -387,6 +808,11 @@ export function ComparisonFlow() {
       setSaveError(undefined);
       setExportStatus("idle");
       setExportError(undefined);
+      setAppliedAlignment(
+        usedAlignment
+          ? { kind: "with-evidence", estimate: usedAlignment }
+          : undefined,
+      );
       setResult(next);
     } catch (reason) {
       if (reason instanceof ComparisonCancelledError) {
@@ -449,6 +875,20 @@ export function ComparisonFlow() {
       setSaveError(undefined);
       setExportStatus("idle");
       setExportError(undefined);
+      // The saved-session/report contract carries the candidate's applied
+      // `modelToComparison` transform (see `runComparison`'s doc comment),
+      // but not the `AlignmentEvidence` that may have produced it -- that
+      // evidence lives only in this session's own React state and does not
+      // round-trip through a session archive. A reopened session can
+      // therefore only show the bare transform, never the residuals,
+      // warnings, or convergence evidence a live estimate carries.
+      const reopenedCandidateTransform =
+        report.analysis.result.candidate.modelToComparison;
+      setAppliedAlignment(
+        isIdentityTransform(reopenedCandidateTransform)
+          ? undefined
+          : { kind: "transform-only", transform: reopenedCandidateTransform },
+      );
       setResult({
         baseline: baselineModelResult,
         candidate: candidateModelResult,
@@ -540,6 +980,45 @@ export function ComparisonFlow() {
           </div>
         }
       >
+        {appliedAlignment && (
+          <div className="applied-alignment-shell">
+            {appliedAlignment.kind === "with-evidence" ? (
+              <div className="applied-alignment-banner">
+                <p>
+                  <strong>Alignment applied.</strong> This comparison placed the
+                  candidate using an{" "}
+                  {alignmentMethodLabel(
+                    appliedAlignment.estimate.evidence.method,
+                  ).toLocaleLowerCase("en-US")}{" "}
+                  estimate you reviewed and accepted before comparing. This
+                  result describes the aligned geometry, not the
+                  candidate&rsquo;s original position -- see the evidence below.
+                </p>
+                <AlignmentEvidencePanel estimate={appliedAlignment.estimate} />
+              </div>
+            ) : (
+              <div className="applied-alignment-banner">
+                <p>
+                  <strong>Non-identity candidate placement.</strong> This
+                  reopened session&rsquo;s candidate carries a placement
+                  transform other than identity (shown below), so it may reflect
+                  an alignment estimate accepted when the session was originally
+                  saved. Session archives store only the applied transform, not
+                  the alignment evidence (residuals, iterations, warnings) that
+                  may have produced it.
+                </p>
+                <p className="placement-transform">
+                  <strong>Applied transform:</strong>{" "}
+                  <code>
+                    {appliedAlignment.transform
+                      .map(formatAlignmentNumber)
+                      .join(" ")}
+                  </code>
+                </p>
+              </div>
+            )}
+          </div>
+        )}
         <Workbench
           baseline={result.baseline}
           candidate={result.candidate}
@@ -564,6 +1043,8 @@ export function ComparisonFlow() {
             setSaveError(undefined);
             setExportStatus("idle");
             setExportError(undefined);
+            setAppliedAlignment(undefined);
+            resetAlignmentState();
           }}
         />
       </Suspense>
@@ -641,12 +1122,12 @@ export function ComparisonFlow() {
           <SourceCard
             role="Baseline"
             selection={baseline}
-            update={setBaseline}
+            update={updateBaseline}
           />
           <SourceCard
             role="Candidate"
             selection={candidate}
-            update={setCandidate}
+            update={updateCandidate}
           />
         </div>
         <section className="method-card" aria-labelledby="method-title">
@@ -701,6 +1182,188 @@ export function ComparisonFlow() {
                 a guarantee -- raise the allowance or expect the comparison to
                 stop with a resource-budget message.
               </p>
+            )}
+          </div>
+        </section>
+        <section
+          className="method-card alignment-card"
+          aria-labelledby="alignment-title"
+        >
+          <div>
+            <span className="step">Optional</span>
+            <h3 id="alignment-title">Align candidate to baseline</h3>
+          </div>
+          <div className="alignment-card-body">
+            <label className="alignment-toggle">
+              <input
+                type="checkbox"
+                checked={alignmentEnabled}
+                onChange={(event) => {
+                  const checked = event.currentTarget.checked;
+                  setAlignmentEnabled(checked);
+                  if (!checked) setAcceptedAlignment(undefined);
+                }}
+              />
+              Align the candidate before comparing
+            </label>
+            <p>
+              Off by default. Alignment is an estimate you review and explicitly
+              accept &mdash; VoxelSpy never auto-aligns geometry. Enter at least{" "}
+              {MIN_CORRESPONDENCES} correspondence point pairs (a point on the
+              candidate, in its own local frame, paired with its intended
+              counterpart on the baseline, in the baseline&rsquo;s own frame),
+              then optionally refine the result with iterative-closest-point
+              using the already-selected geometry. Results computed with an
+              accepted alignment describe how the aligned geometry compares
+              &mdash; not the candidate&rsquo;s original position.
+            </p>
+            {alignmentEnabled && (
+              <>
+                <div className="correspondence-table-scroll">
+                  <table className="correspondence-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Point</th>
+                        <th scope="col">Candidate X (mm)</th>
+                        <th scope="col">Candidate Y (mm)</th>
+                        <th scope="col">Candidate Z (mm)</th>
+                        <th scope="col">Baseline X (mm)</th>
+                        <th scope="col">Baseline Y (mm)</th>
+                        <th scope="col">Baseline Z (mm)</th>
+                        <th scope="col">
+                          <span className="visually-hidden">Actions</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {correspondenceRows.map((row, index) => (
+                        <tr key={row.key}>
+                          <th scope="row">{index + 1}</th>
+                          {(["moving", "fixed"] as const).flatMap((side) =>
+                            ([0, 1, 2] as const).map((axisIndex) => (
+                              <td key={`${side}-${axisIndex}`}>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  aria-label={`Point ${index + 1} ${
+                                    side === "moving" ? "candidate" : "baseline"
+                                  } ${["X", "Y", "Z"][axisIndex]} (mm)`}
+                                  value={
+                                    Number.isFinite(row[side][axisIndex])
+                                      ? row[side][axisIndex]
+                                      : ""
+                                  }
+                                  onChange={(event) =>
+                                    updateCorrespondencePoint(
+                                      row.key,
+                                      side,
+                                      axisIndex,
+                                      event.currentTarget.valueAsNumber,
+                                    )
+                                  }
+                                />
+                              </td>
+                            )),
+                          )}
+                          <td>
+                            <button
+                              type="button"
+                              className="button button-secondary"
+                              disabled={
+                                correspondenceRows.length <= MIN_CORRESPONDENCES
+                              }
+                              onClick={() => removeCorrespondenceRow(row.key)}
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="alignment-actions">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={addCorrespondenceRow}
+                  >
+                    Add point
+                  </button>
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    disabled={!correspondenceRowsReady(correspondenceRows)}
+                    onClick={estimateFromPoints}
+                  >
+                    Estimate from points
+                  </button>
+                </div>
+                {correspondenceError && (
+                  <div className="comparison-error" role="alert">
+                    <strong>Alignment estimate could not be computed</strong>
+                    <p>{correspondenceError}</p>
+                  </div>
+                )}
+                {alignmentEstimate && (
+                  <>
+                    <AlignmentEvidencePanel estimate={alignmentEstimate} />
+                    <div className="alignment-actions">
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        disabled={!canRefineWithIcp}
+                        onClick={() => void refineWithIcp()}
+                      >
+                        {icpBusy
+                          ? "Refining locally…"
+                          : "Refine with ICP (optional)"}
+                      </button>
+                      {icpBusy && (
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={cancelIcpRefine}
+                        >
+                          Cancel refinement
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="button button-primary"
+                        disabled={Boolean(acceptedAlignment)}
+                        onClick={acceptAlignment}
+                      >
+                        {acceptedAlignment
+                          ? "Alignment accepted"
+                          : "Accept this alignment"}
+                      </button>
+                      {acceptedAlignment && (
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={discardAlignment}
+                        >
+                          Discard
+                        </button>
+                      )}
+                    </div>
+                    {icpError && (
+                      <div className="comparison-error" role="alert">
+                        <strong>Refinement could not be computed</strong>
+                        <p>{icpError}</p>
+                      </div>
+                    )}
+                    {acceptedAlignment && (
+                      <p className="capability capability-ready" role="status">
+                        <i />
+                        This alignment will be applied to the candidate when you
+                        compare.
+                      </p>
+                    )}
+                  </>
+                )}
+              </>
             )}
           </div>
         </section>

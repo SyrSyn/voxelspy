@@ -7,6 +7,7 @@ import {
   IDENTITY_MAT4,
   analysisRequestSchema,
   reportIdSchema,
+  rigidTransformSchema,
   type AnalysisResult,
   type NormalizedModel,
   type Report,
@@ -85,6 +86,41 @@ async function buildFixture(): Promise<Fixture> {
     requestId: "analysis.session-fixture",
     baseline: { modelId: baseline.id, modelToComparison: IDENTITY_MAT4 },
     candidate: { modelId: candidate.id, modelToComparison: IDENTITY_MAT4 },
+    method: { ...SURFACE_DISTANCE_METHOD, parameters: { maxRegions: 4 } },
+    tolerance: { distanceMillimetres: 0.1 },
+  });
+  const analysis = analyzeModelPair({ request, baseline, candidate });
+  const summary = summarizeModelComparison(baseline, candidate, analysis);
+  return {
+    baseline,
+    candidate,
+    analysis,
+    summary,
+    sourceModels: { baseline: baselineBytes, candidate: candidateBytes },
+  };
+}
+
+/**
+ * Same fixture as `buildFixture`, except the candidate is placed at
+ * `candidateTransform` instead of the identity -- the shape a comparison
+ * that used an accepted `estimateAlignment` (`@voxelspy/analysis`) result
+ * would produce (see `runComparison`'s `candidatePlacement` parameter in
+ * `worker-client.ts`). Used to verify that this placement genuinely
+ * round-trips through the report/session contract rather than being
+ * silently dropped or reset to identity somewhere along the way.
+ */
+async function buildFixtureWithCandidateTransform(
+  candidateTransform: typeof IDENTITY_MAT4,
+): Promise<Fixture> {
+  const baselineBytes = stlBytes("baseline", 0);
+  const candidateBytes = stlBytes("candidate", 1);
+  const baseline = await importFixtureModel("baseline", baselineBytes);
+  const candidate = await importFixtureModel("candidate", candidateBytes);
+  const request = analysisRequestSchema.parse({
+    contractVersion: 1,
+    requestId: "analysis.aligned-session-fixture",
+    baseline: { modelId: baseline.id, modelToComparison: IDENTITY_MAT4 },
+    candidate: { modelId: candidate.id, modelToComparison: candidateTransform },
     method: { ...SURFACE_DISTANCE_METHOD, parameters: { maxRegions: 4 } },
     tolerance: { distanceMillimetres: 0.1 },
   });
@@ -513,6 +549,81 @@ describe("saveSession", () => {
         },
       }),
     ).rejects.toBeInstanceOf(SessionArchiveError);
+  });
+});
+
+describe("a non-identity candidate placement (e.g. an accepted alignment) round-trips through a saved session", () => {
+  it("preserves the candidate's modelToComparison exactly through save and reopen", async () => {
+    // Identity rotation, deliberate translation -- the shape an accepted
+    // `estimateAlignment` transform takes once fed into
+    // `runComparison`'s `candidatePlacement` (see `worker-client.ts`).
+    const candidateTransform = rigidTransformSchema.parse([
+      1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 2, -3, 1,
+    ]);
+    const fixture =
+      await buildFixtureWithCandidateTransform(candidateTransform);
+
+    // It must not have silently fallen back to identity in the analysis
+    // result itself -- the precondition the rest of this test depends on.
+    expect(fixture.analysis.candidate.modelToComparison).toEqual(
+      candidateTransform,
+    );
+    expect(fixture.analysis.baseline.modelToComparison).toEqual(IDENTITY_MAT4);
+
+    const saved = await saveSession(fixture);
+    expect(saved.report.analysis.request.candidate.modelToComparison).toEqual(
+      candidateTransform,
+    );
+    expect(saved.report.analysis.result.candidate.modelToComparison).toEqual(
+      candidateTransform,
+    );
+
+    const opened = await openSession(saved.bytes);
+    const { report } = opened.exchange.bundle;
+    expect(report.analysis.request.candidate.modelToComparison).toEqual(
+      candidateTransform,
+    );
+    expect(report.analysis.result.candidate.modelToComparison).toEqual(
+      candidateTransform,
+    );
+    // Baseline is never adjusted by alignment; it must still round-trip at
+    // the identity transform.
+    expect(report.analysis.result.baseline.modelToComparison).toEqual(
+      IDENTITY_MAT4,
+    );
+  });
+
+  it("also round-trips through an interactive report export (buildComparisonReport), not only a saved session", async () => {
+    const candidateTransform = rigidTransformSchema.parse([
+      1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 2, -3, 1,
+    ]);
+    const fixture =
+      await buildFixtureWithCandidateTransform(candidateTransform);
+    const report = buildComparisonReport({
+      id: reportIdSchema.parse("report.alignment-roundtrip-fixture"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      baseline: fixture.baseline,
+      candidate: fixture.candidate,
+      analysis: fixture.analysis,
+      summary: fixture.summary,
+    });
+    expect(report.analysis.request.candidate.modelToComparison).toEqual(
+      candidateTransform,
+    );
+    expect(report.analysis.result.candidate.modelToComparison).toEqual(
+      candidateTransform,
+    );
+    // Precise, known gap (see the ComparisonFlow.tsx handoff notes): the
+    // transform round-trips in the report's *data*, but `renderReportHtml`
+    // never reads `report.analysis.request`/`.result`'s model bindings, so
+    // an exported/rendered HTML report does not display this transform as
+    // visible text anywhere -- only a reader of the report's underlying
+    // JSON (or the live workbench, which does use this field to place the
+    // candidate mesh) can see it. This is a report/render-report-html.ts
+    // contract question, out of scope for this bead's apps/web-only
+    // ownership.
+    const html = renderReportHtml(report);
+    expect(html).not.toContain("modelToComparison");
   });
 });
 

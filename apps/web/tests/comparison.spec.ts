@@ -608,3 +608,228 @@ test("keeps findings and session/report actions usable when WebGL is unavailable
   await expect(saveButton).toBeEnabled({ timeout: 20_000 });
   await expect(exportButton).toBeEnabled();
 });
+
+/** Fills one correspondence-point row's six numeric fields via their accessible labels. */
+async function fillCorrespondencePoint(
+  page: import("@playwright/test").Page,
+  point: number,
+  moving: [number, number, number],
+  fixed: [number, number, number],
+) {
+  const axes = ["X", "Y", "Z"] as const;
+  for (const [index, axis] of axes.entries()) {
+    await page
+      .getByLabel(`Point ${point} candidate ${axis} (mm)`)
+      .fill(String(moving[index]));
+    await page
+      .getByLabel(`Point ${point} baseline ${axis} (mm)`)
+      .fill(String(fixed[index]));
+  }
+}
+
+test("alignment is off by default and comparing without it is unchanged", async ({
+  page,
+}) => {
+  await page.goto("/compare/");
+  const alignmentToggle = page.getByRole("checkbox", {
+    name: "Align the candidate before comparing",
+  });
+  await expect(alignmentToggle).not.toBeChecked();
+  await expect(page.getByRole("table")).toHaveCount(0);
+
+  const cards = page.locator(".source-card");
+  await cards
+    .nth(0)
+    .locator('input[type="file"]')
+    .setInputFiles({
+      name: "baseline.stl",
+      mimeType: "model/stl",
+      buffer: Buffer.from(baseline),
+    });
+  await cards
+    .nth(1)
+    .locator('input[type="file"]')
+    .setInputFiles({
+      name: "candidate.stl",
+      mimeType: "model/stl",
+      buffer: Buffer.from(candidate),
+    });
+  await page.getByRole("button", { name: "Validate and compare" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Comparison workbench" }),
+  ).toBeVisible({ timeout: 20_000 });
+  // No alignment was ever accepted, so no applied-alignment banner appears.
+  await expect(page.locator(".applied-alignment-banner")).toHaveCount(0);
+});
+
+test("reviewing and accepting a correspondence-point alignment changes the comparison and stays visible on the result", async ({
+  page,
+}) => {
+  await page.goto("/compare/");
+  const cards = page.locator(".source-card");
+  await cards
+    .nth(0)
+    .locator('input[type="file"]')
+    .setInputFiles({
+      name: "baseline.stl",
+      mimeType: "model/stl",
+      buffer: Buffer.from(baseline),
+    });
+  await cards
+    .nth(1)
+    .locator('input[type="file"]')
+    .setInputFiles({
+      name: "candidate.stl",
+      mimeType: "model/stl",
+      buffer: Buffer.from(candidate),
+    });
+
+  await page
+    .getByRole("checkbox", { name: "Align the candidate before comparing" })
+    .check();
+  await expect(page.getByRole("table")).toBeVisible();
+
+  // A pure, known 5mm translation along X: fixed = moving + (5, 0, 0).
+  await fillCorrespondencePoint(page, 1, [0, 0, 0], [5, 0, 0]);
+  await fillCorrespondencePoint(page, 2, [1, 0, 0], [6, 0, 0]);
+  await fillCorrespondencePoint(page, 3, [0, 1, 0], [5, 1, 0]);
+
+  await page.getByRole("button", { name: "Estimate from points" }).click();
+  const evidence = page.locator(".alignment-evidence").first();
+  await expect(
+    evidence.getByText("Correspondence points estimate"),
+  ).toBeVisible();
+  await expect(evidence.getByText("Yes", { exact: true })).toBeVisible();
+  // A clean estimate must not be flagged as needing review.
+  await expect(page.locator(".alignment-evidence-review")).toHaveCount(0);
+  await expect(
+    evidence.getByText("Estimated transform (not yet applied):"),
+  ).toBeVisible();
+
+  const acceptButton = page.getByRole("button", {
+    name: "Accept this alignment",
+  });
+  await acceptButton.click();
+  await expect(
+    page.getByText(
+      "This alignment will be applied to the candidate when you compare.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Alignment accepted" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Validate and compare" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Comparison workbench" }),
+  ).toBeVisible({ timeout: 20_000 });
+
+  const banner = page.locator(".applied-alignment-banner");
+  await expect(banner).toBeVisible();
+  await expect(banner.getByText("Alignment applied.")).toBeVisible();
+  await expect(
+    banner.getByText("Estimated transform (not yet applied):"),
+  ).toBeVisible();
+  // The 5mm translation this alignment applied must show up in the applied
+  // transform's translation column.
+  await expect(banner.locator("code")).toContainText("5");
+});
+
+test("refining a correspondence estimate with ICP runs the dedicated alignment worker and updates the reviewed estimate", async ({
+  page,
+}) => {
+  await page.goto("/compare/");
+  const cards = page.locator(".source-card");
+  await cards
+    .nth(0)
+    .locator('input[type="file"]')
+    .setInputFiles({
+      name: "baseline.stl",
+      mimeType: "model/stl",
+      buffer: Buffer.from(baseline),
+    });
+  await cards
+    .nth(1)
+    .locator('input[type="file"]')
+    .setInputFiles({
+      name: "candidate.stl",
+      mimeType: "model/stl",
+      buffer: Buffer.from(candidate),
+    });
+
+  await page
+    .getByRole("checkbox", { name: "Align the candidate before comparing" })
+    .check();
+  await fillCorrespondencePoint(page, 1, [0, 0, 0], [0, 0, 0]);
+  await fillCorrespondencePoint(page, 2, [10, 0, 0], [10, 0, 0]);
+  await fillCorrespondencePoint(page, 3, [0, 10, 0], [0, 10, 0]);
+  await page.getByRole("button", { name: "Estimate from points" }).click();
+
+  const refineButton = page.getByRole("button", {
+    name: "Refine with ICP (optional)",
+  });
+  await expect(refineButton).toBeEnabled();
+  await refineButton.click();
+  // The alignment worker imports both parts and runs a bounded ICP pass;
+  // once it settles, the reviewed evidence switches to the refined method.
+  const evidence = page.locator(".alignment-evidence").first();
+  await expect(
+    evidence.getByText("Iterative closest point (refined) estimate"),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText("Refining locally…")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Accept this alignment" }).click();
+  await page.getByRole("button", { name: "Validate and compare" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Comparison workbench" }),
+  ).toBeVisible({ timeout: 20_000 });
+  const banner = page.locator(".applied-alignment-banner");
+  await expect(banner).toBeVisible();
+  await expect(banner.locator("p").first()).toContainText(
+    "iterative closest point (refined)",
+  );
+  await expect(banner.locator(".alignment-evidence-heading")).toContainText(
+    "Iterative closest point (refined) estimate",
+  );
+});
+
+test("a shape-inconsistent correspondence-point set surfaces a poor-fit warning that reads as review, never success", async ({
+  page,
+}) => {
+  await page.goto("/compare/");
+  const cards = page.locator(".source-card");
+  await cards
+    .nth(0)
+    .locator('input[type="file"]')
+    .setInputFiles({
+      name: "baseline.stl",
+      mimeType: "model/stl",
+      buffer: Buffer.from(baseline),
+    });
+  await cards
+    .nth(1)
+    .locator('input[type="file"]')
+    .setInputFiles({
+      name: "candidate.stl",
+      mimeType: "model/stl",
+      buffer: Buffer.from(candidate),
+    });
+
+  await page
+    .getByRole("checkbox", { name: "Align the candidate before comparing" })
+    .check();
+
+  // No rigid transform can map these moving points onto these fixed points:
+  // the third pair's distance from the first two does not match between the
+  // two sides, a length mismatch no rotation or translation resolves.
+  await fillCorrespondencePoint(page, 1, [0, 0, 0], [0, 0, 0]);
+  await fillCorrespondencePoint(page, 2, [10, 0, 0], [10, 0, 0]);
+  await fillCorrespondencePoint(page, 3, [0, 10, 0], [0, 0, 20]);
+
+  await page.getByRole("button", { name: "Estimate from points" }).click();
+  await expect(page.locator(".alignment-evidence-review")).toBeVisible();
+  await expect(
+    page.getByText("Poor fit -- review before accepting"),
+  ).toBeVisible();
+  await expect(page.getByText("alignment.poor-fit")).toBeVisible();
+});

@@ -15,6 +15,7 @@ import {
   type ModelId,
   type NormalizedModel,
   type RequestId,
+  type RigidTransform,
   type SourceAxis,
   type SourceUnit,
   type WorkerOutboundMessage,
@@ -376,12 +377,30 @@ async function specFromSource(
   };
 }
 
+/**
+ * Runs a full local comparison: imports both sources, then analyzes them.
+ *
+ * `candidatePlacement` defaults to the identity transform -- an ordinary
+ * comparison never moves either model. The only way this becomes anything
+ * else is `ComparisonFlow.tsx`'s explicitly opt-in alignment step: a user
+ * who has reviewed and accepted an `estimateAlignment` estimate (see
+ * `@voxelspy/analysis`) can supply its `transform` here, which is carried
+ * unchanged into `candidate.modelToComparison` -- the same per-model
+ * placement field `AnalysisRequest` already defines, never a silent
+ * transform of the candidate's own geometry. Because `analyzeModelPair`
+ * always echoes the requested model bindings back onto its result (see
+ * `AnalysisResult.candidate`), this placement -- and therefore whether this
+ * comparison used a deliberate alignment, and by what transform -- is
+ * exactly what a reader of `analysis.candidate.modelToComparison` (in the
+ * live result, an exported report, or a saved session) will find.
+ */
 export async function runComparison(
   baselineSource: ComparisonSource,
   candidateSource: ComparisonSource,
   progress: (value: ComparisonProgress) => void,
   analysisMemoryMiB = DEFAULT_ANALYSIS_MEMORY_MIB,
   signal?: AbortSignal,
+  candidatePlacement: RigidTransform | typeof IDENTITY_MAT4 = IDENTITY_MAT4,
 ): Promise<CompletedComparison> {
   return withComparisonWorker(
     signal,
@@ -408,7 +427,7 @@ export async function runComparison(
         baseline: { modelId: baseline.id, modelToComparison: IDENTITY_MAT4 },
         candidate: {
           modelId: candidate.id,
-          modelToComparison: IDENTITY_MAT4,
+          modelToComparison: candidatePlacement,
         },
         method: {
           ...SURFACE_DISTANCE_METHOD,

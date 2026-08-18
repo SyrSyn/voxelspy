@@ -1,5 +1,9 @@
 import { IDENTITY_MAT4, requestIdSchema } from "@voxelspy/contracts";
-import type { RequestId, WorkerOutboundMessage } from "@voxelspy/contracts";
+import type {
+  Mat4,
+  RequestId,
+  WorkerOutboundMessage,
+} from "@voxelspy/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CANCEL_GRACE_PERIOD_MS,
@@ -290,6 +294,107 @@ describe("runComparison cancellation", () => {
     await expect(runPromise).rejects.toBeInstanceOf(ComparisonCancelledError);
     const worker = FakeWorker.instances.at(-1)!;
     expect(worker.terminated).toBe(true);
+  });
+});
+
+/**
+ * Drives a `runComparison` run through both import round trips (using
+ * `minimalNormalizedModel` fixtures for baseline/candidate) and returns the
+ * analysis "execute" message it posts next, without resolving the run --
+ * exactly enough protocol traffic to inspect what `runComparison` put in the
+ * analysis request's model bindings.
+ */
+async function driveToAnalysisRequest(worker: FakeWorker) {
+  worker.emit(readyMessage);
+  await flushMicrotasks();
+  const initializeId = lastPostedRequestId(worker);
+  worker.emit({
+    protocolVersion: 1,
+    type: "initialized",
+    requestId: initializeId,
+  });
+  await flushMicrotasks();
+
+  const baselineRequestId = lastPostedRequestId(worker);
+  worker.emit({
+    protocolVersion: 1,
+    type: "result",
+    operation: "import",
+    requestId: baselineRequestId,
+    result: {
+      contractVersion: 1,
+      ok: true,
+      model: minimalNormalizedModel("baseline"),
+    },
+  });
+  await flushMicrotasks();
+
+  const candidateRequestId = lastPostedRequestId(worker);
+  worker.emit({
+    protocolVersion: 1,
+    type: "result",
+    operation: "import",
+    requestId: candidateRequestId,
+    result: {
+      contractVersion: 1,
+      ok: true,
+      model: minimalNormalizedModel("candidate"),
+    },
+  });
+  await flushMicrotasks();
+
+  return worker.posted.at(-1) as {
+    type: string;
+    operation?: string;
+    request: {
+      baseline: { modelToComparison: number[] };
+      candidate: { modelToComparison: number[] };
+    };
+  };
+}
+
+describe("runComparison candidate placement", () => {
+  it("places both baseline and candidate at the identity transform by default", async () => {
+    const runPromise = start(
+      dummySource("baseline.stl"),
+      dummySource("candidate.stl"),
+      () => {},
+    );
+    runPromise.catch(() => {});
+    const worker = FakeWorker.instances.at(-1)!;
+
+    const analysisMessage = await driveToAnalysisRequest(worker);
+    expect(analysisMessage.operation).toBe("analysis");
+    expect(analysisMessage.request.baseline.modelToComparison).toEqual(
+      IDENTITY_MAT4,
+    );
+    expect(analysisMessage.request.candidate.modelToComparison).toEqual(
+      IDENTITY_MAT4,
+    );
+  });
+
+  it("threads an explicit candidatePlacement into the analysis request's candidate binding, leaving baseline at identity", async () => {
+    // Identity rotation, deliberate translation -- exactly the shape an
+    // accepted `estimateAlignment` transform would take.
+    const translated: Mat4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 2, -3, 1];
+    const runPromise = start(
+      dummySource("baseline.stl"),
+      dummySource("candidate.stl"),
+      () => {},
+      undefined,
+      undefined,
+      translated,
+    );
+    runPromise.catch(() => {});
+    const worker = FakeWorker.instances.at(-1)!;
+
+    const analysisMessage = await driveToAnalysisRequest(worker);
+    expect(analysisMessage.request.baseline.modelToComparison).toEqual(
+      IDENTITY_MAT4,
+    );
+    expect(analysisMessage.request.candidate.modelToComparison).toEqual(
+      translated,
+    );
   });
 });
 

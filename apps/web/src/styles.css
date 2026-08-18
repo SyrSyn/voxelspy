@@ -2101,6 +2101,187 @@ a.tool-card-available:hover {
   accent-color: var(--green);
 }
 
+/* Alignment (/compare/'s opt-in "Align candidate to baseline" step): the
+   correspondence-point entry table, the reviewed-evidence panel shown before
+   any accept/discard choice, and the applied-alignment banner shown above
+   the workbench once a comparison used an accepted estimate. Reuses
+   `.method-card`/`.comparison-error`/`.clearance-caveat`/`.placement-
+   transform` conventions wherever the shape already matches; only genuinely
+   new shapes get new rules here. */
+.alignment-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.alignment-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.alignment-card-body > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.alignment-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 830;
+}
+.alignment-toggle input {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--green);
+}
+.correspondence-table-scroll {
+  overflow-x: auto;
+}
+.correspondence-table {
+  width: 100%;
+  min-width: 46rem;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+.correspondence-table th,
+.correspondence-table td {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.correspondence-table thead th {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.correspondence-table tbody th[scope="row"] {
+  color: var(--text);
+  font-weight: 800;
+}
+.correspondence-table input[type="number"] {
+  width: 6rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  color: var(--text);
+  background: var(--surface-solid);
+  font: inherit;
+}
+.alignment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+.alignment-evidence {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+/* A non-converged or poor-fit estimate -- or one carrying any warning --
+   must never read as success: this variant reuses `.clearance-caveat`'s
+   orange-callout treatment so the same "review this" cue voxelspy already
+   applies to a tight clearance fit or a sampling caveat applies here too. */
+.alignment-evidence-review {
+  border-color: color-mix(in srgb, var(--orange) 45%, var(--line));
+  background: color-mix(in srgb, var(--orange) 8%, transparent);
+}
+.alignment-evidence-heading {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.84rem;
+}
+.alignment-evidence-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.6rem 1rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+.alignment-evidence-list > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.alignment-evidence-list dt {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.alignment-evidence-list dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+.alignment-evidence-reason {
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.alignment-warning-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.alignment-warning-list li {
+  padding: 0.6rem 0.75rem;
+  border-left: 3px solid var(--orange);
+  border-radius: 0.4rem;
+  background: color-mix(in srgb, var(--orange) 12%, transparent);
+}
+.alignment-warning-list strong {
+  display: block;
+  color: var(--text);
+  font:
+    800 0.68rem ui-monospace,
+    monospace;
+}
+.alignment-warning-list p {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.applied-alignment-shell {
+  width: min(1600px, calc(100% - 2rem));
+  margin: 1rem auto 0;
+}
+.applied-alignment-banner {
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--green);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.applied-alignment-banner > p {
+  margin: 0 0 0.5rem;
+  color: var(--text);
+  font-size: 0.86rem;
+}
+.applied-alignment-banner .alignment-evidence {
+  margin-top: 0.25rem;
+}
+
+@media (max-width: 720px) {
+  .correspondence-table {
+    min-width: 40rem;
+  }
+  .alignment-evidence-list {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
