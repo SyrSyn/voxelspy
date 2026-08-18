@@ -3,6 +3,12 @@ import type { Report, SourceAxis, SourceUnit } from "@voxelspy/contracts";
 import { SessionArchiveError } from "@voxelspy/session-archive";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
+  estimateAnalysisFit,
+  evaluateCapabilityPreflight,
+  readEnvironmentReadings,
+  type CapabilityPreflight,
+} from "./capability";
+import {
   boundedEntityId,
   brandId,
   buildComparisonReport,
@@ -72,6 +78,25 @@ export function sourceSelectionForFile(file: File | null): SourceSelection {
 }
 
 const emptySource = (): SourceSelection => sourceSelectionForFile(null);
+
+/**
+ * Server-side prerendering (and the first client render, before hydration
+ * settles) has no device signals to read, so this matches exactly what
+ * `evaluateCapabilityPreflight` returns for an all-unknown, worker-capable
+ * reading -- optimistic about Worker/WebGL support (the overwhelmingly
+ * common case) and at today's existing default allowance. The real
+ * device-derived preflight replaces this after mount (see the effect in
+ * `ComparisonFlow`), which keeps prerendered HTML and the first client
+ * render identical and avoids a hydration mismatch.
+ */
+const INITIAL_CAPABILITY: CapabilityPreflight = {
+  recommendedAnalysisMemoryMiB: DEFAULT_ANALYSIS_MEMORY_MIB,
+  memoryNotes: [],
+  workersAvailable: true,
+  webglAvailable: true,
+  analysisSupported: true,
+  blockingMessage: undefined,
+};
 
 export function sourceCapability(selection: SourceSelection) {
   if (!selection.file)
@@ -273,6 +298,20 @@ export function ComparisonFlow() {
   const [analysisMemoryMiB, setAnalysisMemoryMiB] = useState(
     DEFAULT_ANALYSIS_MEMORY_MIB,
   );
+  const [capability, setCapability] =
+    useState<CapabilityPreflight>(INITIAL_CAPABILITY);
+  useEffect(() => {
+    // Device signals (deviceMemory, hardwareConcurrency, pointer coarseness,
+    // Worker/WebGL support) only exist client-side, so the recommended
+    // allowance is applied once after mount rather than during the initial
+    // render -- see `INITIAL_CAPABILITY` for why that keeps prerendered HTML
+    // and the first client render identical. Running once on mount also
+    // guarantees this never overwrites a value the user has since chosen on
+    // the slider themselves.
+    const preflight = evaluateCapabilityPreflight(readEnvironmentReadings());
+    setCapability(preflight);
+    setAnalysisMemoryMiB(preflight.recommendedAnalysisMemoryMiB);
+  }, []);
   const activeRunRef = useRef<AbortController | null>(null);
   const activeOpenRunRef = useRef<AbortController | null>(null);
   const saveInFlightRef = useRef(false);
@@ -285,8 +324,18 @@ export function ComparisonFlow() {
     () => sourceCapability(candidate),
     [candidate],
   );
+  const fitEstimate = useMemo(() => {
+    if (!baseline.file || !candidate.file) return undefined;
+    return estimateAnalysisFit(
+      baseline.file.size + candidate.file.size,
+      analysisMemoryMiB,
+    );
+  }, [baseline.file, candidate.file, analysisMemoryMiB]);
   const ready =
-    baselineCapability.ready && candidateCapability.ready && !progress;
+    baselineCapability.ready &&
+    candidateCapability.ready &&
+    !progress &&
+    capability.analysisSupported;
 
   useEffect(() => {
     return () => {
@@ -582,6 +631,12 @@ export function ComparisonFlow() {
             different frame, adjust its Expert settings first.
           </p>
         </div>
+        {!capability.analysisSupported && (
+          <div className="comparison-error" role="alert">
+            <strong>Local comparison is unavailable in this browser</strong>
+            <p>{capability.blockingMessage}</p>
+          </div>
+        )}
         <div className="file-grid">
           <SourceCard
             role="Baseline"
@@ -619,13 +674,34 @@ export function ComparisonFlow() {
               onChange={(event) =>
                 setAnalysisMemoryMiB(Number(event.currentTarget.value))
               }
-              aria-describedby="analysis-memory-help"
+              aria-describedby={
+                capability.memoryNotes.length > 0
+                  ? "analysis-memory-help analysis-memory-recommendation"
+                  : "analysis-memory-help"
+              }
             />
             <small id="analysis-memory-help">
               This is a ceiling, not preallocated memory. Raising it also gives
               the local worker more compute time; large settings may slow or
-              destabilize this tab.
+              destabilize this tab. The starting value above is a recommendation
+              for this device, not a hard limit -- move the slider to use any
+              allowance in its range.
             </small>
+            {capability.memoryNotes.length > 0 && (
+              <small id="analysis-memory-recommendation">
+                {capability.memoryNotes.join(" ")}
+              </small>
+            )}
+            {fitEstimate?.likelyExceedsAllowance && (
+              <p className="capability" role="status">
+                <i />
+                Estimated analysis memory need is roughly{" "}
+                {fitEstimate.estimatedMiB} MiB for the selected files, above the{" "}
+                {analysisMemoryMiB} MiB allowance. This is a rough estimate, not
+                a guarantee -- raise the allowance or expect the comparison to
+                stop with a resource-budget message.
+              </p>
+            )}
           </div>
         </section>
         <div className="comparison-status" aria-live="polite">
@@ -634,7 +710,9 @@ export function ComparisonFlow() {
               notice ??
               (ready
                 ? "Inputs pass capability preflight"
-                : "Choose both source files")}
+                : !capability.analysisSupported
+                  ? "Comparison disabled: see the browser support notice above"
+                  : "Choose both source files")}
           </span>
           <div className="actions">
             {progress && (

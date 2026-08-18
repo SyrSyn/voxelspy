@@ -3,7 +3,11 @@ import type { ComparisonProgress } from "./worker-client";
 
 const runComparison = vi.fn();
 
-vi.mock("./worker-client", () => ({
+// Only `runComparison` itself needs mocking; the rest of the module's real
+// exports (e.g. the ANALYSIS_MEMORY_* constants) still need to be present
+// because `Workbench` -> `capability` reads them at module scope.
+vi.mock("./worker-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./worker-client")>()),
   runComparison: (...args: unknown[]) => runComparison(...args),
 }));
 vi.mock("./sample-models", () => ({

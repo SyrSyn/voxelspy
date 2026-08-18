@@ -31,6 +31,7 @@ import type {
   NumericDelta,
 } from "@voxelspy/analysis";
 import { summarizeModelComparisonAsync } from "./summary-worker-client";
+import { probeWebGLAvailability } from "./capability";
 
 type ViewKind = "baseline" | "difference" | "candidate";
 type CameraState = {
@@ -256,18 +257,6 @@ function initialCameraFor(size: number): CameraState {
     target: [0, 0, 0],
     revision: 0,
   };
-}
-
-function hasWebGL() {
-  if (typeof document === "undefined") return false;
-  try {
-    const canvas = document.createElement("canvas");
-    const context = canvas.getContext("webgl2") ?? canvas.getContext("webgl");
-    context?.getExtension("WEBGL_lose_context")?.loseContext();
-    return context !== null;
-  } catch {
-    return false;
-  }
 }
 
 class RenderBoundary extends Component<
@@ -561,7 +550,7 @@ function Scene({
   candidateToComparison: Matrix4;
 }) {
   const [available, setAvailable] = useState(false);
-  useEffect(() => setAvailable(hasWebGL()), []);
+  useEffect(() => setAvailable(probeWebGLAvailability()), []);
   const bounds = useMemo(() => {
     const value = modelBounds(baseline, baselineToComparison).union(
       modelBounds(candidate, candidateToComparison),
