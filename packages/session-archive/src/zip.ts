@@ -143,8 +143,12 @@ export function inspectStoredZip(
     requireRange(bytes, offset, 46);
     if (read32(view, offset) !== CENTRAL_SIGNATURE)
       fail("INVALID_ZIP", "Invalid ZIP central-directory entry");
+    const versionMadeBy = read16(view, offset + 4);
+    const versionNeeded = read16(view, offset + 6);
     const flags = read16(view, offset + 8);
     const method = read16(view, offset + 10);
+    const modTime = read16(view, offset + 12);
+    const modDate = read16(view, offset + 14);
     if ((flags & 1) !== 0)
       fail("UNSUPPORTED_ZIP", "Encrypted ZIP entries are not supported");
     if ((flags & 8) !== 0)
@@ -156,6 +160,23 @@ export function inspectStoredZip(
       );
     if (method !== 0)
       fail("UNSUPPORTED_ZIP", "Only stored ZIP entries are supported");
+    if (versionMadeBy !== 20 || versionNeeded !== 20)
+      fail(
+        "UNSUPPORTED_ZIP",
+        "ZIP entries must use the version 1 header-version profile",
+      );
+    if (modTime !== 0 || modDate !== 33)
+      fail(
+        "UNSUPPORTED_ZIP",
+        "ZIP entries must use the version 1 fixed-timestamp profile",
+      );
+    const internalAttributes = read16(view, offset + 36);
+    const externalAttributes = read32(view, offset + 38);
+    if (internalAttributes !== 0 || externalAttributes !== 0)
+      fail(
+        "UNSUPPORTED_ZIP",
+        "ZIP entries must use the version 1 fixed-attributes profile",
+      );
     const compressedBytes = read32(view, offset + 20);
     const expandedBytes = read32(view, offset + 24);
     const nameLength = read16(view, offset + 28);
@@ -183,12 +204,25 @@ export function inspectStoredZip(
     requireRange(bytes, localOffset, 30);
     if (read32(view, localOffset) !== LOCAL_SIGNATURE)
       fail("INVALID_ZIP", "ZIP local header is missing");
+    const localVersionNeeded = read16(view, localOffset + 4);
     const localFlags = read16(view, localOffset + 6);
     const localMethod = read16(view, localOffset + 8);
+    const localModTime = read16(view, localOffset + 10);
+    const localModDate = read16(view, localOffset + 12);
     const localNameLength = read16(view, localOffset + 26);
     const localExtraLength = read16(view, localOffset + 28);
     if (localExtraLength !== 0)
       fail("UNSUPPORTED_ZIP", "ZIP local extra fields are not supported");
+    if (localVersionNeeded !== 20)
+      fail(
+        "UNSUPPORTED_ZIP",
+        "ZIP entries must use the version 1 header-version profile",
+      );
+    if (localModTime !== 0 || localModDate !== 33)
+      fail(
+        "UNSUPPORTED_ZIP",
+        "ZIP entries must use the version 1 fixed-timestamp profile",
+      );
     if (
       localFlags !== flags ||
       localMethod !== method ||
@@ -291,13 +325,29 @@ export function extractStoredZip(
   return result;
 }
 
+// Standard reflected CRC-32 (IEEE 802.3 / zlib) lookup table, built once at
+// module load. A table-driven pass is roughly an order of magnitude faster
+// than the equivalent bit-at-a-time loop for the buffer sizes this package
+// hashes (whole model files), while producing byte-for-byte identical
+// results — see the crc32 tests that pin known vectors and property-compare
+// this implementation against the previous bit-loop.
+const CRC32_TABLE = buildCrc32Table();
+
+function buildCrc32Table(): Uint32Array {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < 256; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1)
+      value = (value & 1) !== 0 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+    table[index] = value >>> 0;
+  }
+  return table;
+}
+
 export function crc32(bytes: Uint8Array): number {
   let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit += 1)
-      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-  }
+  for (let index = 0; index < bytes.byteLength; index += 1)
+    crc = CRC32_TABLE[(crc ^ bytes[index]!) & 0xff]! ^ (crc >>> 8);
   return (crc ^ 0xffffffff) >>> 0;
 }
 
@@ -317,7 +367,7 @@ function requireRange(bytes: Uint8Array, offset: number, length: number): void {
   )
     fail("INVALID_ZIP", "ZIP structure is truncated");
 }
-function checkedAdd(left: number, right: number): number {
+export function checkedAdd(left: number, right: number): number {
   const value = left + right;
   if (!Number.isSafeInteger(value) || value > 0xffffffff)
     fail("ARCHIVE_LIMIT", "ZIP size exceeds the version 1 format limit");
