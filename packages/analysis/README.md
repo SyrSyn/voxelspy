@@ -90,6 +90,45 @@ It reuses the same placed-geometry walk and topology census as `summarizeModelGe
 
 **Determinism.** Identical input produces a deeply equal `AlignmentEstimate` every time for both methods: `correspondence-points` is a closed-form solve with a fixed-order, bounded eigenvalue solver; `iterative-closest-point` samples in a fixed triangle order, queries the fixed part's spatial index deterministically (the same `TriangleSpatialIndex` every other method in this package uses), and never introduces randomness at any step.
 
+## Measurement
+
+`measureOnModel(model, query, options?)` answers a single click-to-measure-style query against one placed model, for a UI to build measurement tooling as a thin layer over this package rather than reimplementing its own approximate geometry math.
+
+**Exactness.** Every `measureOnModel` result is `semantics: "exact"`, in contrast to `analyzeModelPair`'s and `checkClearance`'s `"approximate"`: those methods sample a bounded set of points (each triangle's vertices and centroid) against the opposite surface, so a smaller true distance can exist between samples. `snap-point` and `point-to-surface` instead query `TriangleSpatialIndex.nearestTriangle` directly against the query point -- an exhaustive, exact nearest-triangle search over every triangle via the same accelerated BVH the rest of this package uses, not a sampled subset -- so the returned point and distance are exact for the tessellated surface as given. `point-to-point` is exact ordinary vector arithmetic on the two supplied coordinates, with no claim that either point actually lies on any surface. `bounding-extent` is an exact min/max over the placed vertex positions. **"Exact" is a claim about the tessellated triangle mesh, not about any original curved or CAD geometry that mesh approximates** -- the same distinction `axis-aligned-box-solid` and `checkClearance`'s `interference.trianglePairs` already draw.
+
+**Query kinds.**
+
+- **`snap-point`**: given `at: { kind: "point", point }`, returns the exact closest point on the surface to `point` (`TriangleSpatialIndex.nearestTriangle` plus `closestPointOnTriangle`, the same primitives every other exact-nearest-point query in this package uses). Given `at: { kind: "ray", origin, direction }` -- the shape a click-to-measure UI casts from a camera through a clicked pixel -- returns the exact nearest ray/triangle intersection point (a genuine ray cast, Moller-Trumbore, over every triangle) or `{ hit: false, reason: "ray-missed-surface" }` when the ray crosses no triangle, an honest outcome, not a thrown error. Either way, the resulting point is then classified against its containing triangle's three vertices and three edges: `snap: { kind: "vertex", ... }` when within `snapToleranceMillimetres` of a vertex (checked first -- a point within tolerance of a vertex is always within tolerance of every edge touching that vertex too, so vertex is the more specific, preferred classification); else `snap: { kind: "edge", ... }` when within tolerance of an edge; else `snap: { kind: "face" }` (interior, unsnapped). This is what makes click-to-measure precise: the UI does not need its own approximate raycast/snap logic.
+- **`point-to-point`**: the straight-line distance between two supplied points plus their axis-aligned componentwise delta (`second - first`). Pure arithmetic -- does not read the model's geometry at all (the two points are typically obtained from prior `snap-point` calls), included so a full measurement workflow lives behind one function.
+- **`point-to-surface`**: the exact shortest distance from a supplied point to the model's surface, with the closest surface point and the triangle it lies on. Works identically whether the query point is outside, on, or "inside" the surface -- this package makes no inside/outside claim, for the same reason `checkClearance` computes no interference volume.
+- **`bounding-extent`**: overall dimensions and axis-aligned bounds, reused unmodified from `summarizeModelGeometry`'s own bounds computation (the same one `analyzeModelPair`'s comparison summary and `inspectModel` use) rather than a second, differently-computed bounds pass.
+
+**Resource discipline.** Every query kind -- including `point-to-point` and `bounding-extent`, which do not need a spatial index -- first validates `model` against `normalizedModelSchema` and checks its expanded vertex/triangle counts (plus estimated memory, honoring an optional caller-supplied `executionBudget.maxMemoryBytes`) via `checkExpandedGeometryBudget`, the same pre-flight `checkClearance` and `estimateAlignment` use, throwing `MeasurementResourceLimitError` before any O(vertices + triangles) work runs if that fails -- a uniform, predictable resource contract across query kinds, even where a specific kind's own work is trivial. `snap-point` and `point-to-surface` additionally flatten the model and build a `TriangleSpatialIndex` under a charge-before-work `WorkBudget` (bounded by `executionBudget.maxWorkUnits`); an exhausted budget throws `WorkBudgetExceeded` unchanged, matching every other entry point in this package. `options.modelToComparison` is validated as a proper rigid transform (`rigidTransformSchema` -- no scale, shear, or reflection), matching `ClearancePlacement.modelToComparison`, since scaling or shearing placed geometry would distort the very distances this function reports. `snapToleranceMillimetres` (default `DEFAULT_SNAP_TOLERANCE_MILLIMETRES` = 0.5mm, ceiling `MAX_SNAP_TOLERANCE_MILLIMETRES` = 1,000mm) and other invalid query input (a non-finite point, a degenerate ray direction) throw `RangeError`/`MeasurementInputError` respectively, matching `InspectOptions`'s and `EstimateAlignmentOptions`'s conventions.
+
+**Determinism.** Identical input produces a deeply equal `MeasurementResult` every time: `TriangleSpatialIndex` traversal is deterministic, the ray cast resolves ties at identical intersection distance by ascending triangle index, and no step introduces randomness.
+
+## Cross-sectioning
+
+`sectionModel(model, plane, options?)` cross-sections `model` with a plane, returning the section as ordered, bounded polylines -- for a UI to render a 2D cut view or measure a profile.
+
+**Algorithm.** Every triangle in the flattened comparison-frame geometry is classified against the plane by the exact sign of `unitNormal . vertex + d` at each of its three corners (`0` for a vertex exactly on the plane -- a direct evaluation of caller-supplied input, not accumulated error, so this package's no-tolerance-welding philosophy applies the same exact `=== 0` test "Topology semantics" above already uses for coordinate identity). Each triangle contributes at most one segment: no segment when all three corners are strictly the same side, or when exactly one corner is on the plane and the other two are strictly the same side (the plane only touches that one vertex); the in-plane edge itself when exactly two corners are on the plane; a segment from the on-plane vertex to the opposite edge's crossing point when exactly one corner is on the plane and the other two are on opposite sides; a segment between the two edges' crossing points when no corner is on the plane and the sign split is 2-1; and (see "Coincident-plane" below) no segment, but a census entry, when all three corners are on the plane.
+
+A crossing point on a shared edge is computed identically regardless of which of the edge's two triangles (or which vertex-index numbering, facet-local or shared) supplies it: the edge's two endpoints are always ordered by their exact-coordinate key (`pointKeyAt`, the same key `assessGeometry` and `groupTrianglesByExactEdgeConnectivity` use) and interpolated from the coordinate-lesser endpoint toward the coordinate-greater one, so two triangles sharing a bit-identical edge always compute a bit-identical crossing point -- what lets loop tracing key segment endpoints by exact string equality.
+
+**Loop tracing** reuses the same exact-coordinate-keyed chain tracer `diagnoseMeshHealth`'s boundary-loop tracer uses -- literally the same implementation (`traceAllChains` in `src/chain-tracing.ts`), not a forked copy -- so a section of a closed, watertight model produces `closed: true` loops, while a section of an open mesh (a panel, a box missing a face) can produce `closed: false` chains that terminate at the mesh's own boundary instead of looping back on themselves, reported honestly rather than forced closed. Each `SectionLoop` reports its ordered `pointsMillimetres`, true `edgeCount`, `closed`, `perimeterMillimetres` (exact for the traced polyline, exact even when points are truncated), `pointsTruncated`, and `area`.
+
+**Area.** `area.available` is `true` only for a closed loop -- an open polyline has no well-defined enclosed area, and reports `{ available: false, reason: "not-closed" }` instead. For a closed loop, `signedSquareMillimetres` is the standard 3D-polygon vector-area formula (`0.5 * sum(P_i x P_{i+1})`, dotted with the plane's unit normal): positive when the loop's `pointsMillimetres` order winds counterclockwise around that normal (right-hand rule), negative when clockwise. That winding is a byproduct of this package's deterministic canonical point ordering (see "Determinism" below), **not** a measurement of which side is "solid" or which loop is an outer boundary versus a hole -- do not infer solid/hole or inside/outside from the sign alone. `absoluteSquareMillimetres` is `|signedSquareMillimetres|`.
+
+**Determinism** is identical to `diagnoseMeshHealth`'s rule (see "Mesh-health diagnostics" above for the full statement): each closed loop is rotated to start at its lexicographically smallest point and walk toward whichever of its two directions reaches a lexicographically smaller second point; a non-closed chain is oriented so its lexicographically smaller endpoint comes first; loops are ordered by descending edge count, then ascending canonical start point, then closed-before-terminated, then a full point-by-point comparison as a last resort. Segment classification is itself a fixed walk of the geometry's own triangle order. Identical `model`/`plane`/`options` therefore produces a deeply equal `SectionResult` every time.
+
+**Coincident-plane (degenerate case).** When the plane exactly coincides with one or more triangles (every vertex on-plane), those triangles contribute no segment of their own -- extracting a meaningful outline from an in-plane triangle soup is a 2D-outline-extraction problem out of scope here, the same kind of "no validated domain, so no approximation offered" decision `checkClearance` makes for interference volume. Those triangles are counted in `coincidentTriangleCount` and reported via a `section.plane-coincident-with-faces` warning -- always surface this to the caller rather than trusting the returned loops alone when it is nonzero. In practice this is often harmless: any _adjacent_ triangle with exactly one edge in the plane still contributes that edge as an ordinary segment, so a coincident face's own boundary is frequently still recovered correctly from its neighbors -- but this is not guaranteed for every mesh, so `coincidentTriangleCount > 0` should always be surfaced, not silently trusted.
+
+**A plane missing the model entirely** is not an error: `loops.loops` is simply empty (`loopCount: 0`).
+
+**Bounds.** `maxLoops` (default `DEFAULT_MAX_SECTION_LOOPS` = 200, ceiling `MAX_SECTION_LOOPS` = 2,000) caps how many loops are returned. `maxLoopPoints` (default `DEFAULT_MAX_SECTION_LOOP_POINTS` = 20,000, ceiling `MAX_SECTION_LOOP_POINTS` = 200,000) is a single point budget shared across every returned loop, spent in the loops' final sorted order -- a loop that only partially fits is still returned with `pointsTruncated: true` and its exact `edgeCount`/`closed`/`perimeterMillimetres`/`area`, and `loopsTruncated` is set whenever any loop is left out entirely. Every bound throws `RangeError` when out of range, matching `InspectOptions`/`MeshHealthOptions`.
+
+**Resource discipline** mirrors `measureOnModel`: `model` validated against `normalizedModelSchema`, expanded vertex/triangle counts and estimated memory checked via `checkExpandedGeometryBudget` (throwing `SectionResourceLimitError` before any O(vertices + triangles) work runs), flattening and the per-triangle plane-intersection walk charged to a charge-before-work `WorkBudget` (throwing `WorkBudgetExceeded` unchanged on exhaustion), `options.modelToComparison` validated as a proper rigid transform, and an invalid `plane` (a non-finite point, a non-finite or zero-length normal) throwing `SectionInputError`.
+
 ## Resource behavior
 
 The package validates model and request contracts before analysis. It expands assembly instances into the comparison frame without recentering, rescaling, alignment, repair, or reinterpretation. The flattened comparison-frame geometry is held in typed arrays (packed vertex positions and triangle indices), not per-vertex or per-triangle objects. A single charged work budget is constructed before any expansion work runs and covers the full pipeline: flattening assembly instances into that buffer, the manifold edge census, spatial-index construction, spatial traversal, exact triangle tests, and connectivity work; reported regions are bounded separately. A caller-supplied budget too small to complete this work fails closed before the corresponding pass runs rather than after. The current implementation ceilings are 3,000,000 expanded vertices, 1,000,000 expanded triangles, 768 MiB of estimated working memory, and 2,200,000,000 charged work units. A request may impose smaller execution budgets. Unsupported methods, failed method preconditions, exhausted budgets, and out-of-range numeric calculations fail closed as `indeterminate` outcomes. `numeric-range-exceeded` is reserved for failures the code itself detects as a genuine numeric-range problem (for example, a computed distance overflowing to a non-finite value); any other unexpected exception during analysis fails closed as `internal-error` instead, so a real defect is never misreported as an input-magnitude problem it did not cause.
@@ -224,4 +263,40 @@ const fit = checkClearance({
   second: { model: cad, modelToComparison: cadPlacement },
   desiredClearanceMillimetres: 0.2,
 });
+```
+
+```ts
+import { measureOnModel } from "@voxelspy/analysis";
+
+// Click-to-measure: cast a ray from the camera through the clicked pixel.
+const snapped = measureOnModel(model, {
+  kind: "snap-point",
+  at: { kind: "ray", origin: cameraPosition, direction: pickDirection },
+});
+if (snapped.outcome.hit) {
+  console.log(snapped.outcome.pointMillimetres, snapped.outcome.snap);
+}
+
+// Two snapped points -> distance and componentwise delta.
+const distance = measureOnModel(model, {
+  kind: "point-to-point",
+  first: firstSnap.outcome.pointMillimetres,
+  second: secondSnap.outcome.pointMillimetres,
+});
+console.log(distance.distanceMillimetres, distance.deltaMillimetres);
+```
+
+```ts
+import { sectionModel } from "@voxelspy/analysis";
+
+const section = sectionModel(model, {
+  point: [0, 0, sliceHeight],
+  normal: [0, 0, 1],
+});
+if (section.coincidentTriangleCount > 0) {
+  console.warn("Plane coincides with part of the surface:", section.warnings);
+}
+for (const loop of section.loops.loops) {
+  console.log(loop.closed, loop.perimeterMillimetres, loop.area);
+}
 ```

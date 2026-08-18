@@ -116,3 +116,44 @@ export type {
   EstimateAlignmentOptions,
   IterativeClosestPointInput,
 } from "./alignment.js";
+export {
+  DEFAULT_SNAP_TOLERANCE_MILLIMETRES,
+  MAX_SNAP_TOLERANCE_MILLIMETRES,
+  MeasurementInputError,
+  MeasurementResourceLimitError,
+  measureOnModel,
+} from "./measure.js";
+export type {
+  BoundingExtentQuery,
+  BoundingExtentResult,
+  MeasureOptions,
+  MeasurementQuery,
+  MeasurementResult,
+  PointToPointQuery,
+  PointToPointResult,
+  PointToSurfaceQuery,
+  PointToSurfaceResult,
+  SnapClassification,
+  SnapPointInput,
+  SnapPointOutcome,
+  SnapPointQuery,
+  SnapPointResult,
+} from "./measure.js";
+export {
+  DEFAULT_MAX_SECTION_LOOP_POINTS,
+  DEFAULT_MAX_SECTION_LOOPS,
+  MAX_SECTION_LOOP_POINTS,
+  MAX_SECTION_LOOPS,
+  SectionInputError,
+  SectionResourceLimitError,
+  sectionModel,
+} from "./section.js";
+export type {
+  SectionLoop,
+  SectionLoopArea,
+  SectionLoopSet,
+  SectionOptions,
+  SectionPlane,
+  SectionResult,
+  SectionWarning,
+} from "./section.js";
