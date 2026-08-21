@@ -20,6 +20,7 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "lint": "tsc -p tsconfig.json --noEmit",
+    "pretest": "pnpm run build",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

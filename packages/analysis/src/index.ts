@@ -3,6 +3,8 @@ export {
   AXIS_ALIGNED_BOX_METHOD,
   SAMPLE_SPACING_EDGE_FACTOR,
   SURFACE_DISTANCE_METHOD,
+  WorkBudgetExceeded,
+  WorkBudgetInternalError,
   analyzeModelPair,
   supportedAnalysisMethods,
 } from "./analyze.js";
@@ -10,7 +12,18 @@ export type {
   AnalysisInput,
   AnalysisMethodCapability,
   AnalysisResourceLimits,
+  Bounds,
 } from "./analyze.js";
+// `NumericRangeExceededError` is implemented in `spatial-index.ts` (shared by
+// every entry point that queries a `TriangleSpatialIndex`) but is part of
+// this package's public contract, not an internal detail: `analyzeModelPair`
+// and `checkClearance` catch it and report it as their own
+// `numeric-range-exceeded` indeterminate outcome, while every other entry
+// point that can also encounter it (`measureOnModel`, `assessPrintability`,
+// `estimateAlignment`, `simplifyModel`) has no indeterminate result variant
+// to report it through and so lets it propagate unchanged -- exported here
+// so a caller of those functions can name and catch it.
+export { NumericRangeExceededError } from "./spatial-index.js";
 export { summarizeModelComparison, summarizeModelGeometry } from "./summary.js";
 export type {
   CompactAnalysisSummary,
@@ -189,6 +202,21 @@ export type {
   FlattenedTriangleLocator,
   FlattenedTriangleLocatorOptions,
 } from "./triangle-locator.js";
+// `FlatGeometry` is `FlattenedTriangleLocator.geometry`'s own type, and
+// `PlacedMeshId`/`PlacedInstanceId` are `FlattenedTriangleLocation.meshId`/
+// `.instanceId`'s types -- all three are referenced by that already-public
+// shape, so they must be independently nameable, not just structurally
+// reachable through it. `flattenModel`, `collectPlacedInstances`, and every
+// other `geometry.js` export stay unexported: this package's traversal-order
+// contract deliberately requires resolving a reported `triangleIndex`
+// through `flattenedTriangleLocator`/`resolveFlattenedTriangle`, never by a
+// consumer re-deriving the flatten/placement walk itself (see
+// `flattenModel`'s doc comment).
+export type {
+  FlatGeometry,
+  PlacedInstanceId,
+  PlacedMeshId,
+} from "./geometry.js";
 export type {
   AssessPrintabilityOptions,
   BuildVolumeCheck,

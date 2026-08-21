@@ -2,6 +2,136 @@
 
 Deterministic, bounded geometry comparison over normalized VoxelSpy models. The package consumes `@voxelspy/contracts` values, keeps geometry work independent of UI and browser APIs, and returns validated, serializable analysis results.
 
+## What this package does
+
+Given one or two [`NormalizedModel`](../contracts/README.md)s (typed-array triangle meshes with explicit units, transforms, and provenance -- produced by a format importer, never by this package), `@voxelspy/analysis` answers a fixed set of geometry questions over them: how do two revisions of a model differ (`analyzeModelPair`), is a single model watertight and well-formed (`inspectModel`, `diagnoseMeshHealth`), will two placed parts collide or fit (`checkClearance`), what rigid transform aligns one part to another (`estimateAlignment`), what is the distance between two points or a point and the surface (`measureOnModel`), what does a planar cross-section look like (`sectionModel`), is a model likely to have print-affecting issues (`assessPrintability`), and can a mesh be safely decimated with a certified deviation bound (`simplifyModel`). Every one of those calls is a plain, synchronous function over typed-array data -- no classes to instantiate, no hidden global state, no network or filesystem access -- so it runs identically in a Node.js CLI, a browser main thread, or a browser Web Worker, and it has no side effects (`"sideEffects": false`, so a bundler can safely tree-shake unused entry points).
+
+Everything this package computes is **reported, never silently corrected**: geometry is never recentred, rescaled, aligned, repaired, or reinterpreted on a caller's behalf (`estimateAlignment` only ever computes a transform; applying one is always a separate, explicit caller action). Every result that involves any kind of sampling, threshold, or bounded search discloses exactly how much it does not know, as data the caller can act on -- not just as a caveat in prose.
+
+### Quickstart
+
+The snippets throughout this README (see "Reference" below) are illustrative -- they assume variables like `request`, `baseline`, or `model` already exist, to keep the focus on one call's shape. For something you can actually run, see [`examples/quickstart.mjs`](./examples/quickstart.mjs): it builds two small cube models by hand, runs `analyzeModelPair` -> `inspectModel` -> `measureOnModel` end to end, and prints each result. Run it with:
+
+```sh
+pnpm --filter @voxelspy/analysis build
+node packages/analysis/examples/quickstart.mjs
+```
+
+## Semantics vocabulary
+
+Every value this package returns is labelled with what kind of claim it is. Four words carry this meaning throughout the package, and they mean exactly one thing each, everywhere they appear:
+
+- **`exact`** -- an unqualified claim about the tessellated triangle mesh as given, computed by exhaustive search or closed-form math, never a sampled subset. `measureOnModel`'s `snap-point`/`point-to-surface`/`point-to-point`/`bounding-extent` results, `checkClearance`'s `interference.trianglePairs`, and `sectionModel`'s plane-intersection segments are all `exact` in this sense. It is **not** a claim about any original curved or CAD geometry the mesh approximates -- see "Measurement" under Reference for the fullest statement of this distinction.
+- **`approximate`** (sampled, bounded) -- a claim backed by evaluating a bounded set of sample points (typically each triangle's vertices and centroid) rather than the whole continuous surface, always paired with a disclosed, computed upper bound on what that sampling could have missed (`uncertainty.parameters.maxSampleSpacingMillimetres`, `sampleSpacingUpperBoundMillimetres`, and similar fields, never just prose). `analyzeModelPair`'s `surface-distance` method, `checkClearance`'s sampled distance/tight-region evidence, `assessPrintability`'s `wallThickness` check, and `simplifyModel`'s certification are all `approximate` in this sense.
+- **`exact-within-validated-preconditions`** -- `analyzeModelPair`'s `axis-aligned-box-solid` method: exact volumes, but only inside a narrow, explicitly checked domain (two closed, consistently-oriented, eight-vertex axis-aligned boxes). Anything outside that domain is `indeterminate`; the method never falls back to an approximation of its own.
+- **`indeterminate`** -- a named **result state**, not an error: the request was well-formed, but no method could produce a validated answer for it (an unsupported method, a failed precondition, an exhausted resource budget, and so on). Only `analyzeModelPair` (`AnalysisResult.outcome.state`) and `checkClearance` (`ClearanceCheckResult.state`) have this state, because only their result types are already discriminated unions over "did this complete." See "How failure is reported" immediately below for why every other entry point handles the equivalent situation differently.
+
+### How failure is reported: the rule behind it
+
+This package uses two different failure-reporting conventions, and which one applies is decided by one thing: **whether the function's result type already has to be a discriminated union over completion.**
+
+- `analyzeModelPair` and `checkClearance` return that kind of union already -- a caller always has to check `outcome.state`/`state` before reading anything else, because whether two solids actually admit an exact-volume answer, or whether two parts actually collide, is itself part of what the call finds out. For these two, resource exhaustion (`resource-budget-exceeded`) and numeric overflow (`numeric-range-exceeded`) join that same union as two more states the caller was always going to have to handle -- reported as ordinary returned data, not thrown.
+- Every other entry point -- `measureOnModel`, `sectionModel`, `assessPrintability`, `simplifyModel`, `estimateAlignment`, `inspectModel`, `diagnoseMeshHealth`, `flattenedTriangleLocator`/`resolveFlattenedTriangle` -- returns one unconditional result shape: a measurement, a report, an estimated transform, a locator. None of these has an "indeterminate" branch, and inventing one purely to carry a resource-limit or invalid-input failure would be a far larger breaking change to that type than the alternative these functions already use for input validation: **throwing a typed error.** Each follows the same small, closed vocabulary of thrown errors:
+  - `<Domain>InputError` (e.g. `MeasurementInputError`, `SectionInputError`, `AlignmentInputError`) -- the caller's own input or query was invalid (a degenerate ray direction, fewer than the minimum required correspondence points, and so on).
+  - `<Domain>ResourceLimitError` (e.g. `MeasurementResourceLimitError`, `InspectionResourceLimitError`) -- a pre-flight ceiling check (`ANALYSIS_LIMITS`, or a caller-supplied `executionBudget`) failed _before_ any O(vertices + triangles) work started.
+  - `WorkBudgetExceeded` / `WorkBudgetInternalError` -- reused unchanged from `analyze.ts` by every entry point in the package (never redefined per module): a charge-before-work budget ran out mid-computation, or was charged incorrectly (a package bug, not a caller failure -- kept as a distinct class for exactly that reason).
+  - `NumericRangeExceededError` -- a computed distance overflowed to a non-finite value. `analyzeModelPair`/`checkClearance` catch this and report it as their own `numeric-range-exceeded` state (per the rule above); every other entry point that can also encounter it lets it propagate as this same class instead.
+
+  An out-of-range _option_ value (`maxTopologyExamples: -1`, and the like) throws the built-in `RangeError` uniformly across every entry point in the package, distinguishing "you called this wrong" from "this data cannot be processed" (`<Domain>InputError`) from "this data is too large for the configured budget" (`<Domain>ResourceLimitError`).
+
+  All of the classes above are exported from this package's entry point specifically so a caller can `instanceof`-check them without a deep import -- see "Compatibility and versioning" below for why that matters.
+
+This is a deliberate, audited split, not an accident of incremental growth: every place in the package where it could plausibly have gone the other way is named above. No further harmonization of the two conventions is planned, because unifying them would mean either turning `measureOnModel`'s result into a discriminated union (a breaking change with no offsetting benefit for its callers, who today get a plain, always-valid result to destructure) or making `analyzeModelPair`/`checkClearance` throw instead of returning `indeterminate` (breaking every existing caller in this repository's own `apps/**`, which pattern-match on `outcome.state`/`state` today).
+
+## Resource model
+
+The package validates model and request contracts before analysis. It expands assembly instances into the comparison frame without recentering, rescaling, alignment, repair, or reinterpretation. The flattened comparison-frame geometry is held in typed arrays (packed vertex positions and triangle indices), not per-vertex or per-triangle objects. A single charged work budget is constructed before any expansion work runs and covers the full pipeline: flattening assembly instances into that buffer, the manifold edge census, spatial-index construction, spatial traversal, exact triangle tests, and connectivity work; reported regions are bounded separately. A caller-supplied budget too small to complete this work fails closed before the corresponding pass runs rather than after. The current implementation ceilings are 3,000,000 expanded vertices, 1,000,000 expanded triangles, 768 MiB of estimated working memory, and 2,200,000,000 charged work units. A request may impose smaller execution budgets. Unsupported methods, failed method preconditions, exhausted budgets, and out-of-range numeric calculations fail closed as `indeterminate` outcomes (for `analyzeModelPair`/`checkClearance`) or as one of the thrown errors above (for every other entry point) -- see "How failure is reported" above. `numeric-range-exceeded` is reserved for failures the code itself detects as a genuine numeric-range problem (for example, a computed distance overflowing to a non-finite value); any other unexpected exception during analysis fails closed as `internal-error` instead, so a real defect is never misreported as an input-magnitude problem it did not cause.
+
+These ceilings are implementation safety limits, not model-size support claims or memory reservations. Browser clients should expose conservative request budgets because available memory and practical runtime vary by device. Production accuracy and device tiers still require accepted fixtures and browser benchmarks.
+
+The charged work-unit ceiling is calibrated so the documented triangle ceiling is actually reachable, not just declared: measured against the scaling benchmark tiers (`bench/scaling.mjs`, including its `--large` documented-ceiling tier), a pair totalling the documented 1,000,000 combined triangles charges roughly 1.91 billion work units to complete `surface-distance`, in under a minute of wall-clock time on a single machine and well inside the memory ceiling. 2,200,000,000 keeps roughly 15% measured margin above that figure.
+
+The estimated-memory ceiling's per-element accounting (`BYTES_PER_VERTEX`/`BYTES_PER_TRIANGLE` in `src/analyze.ts`) is deliberately a relative/structural cost model with a stated safety margin, not a byte-exact prediction that every possible single-sample heap reading stays under -- measurement against the same benchmark showed a byte-exact reading is not achievable without either breaking the documented ceilings or rejecting geometry this package already accepts. Two independent, measured reasons drove that choice: vertex-to-triangle ratio is shape-dependent (an indexed mesh with shared vertices has roughly 0.5 vertices per triangle; a facet-local mesh -- one private vertex copy per triangle corner, as binary STL import commonly produces -- has exactly 3, a 6x difference at identical triangle count, so a multiplier conservative enough for the benchmark's indexed terrain tiles would push an existing accepted facet-local test case past its request budget), and single-sample `heapUsed` deltas at small-to-mid scale vary by up to roughly 4x across repeated runs of byte-identical geometry, tracking V8 garbage-collector scheduling rather than a stable per-element cost. A margin wide enough to cover either would make the documented triangle ceiling's worst case (3,000,000 vertices, the facet-local case, at 1,000,000 triangles) exceed the 768 MiB ceiling. The chosen margin (1.5x the exact structural byte count) instead keeps that worst case comfortably under budget and stays conservative at and near the documented ceiling -- the scale where the memory ceiling's protection is load-bearing -- while smaller tiers can still show a noisy, informational, harmless excess given the trivial absolute memory involved. See `src/analyze.ts`'s constant comments and the benchmark section below for the full reasoning and numbers.
+
+## Determinism guarantees
+
+Every entry point in this package is deterministic: identical input -- including identical option values -- produces a deeply equal result every time, on any machine, in any process. Nothing in this package reads `Math.random`, wall-clock time, object identity, or `Map`/`Set` iteration timing to decide a result's shape, ordering, or values. Three techniques make this a package-wide property rather than a per-function accident, and each is load-bearing enough to have its own test:
+
+- **Fixed traversal order.** `flattenModel`'s mesh/instance/placement-tree walk is a documented, tested stability guarantee (see "Flattened triangle indices" under Reference) -- pinned by `test/flatten-order.test.ts` against hand-computed expected positions, not just asserted in prose. Sampling walks each part's own triangle order; edge collection uses `Map` insertion order, never object identity.
+- **Full deterministic tie-breaking wherever ranking or grouping is otherwise ambiguous.** Documented per method under Reference -- e.g. `surface-distance`'s region ranking (`maximum distance`, then affected area), `checkClearance`'s tight-region ranking, and the shared boundary-loop/section-loop canonicalization (lexicographically-smallest start point, then a fixed rotation/reversal rule).
+- **Fixed-order, dependency-free numerical solvers wherever geometry math has more than one valid answer.** `estimateAlignment`'s Jacobi eigenvalue solver (a bounded, self-contained implementation, not a general-purpose SVD) and `simplifyModel`'s binary min-heap pop order (ascending error, then canonical vertex-id pair, then insertion sequence) are both fixed functions of their input, never randomized or dependent on floating scheduling.
+
+See each method's own "Determinism" paragraph under Reference for the exact guarantee that method makes and, where one exists, the test that pins it.
+
+## API index
+
+Grouped by purpose; see Reference below for each entry point's full contract.
+
+**Comparison** -- `analyzeModelPair`, `supportedAnalysisMethods`, `SURFACE_DISTANCE_METHOD`, `AXIS_ALIGNED_BOX_METHOD`, `summarizeModelComparison`, `summarizeModelGeometry`.
+
+**Single-model inspection & diagnostics** -- `inspectModel`, `diagnoseMeshHealth`.
+
+**Clearance & fit** -- `checkClearance`.
+
+**Alignment** -- `estimateAlignment`.
+
+**Measurement** -- `measureOnModel`.
+
+**Cross-sectioning** -- `sectionModel`.
+
+**Printability evidence** -- `assessPrintability`, `PRINTABILITY_DISCLAIMER`.
+
+**Certified simplification** -- `simplifyModel`.
+
+**Resolving a reported triangle index back to geometry** -- `flattenedTriangleLocator`, `resolveFlattenedTriangle`.
+
+**Shared limits and geometry types** -- `ANALYSIS_LIMITS`, `SAMPLE_SPACING_EDGE_FACTOR`, `Bounds`, `FlatGeometry`, `PlacedMeshId`, `PlacedInstanceId`.
+
+**Errors** -- one `<Domain>InputError`/`<Domain>ResourceLimitError` pair per entry point that throws (`Measurement*`, `Section*`, `Printability*`, `Simplify*`, `Alignment*` -- plus `AlignmentGeometryError`, `TriangleLocator*`, `InspectionResourceLimitError`), and three classes shared unchanged across every entry point: `WorkBudgetExceeded`, `WorkBudgetInternalError`, `NumericRangeExceededError`. See "How failure is reported" above.
+
+## Honest limits
+
+What this package explicitly does **not** claim, gathered in one place (each is covered in full under Reference):
+
+- `surface-distance` is not a true Hausdorff distance: it samples triangle vertices and centroids, so a feature confined to one coarse triangle's interior can be missed entirely -- bounded and disclosed via `maxSampleSpacingMillimetres`, never silently.
+- `axis-aligned-box-solid`'s exact-volume path only ever applies inside a narrow, explicitly validated eight-vertex box domain (see "exact-within-validated-preconditions" above); every other case is `indeterminate`, never an approximation offered in its place.
+- `checkClearance` never computes an interference _volume_ -- only concrete, exactly-confirmed intersecting triangle pairs. Its sampled `minimumDistanceMillimetres`/`tightRegions` share `surface-distance`'s sampling gap.
+- `assessPrintability` never produces a pass/fail printability verdict (see `PRINTABILITY_DISCLAIMER`); its `wallThickness` check is a single-direction probe, not the true local minimum thickness in every direction.
+- `estimateAlignment` never applies the transform it computes, never auto-aligns anything, and refuses to guess an under-determined rotation (collinear or coincident correspondence points) rather than returning an arbitrary answer.
+- `sectionModel` cannot extract a meaningful 2D outline from a plane exactly coincident with mesh faces (`coincidentTriangleCount`); this is reported, not silently worked around.
+- `simplifyModel`'s certification is a measured, sampled bound (`certification.semantics: "approximate-sampled-bound"`), never a guaranteed exact Hausdorff distance -- see `CERTIFICATION_DISCLAIMER`.
+- No tolerance-based welding happens anywhere in this package (see "Topology semantics" under Reference): two coordinates that differ by any amount, however small, are always treated as different points.
+- The resource ceilings in `ANALYSIS_LIMITS` are implementation safety limits, not model-size support claims or memory reservations -- see "Resource model" above.
+- The benchmark in `bench/scaling.mjs` reports single-machine, single-Node.js-process measurements only -- never a browser measurement or a device-tier claim.
+
+## Compatibility and versioning
+
+This package is currently `private: true` and unpublished (version `0.1.0`); this section documents the compatibility stance to apply from its first real release onward, so that release does not have to invent one under time pressure.
+
+**Breaking changes** (require a major version bump once this package is published):
+
+- Removing or renaming any symbol exported from this package's entry point (`src/index.ts`), or narrowing what an exported function accepts (rejecting previously-valid options or input it used to accept).
+- Removing or renaming a field on an exported result type, or changing that field's type.
+- Removing a case, or reusing a discriminant value for a different meaning, on a _closed_ result-state union that a caller is expected to switch on exhaustively (`AnalysisResult.outcome.state`, `ClearanceCheckResult.state`, `WatertightnessVerdict.state`, `SnapPointOutcome.hit`, and similar). **Adding** a new case to one of these is treated as breaking too, on the conservative side: this package's own principle is "fail closed, never silently reinterpret" (see `AGENTS.md`), and a consumer's exhaustive `switch` silently falling into the wrong branch for an unrecognized new case is exactly that kind of silent reinterpretation. Loosening this stance later (treating new union members as additive) would itself be a compatibility-policy change and should get its own explicit sign-off, not happen incidentally.
+- Changing a documented deterministic behavior -- traversal order, tie-break rule, canonical orientation -- is a breaking change to this package's contract, exactly like changing a method's result shape (`flattenModel`'s traversal order is the example already called out this way under "Flattened triangle indices").
+- Changing a default option value.
+- Lowering a ceiling in `ANALYSIS_LIMITS` (input previously accepted could start being rejected).
+- Any change to a `@voxelspy/contracts` schema that this package's public types are built from -- see below.
+
+**Not breaking** (treated as additive, shippable in a minor version):
+
+- Adding a new exported symbol.
+- Adding a new optional field to an exported result interface.
+- Raising a ceiling in `ANALYSIS_LIMITS` (previously-rejected input could start succeeding).
+- Adding a new warning `code` to an existing `warnings` array -- these are already documented as an open, iterated set (see e.g. `assessPrintability`'s "Aggregation" paragraph under Reference), never exhaustively switched on by design.
+- Adding a new method to `supportedAnalysisMethods()` alongside the existing two.
+
+**Contracts note.** `@voxelspy/contracts` schemas are zod `strictObject`-style schemas pinned to fixed literal version numbers (`contractVersion: 1`, and similar). Unlike a typical additive-JSON-Schema evolution story, a _strict_ schema rejects any field it does not already know about -- so any schema change, even adding one new optional field, changes what shape a payload must have to be accepted, and must ship as a new literal contract version, never a silent addition to the existing one. Because this package's public types are built directly from those schemas' inferred types (`NormalizedModel`, `RigidTransform`, `MeshAssessment`, and others, all re-derived from `@voxelspy/contracts`, never redeclared here), a breaking change to a contracts schema is a breaking change to this package's own public surface too, even when no line in `packages/analysis/src` changed.
+
+## Reference
+
+The sections below are this package's detailed, per-entry-point reference: exact semantics, bounds, resource discipline, and determinism guarantee for each call. Skim the API index above first; come back here for the specifics behind any one of them.
+
 ## Methods
 
 ### `surface-distance` 1.0.0
@@ -191,16 +321,6 @@ If validation empties the heap before the requested target is reached, decimatio
 
 **What a UI needs to present this honestly.** Lead with the achieved reduction (`reduction.triangleCountRemoved`/`triangleReductionRatio`) paired with `certification.maximumDistanceMillimetres` -- that pairing is the whole product claim. Always show `certification.disclaimer` or an equivalent plain-language version near that number, never the bare millimetre value alone, since it is a sampled bound, not an exact distance. Surface `certification.sampleSpacingUpperBoundMillimetres` when it is large relative to the reported maximum (a coarse result deserves a visible caveat, the same way `surface-distance`'s undersampled warning works). Show `reduction.targetReached: false` and its warning plainly rather than silently substituting a different achieved count. And if `simplify.boundary-edges-collapsible` or `simplify.flattened-placement` fired, say so -- both describe a way the simplified model's shape or structure can differ from a naive expectation of "same shape, fewer triangles."
 
-## Resource behavior
-
-The package validates model and request contracts before analysis. It expands assembly instances into the comparison frame without recentering, rescaling, alignment, repair, or reinterpretation. The flattened comparison-frame geometry is held in typed arrays (packed vertex positions and triangle indices), not per-vertex or per-triangle objects. A single charged work budget is constructed before any expansion work runs and covers the full pipeline: flattening assembly instances into that buffer, the manifold edge census, spatial-index construction, spatial traversal, exact triangle tests, and connectivity work; reported regions are bounded separately. A caller-supplied budget too small to complete this work fails closed before the corresponding pass runs rather than after. The current implementation ceilings are 3,000,000 expanded vertices, 1,000,000 expanded triangles, 768 MiB of estimated working memory, and 2,200,000,000 charged work units. A request may impose smaller execution budgets. Unsupported methods, failed method preconditions, exhausted budgets, and out-of-range numeric calculations fail closed as `indeterminate` outcomes. `numeric-range-exceeded` is reserved for failures the code itself detects as a genuine numeric-range problem (for example, a computed distance overflowing to a non-finite value); any other unexpected exception during analysis fails closed as `internal-error` instead, so a real defect is never misreported as an input-magnitude problem it did not cause.
-
-These ceilings are implementation safety limits, not model-size support claims or memory reservations. Browser clients should expose conservative request budgets because available memory and practical runtime vary by device. Production accuracy and device tiers still require accepted fixtures and browser benchmarks.
-
-The charged work-unit ceiling is calibrated so the documented triangle ceiling is actually reachable, not just declared: measured against the scaling benchmark tiers (`bench/scaling.mjs`, including its `--large` documented-ceiling tier), a pair totalling the documented 1,000,000 combined triangles charges roughly 1.91 billion work units to complete `surface-distance`, in under a minute of wall-clock time on a single machine and well inside the memory ceiling. 2,200,000,000 keeps roughly 15% measured margin above that figure.
-
-The estimated-memory ceiling's per-element accounting (`BYTES_PER_VERTEX`/`BYTES_PER_TRIANGLE` in `src/analyze.ts`) is deliberately a relative/structural cost model with a stated safety margin, not a byte-exact prediction that every possible single-sample heap reading stays under -- measurement against the same benchmark showed a byte-exact reading is not achievable without either breaking the documented ceilings or rejecting geometry this package already accepts. Two independent, measured reasons drove that choice: vertex-to-triangle ratio is shape-dependent (an indexed mesh with shared vertices has roughly 0.5 vertices per triangle; a facet-local mesh -- one private vertex copy per triangle corner, as binary STL import commonly produces -- has exactly 3, a 6x difference at identical triangle count, so a multiplier conservative enough for the benchmark's indexed terrain tiles would push an existing accepted facet-local test case past its request budget), and single-sample `heapUsed` deltas at small-to-mid scale vary by up to roughly 4x across repeated runs of byte-identical geometry, tracking V8 garbage-collector scheduling rather than a stable per-element cost. A margin wide enough to cover either would make the documented triangle ceiling's worst case (3,000,000 vertices, the facet-local case, at 1,000,000 triangles) exceed the 768 MiB ceiling. The chosen margin (1.5x the exact structural byte count) instead keeps that worst case comfortably under budget and stays conservative at and near the documented ceiling -- the scale where the memory ceiling's protection is load-bearing -- while smaller tiers can still show a noisy, informational, harmless excess given the trivial absolute memory involved. See `src/analyze.ts`'s constant comments and the benchmark section below for the full reasoning and numbers.
-
 ## Benchmark
 
 `bench/scaling.mjs` is a manually-run measurement script, not a test -- it never runs under `pnpm test` or `pnpm check`, so it cannot slow CI down. It measures `analyzeModelPair`'s `surface-distance` method against seeded, deterministic synthetic model pairs (a tessellated 3D terrain panel with a single deliberately raised region in the candidate) at several sizes, and reports, per tier:
@@ -232,7 +352,9 @@ Two findings this benchmark previously surfaced have been investigated and addre
 - **Memory estimate.** Small/mid tiers can still show measured heap exceeding the documented estimate (rows marked WARN below roughly the ~200k tier) -- repeated runs of byte-identical geometry showed that spread is GC-scheduling noise, not a stable per-element cost, and it is harmless at those absolute magnitudes (low tens of MiB at most). What matters is the documented-ceiling tier (`--large`, 1,000,000 combined triangles, the scale where the 768 MiB ceiling is load-bearing): as of this writing it measures well within the estimate (see the benchmark's "Documented-ceiling check" line), and the script treats a regression there as a hard failure.
 - **Charged work-unit ceiling.** `ANALYSIS_LIMITS.maxWorkUnits` is calibrated with measured margin (see above) so the documented 1,000,000-triangle ceiling completes under the _default_ execution budget -- no caller override needed. The `--large` documented-ceiling tier is the concrete evidence: it now reaches `state: "complete"`, and the script treats it returning `resource-budget-exceeded` as a hard failure, not just a printed finding.
 
-## Example
+## Further examples
+
+One illustrative snippet per entry point, assuming the referenced variables (`request`, `baseline`, `model`, and so on) already exist -- see "Quickstart" above for a version of the first of these you can actually run as-is.
 
 ```ts
 import { analyzeModelPair } from "@voxelspy/analysis";
