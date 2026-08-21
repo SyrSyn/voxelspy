@@ -17,7 +17,7 @@ import {
   type SourceAxis,
   type SourceUnit,
 } from "@voxelspy/contracts";
-import { UnsupportedInputError } from "./errors.js";
+import { UnsafeArchiveError, UnsupportedInputError } from "./errors.js";
 import { parseGltf, type ParsedGltf } from "./gltf.js";
 import {
   normalizePositions,
@@ -29,6 +29,8 @@ import {
 import { parseObj } from "./obj.js";
 import type { ParsedMesh } from "./parse.js";
 import { parseStl } from "./stl.js";
+import { parseThreeMf, type ParsedThreeMf } from "./threemf.js";
+import type { ArchiveSafetyLimits } from "./zip.js";
 
 export {
   exportModel,
@@ -43,6 +45,7 @@ export {
   ExportInputError,
   ExportResourceLimitError,
   ExportUnsupportedTargetError,
+  UnsafeArchiveError,
   UnsupportedInputError,
 } from "./errors.js";
 
@@ -50,12 +53,33 @@ export const IMPORTER_SAFETY_LIMITS = Object.freeze({
   inputBytes: 32 * 1024 * 1024,
   triangleCount: 500_000,
   vertexCount: 1_500_000,
+  // Fixed 3MF (ZIP/OPC) container ceilings, applied on top of (never
+  // loosened by) any caller-supplied `options.limits.archive` -- see
+  // `mergeArchiveLimits` below and the README's "3MF decompression bounds"
+  // section for what each field guards against.
+  archive: Object.freeze({
+    entryCount: 512,
+    entryBytes: 64 * 1024 * 1024,
+    expandedBytes: 128 * 1024 * 1024,
+    compressionRatio: 300,
+  }),
+  // 3MF-specific bounds with no caller-facing schema field, so they are
+  // never loosened by a request: the hand-rolled XML parser's own
+  // nesting/size ceilings, and a cap on how many synthetic hierarchy nodes
+  // `<build>`/`<component>` unrolling may generate.
+  threeMfXml: Object.freeze({
+    maxDepth: 64,
+    maxNodes: 200_000,
+    maxAttributesPerElement: 64,
+    maxAttributeValueLength: 1_000_000,
+  }),
+  threeMfHierarchyNodes: 50_000,
 });
 
 export const importerDescriptor = importerDescriptorSchema.parse({
   id: "voxelspy.mesh",
   version: "0.1.0",
-  formats: ["stl", "obj", "gltf", "glb"],
+  formats: ["stl", "obj", "gltf", "glb", "3mf"],
   mediaTypes: [
     "model/stl",
     "application/sla",
@@ -63,16 +87,20 @@ export const importerDescriptor = importerDescriptorSchema.parse({
     "text/plain",
     "model/gltf+json",
     "model/gltf-binary",
+    "model/3mf",
   ],
-  extensions: ["stl", "obj", "gltf", "glb"],
+  extensions: ["stl", "obj", "gltf", "glb", "3mf"],
   capabilities: {
-    // glTF/GLB node hierarchies are imported as `placement: { kind:
-    // "hierarchy" }`; STL/OBJ always produce a single flat instance.
+    // glTF/GLB node hierarchies and 3MF build-item/component hierarchies
+    // are both imported as `placement: { kind: "hierarchy" }`; STL/OBJ
+    // always produce a single flat instance.
     assemblies: true,
     tessellationProvenance: false,
-    // Every resource this importer reads (buffers, and -- defensively --
-    // images) must be embedded (a data URI, or the GLB binary chunk);
-    // anything external or relative fails closed rather than being
+    // Every resource this importer reads (glTF/GLB buffers and, defensively,
+    // images; every 3MF ZIP entry) must be embedded in the input bytes
+    // themselves; anything external -- a glTF external URI, a 3MF
+    // TargetMode="External" relationship, or a 3MF Production-extension
+    // cross-part `path` reference -- fails closed rather than being
     // fetched, so "external resources" is honestly false, not merely
     // unimplemented.
     externalResources: false,
@@ -114,12 +142,52 @@ export async function importModel(input: unknown): Promise<ImportResult> {
     request.format !== "stl" &&
     request.format !== "obj" &&
     request.format !== "gltf" &&
-    request.format !== "glb"
+    request.format !== "glb" &&
+    request.format !== "3mf"
   ) {
     return failure(
       "unsupported-input",
       `Format ${request.format} is not supported.`,
     );
+  }
+
+  // 3MF Core always declares (or, absent a `unit` attribute, spec-defaults)
+  // its own unit, and this package resolves its coordinate axis as
+  // right-handed Z-up from the specification (see README) -- both
+  // "embedded", exactly like glTF's fixed metre/Y-up declaration below.
+  // Unlike glTF's frame, though, 3MF's detected UNIT is only known after
+  // reading the model part's `<model unit="...">` attribute, so the archive
+  // must be opened and parsed before `resolveFrame` can run.
+  if (request.format === "3mf") {
+    try {
+      const archiveLimits = mergeArchiveLimits(
+        request.options.limits.archive,
+        IMPORTER_SAFETY_LIMITS.archive,
+      );
+      const parsedThreeMf = await parseThreeMf(request.bytes, {
+        archive: archiveLimits,
+        xml: IMPORTER_SAFETY_LIMITS.threeMfXml,
+        triangleLimit: request.options.limits.triangleCount,
+        safetyTriangleLimit: IMPORTER_SAFETY_LIMITS.triangleCount,
+        safetyVertexLimit: IMPORTER_SAFETY_LIMITS.vertexCount,
+        hierarchyNodeLimit: IMPORTER_SAFETY_LIMITS.threeMfHierarchyNodes,
+      });
+      const frame = resolveFrame(
+        request,
+        parsedThreeMf.detectedUnit,
+        "right-handed-z-up",
+      );
+      if ("result" in frame) return frame.result;
+      const model = await createThreeMfModel(request, frame, parsedThreeMf);
+      const result = importResultSchema.parse({
+        contractVersion: 1,
+        ok: true,
+        model,
+      });
+      return importExchangeSchema.parse({ request, result }).result;
+    } catch (error) {
+      return mapImportError(error);
+    }
   }
 
   // glTF/GLB declare metres and Y-up by specification: the frame is
@@ -172,27 +240,57 @@ export async function importModel(input: unknown): Promise<ImportResult> {
     });
     return importExchangeSchema.parse({ request, result }).result;
   } catch (error) {
-    if (error instanceof RangeError) {
-      return failure("resource-limit", error.message);
-    }
-    if (error instanceof TypeError) {
-      return failure("invalid-input", error.message);
-    }
-    if (error instanceof UnsupportedInputError) {
-      return failure("unsupported-input", error.message);
-    }
-    return failure("invalid-input", "Input could not be imported safely.");
+    return mapImportError(error);
   }
+}
+
+/**
+ * Combines a caller-supplied `options.limits.archive` (optional -- most
+ * formats never populate it) with this package's own fixed 3MF archive
+ * ceilings, taking the STRICTER (smaller) of the two for every field. A
+ * caller may tighten these bounds further; it can never loosen them beyond
+ * `IMPORTER_SAFETY_LIMITS.archive`, mirroring how `checkedTriangleCount`
+ * already enforces both a caller limit and a fixed safety limit for
+ * triangle counts.
+ */
+function mergeArchiveLimits(
+  caller: ImportRequest["options"]["limits"]["archive"],
+  fixed: typeof IMPORTER_SAFETY_LIMITS.archive,
+): ArchiveSafetyLimits {
+  if (!caller) return fixed;
+  return {
+    entryCount: Math.min(caller.entryCount, fixed.entryCount),
+    entryBytes: Math.min(caller.entryBytes, fixed.entryBytes),
+    expandedBytes: Math.min(caller.expandedBytes, fixed.expandedBytes),
+    compressionRatio: Math.min(caller.compressionRatio, fixed.compressionRatio),
+  };
+}
+
+function mapImportError(error: unknown): ImportResult {
+  if (error instanceof RangeError) {
+    return failure("resource-limit", error.message);
+  }
+  if (error instanceof UnsafeArchiveError) {
+    return failure("unsafe-archive", error.message);
+  }
+  if (error instanceof TypeError) {
+    return failure("invalid-input", error.message);
+  }
+  if (error instanceof UnsupportedInputError) {
+    return failure("unsupported-input", error.message);
+  }
+  return failure("invalid-input", "Input could not be imported safely.");
 }
 
 export function inferFormat(
   sourceName: string,
-): "stl" | "obj" | "gltf" | "glb" | undefined {
+): "stl" | "obj" | "gltf" | "glb" | "3mf" | undefined {
   const extension = /\.([^.]+)$/u.exec(sourceName)?.[1]?.toLowerCase();
   return extension === "stl" ||
     extension === "obj" ||
     extension === "gltf" ||
-    extension === "glb"
+    extension === "glb" ||
+    extension === "3mf"
     ? extension
     : undefined;
 }
@@ -502,6 +600,157 @@ async function createGltfModel(
       appliedSourceToModel,
       notes: [
         "glTF materials, textures, images, samplers, cameras, and animations are not evaluated; only static mesh geometry (POSITION attributes and mode-4 TRIANGLES primitives) is imported.",
+      ],
+    },
+  };
+  return normalizedModelSchema.parse(model);
+}
+
+/**
+ * Assembles a `NormalizedModel` from a parsed 3MF document, structurally
+ * mirroring `createGltfModel` above: `src/threemf.ts`'s unrolled
+ * build-item/component tree becomes a `placement: { kind: "hierarchy" }`
+ * under two synthetic ancestor nodes (`node.3mf.root` identity,
+ * `node.3mf.frame` carrying `sourceToModelTransform(frame.unit,
+ * frame.axis)`), so every 3MF `transform` attribute is stored exactly as
+ * authored (in the file's own unit) and only the resolved world transform
+ * lands in the canonical millimetre, right-handed-Z-up frame.
+ */
+async function createThreeMfModel(
+  request: ImportRequest,
+  frame: ResolvedFrame,
+  parsed: ParsedThreeMf,
+): Promise<NormalizedModel> {
+  const warnings: ContractWarning[] = [];
+  if (userOrDeclaredSourceFrameOverride(frame)) {
+    warnings.push(
+      warning({
+        code: "user-source-frame",
+        severity: "info",
+        message:
+          "A source frame correction overrides 3MF's declared (or spec-default) unit and/or this importer's right-handed-Z-up axis resolution, and was recorded in provenance.",
+      }),
+    );
+  }
+  const droppedCounts: Record<string, number> = {
+    metadata: parsed.ignoredMetadataCount,
+    "material/colour assignments": parsed.ignoredMaterialCount,
+    thumbnails: parsed.ignoredThumbnailCount,
+    labels: parsed.ignoredLabelCount,
+  };
+  const droppedEntries = Object.entries(droppedCounts).filter(
+    ([, count]) => count > 0,
+  );
+  if (droppedEntries.length > 0) {
+    warnings.push(
+      warning({
+        code: "3mf-decorative-data-ignored",
+        severity: "info",
+        message: `3MF metadata, material/colour, thumbnail, and/or label (name/partnumber) data does not affect geometry output and was not evaluated: ${droppedEntries
+          .map(([key, count]) => `${count} ${key}`)
+          .join(", ")}.`,
+        details: Object.fromEntries(droppedEntries),
+      }),
+    );
+  }
+  if (parsed.ignoredResourceElements.length > 0) {
+    warnings.push(
+      warning({
+        code: "3mf-resource-ignored",
+        severity: "info",
+        message: `Unrecognized 3MF resource or build element(s) were not evaluated: ${parsed.ignoredResourceElements.join(", ")}.`,
+        details: { elements: [...parsed.ignoredResourceElements] },
+      }),
+    );
+  }
+  if (
+    parsed.ignoredExtensionNamespaces.length > 0 ||
+    parsed.recommendedExtensions.length > 0
+  ) {
+    warnings.push(
+      warning({
+        code: "3mf-extension-ignored",
+        severity: "info",
+        message: `3MF namespaced extension content was present but not applied to geometry: namespace prefix(es) ${parsed.ignoredExtensionNamespaces.join(", ") || "(none)"}; recommendedextensions ${parsed.recommendedExtensions.join(", ") || "(none)"}.`,
+        details: {
+          namespaces: [...parsed.ignoredExtensionNamespaces],
+          recommendedExtensions: [...parsed.recommendedExtensions],
+        },
+      }),
+    );
+  }
+  if (parsed.unreferencedObjectCount > 0) {
+    warnings.push(
+      warning({
+        code: "3mf-unreferenced-objects",
+        severity: "info",
+        message: `${parsed.unreferencedObjectCount} 3MF resource object(s) were not reachable from any <build><item> and were not included in the imported model.`,
+        details: { count: parsed.unreferencedObjectCount },
+      }),
+    );
+  }
+
+  const meshes = parsed.meshes.map((mesh) => ({
+    id: meshIdSchema.parse(mesh.id),
+    geometry: { positions: mesh.positions, indices: mesh.indices },
+  }));
+
+  const rootId = nodeIdSchema.parse("node.3mf.root");
+  const frameNodeId = nodeIdSchema.parse("node.3mf.frame");
+  const appliedSourceToModel = sourceToModelTransform(frame.unit, frame.axis);
+  const nodes = [
+    {
+      id: rootId,
+      childIds: [frameNodeId],
+      instanceIds: [],
+      localToParent: IDENTITY_MAT4,
+    },
+    {
+      id: frameNodeId,
+      childIds: parsed.itemRootIds.map((id) => nodeIdSchema.parse(id)),
+      instanceIds: [],
+      localToParent: appliedSourceToModel,
+    },
+    ...parsed.nodes.map((node) => ({
+      id: nodeIdSchema.parse(node.id),
+      childIds: node.childIds.map((childId) => nodeIdSchema.parse(childId)),
+      instanceIds: node.instanceIds.map((instanceId) =>
+        instanceIdSchema.parse(instanceId),
+      ),
+      localToParent: node.localToParent,
+    })),
+  ];
+
+  const model = {
+    contractVersion: 1 as const,
+    id: request.targetModelId,
+    frame: CANONICAL_FRAME,
+    meshes,
+    placement: {
+      kind: "hierarchy" as const,
+      instances: parsed.instances.map((instance) => ({
+        id: instanceIdSchema.parse(instance.id),
+        meshId: meshIdSchema.parse(instance.meshId),
+        meshToNode: IDENTITY_MAT4,
+      })),
+      rootIds: [rootId],
+      nodes,
+    },
+    warnings,
+    provenance: {
+      formatId: request.format,
+      importerId: importerDescriptor.id,
+      importerVersion: importerDescriptor.version,
+      sourceName: request.sourceName,
+      sourceDigest: await sha256(request.bytes),
+      detectedSourceUnit: frame.detectedUnit,
+      detectedSourceAxis: frame.detectedAxis,
+      sourceUnit: frame.unit,
+      sourceAxis: frame.axis,
+      sourceResolution: { unit: frame.unitOrigin, axis: frame.axisOrigin },
+      appliedSourceToModel,
+      notes: [
+        "3MF metadata, base materials/colours, thumbnails, and object names/part numbers are not evaluated; only Core mesh geometry (<mesh> vertices/triangles) reachable from <build><item> is imported.",
       ],
     },
   };

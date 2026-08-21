@@ -249,6 +249,12 @@ endsolid second
     });
     expect(inferFormat("PART.STL")).toBe("stl");
     expect(inferFormat("part.step")).toBeUndefined();
-    expect(importerDescriptor.formats).toEqual(["stl", "obj", "gltf", "glb"]);
+    expect(importerDescriptor.formats).toEqual([
+      "stl",
+      "obj",
+      "gltf",
+      "glb",
+      "3mf",
+    ]);
   });
 });
