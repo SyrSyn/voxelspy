@@ -18,6 +18,25 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  apps/cli:
+    dependencies:
+      '@voxelspy/analysis':
+        specifier: workspace:^
+        version: link:../../packages/analysis
+      '@voxelspy/contracts':
+        specifier: workspace:^
+        version: link:../../packages/contracts
+      '@voxelspy/importers':
+        specifier: workspace:^
+        version: link:../../packages/importers
+    devDependencies:
+      '@types/node':
+        specifier: 26.1.2
+        version: 26.1.2
+      vitest:
+        specifier: 3.2.7
+        version: 3.2.7(@types/node@26.1.2)(lightningcss@1.33.0)
+
   apps/web:
     dependencies:
       '@react-three/drei':
