@@ -71,7 +71,10 @@ export function cubeStlWithDegenerateTriangle(min: Point, max: Point): string {
     "endfacet",
     "",
   ].join("\n");
-  return closed.replace(/endsolid .*$/mu, `${degenerate}endsolid degenerate-fixture\n`);
+  return closed.replace(
+    /endsolid .*$/mu,
+    `${degenerate}endsolid degenerate-fixture\n`,
+  );
 }
 
 /** A minimal, valid, 12-triangle OBJ box (shared, not facet-local, vertices). */

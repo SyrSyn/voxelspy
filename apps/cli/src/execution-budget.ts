@@ -13,8 +13,11 @@ export interface ExecutionBudgetOption {
 export function buildExecutionBudget(
   maxWorkUnits: number | undefined,
   maxMemoryBytes: number | undefined,
-): { readonly maxWorkUnits: number; readonly maxMemoryBytes: number } | undefined {
-  if (maxWorkUnits === undefined && maxMemoryBytes === undefined) return undefined;
+):
+  | { readonly maxWorkUnits: number; readonly maxMemoryBytes: number }
+  | undefined {
+  if (maxWorkUnits === undefined && maxMemoryBytes === undefined)
+    return undefined;
   return {
     maxWorkUnits: maxWorkUnits ?? Number.MAX_SAFE_INTEGER,
     maxMemoryBytes: maxMemoryBytes ?? Number.MAX_SAFE_INTEGER,

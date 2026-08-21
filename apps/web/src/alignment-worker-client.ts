@@ -5,6 +5,7 @@ import type {
   SourceUnit,
 } from "@voxelspy/contracts";
 import { inferFormat } from "@voxelspy/importers";
+import type { SupportedFormat } from "@voxelspy/importers";
 
 type ResolvedUnit = Exclude<SourceUnit, "unknown">;
 type ResolvedAxis = Exclude<SourceAxis, "unknown">;
@@ -48,7 +49,7 @@ export interface EstimateIcpAlignmentSource {
 }
 
 export interface AlignmentIcpWorkerPartRequest {
-  readonly format: "stl" | "obj";
+  readonly format: SupportedFormat;
   readonly sourceName: string;
   readonly bytes: Uint8Array;
   readonly options: {
@@ -163,7 +164,7 @@ export async function estimateIcpAlignmentAsync(
 
     const partRequest = (
       part: AlignmentPartSource,
-      format: "stl" | "obj",
+      format: SupportedFormat,
       bytes: Uint8Array,
     ): AlignmentIcpWorkerPartRequest => ({
       format,

@@ -2,7 +2,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { inspectCommand } from "../src/commands/inspect.js";
-import { EXIT_OK, EXIT_POLICY_FAILED, EXIT_USAGE_ERROR } from "../src/exit-codes.js";
+import {
+  EXIT_OK,
+  EXIT_POLICY_FAILED,
+  EXIT_USAGE_ERROR,
+} from "../src/exit-codes.js";
 import { run } from "../src/run.js";
 import {
   createCapturedIO,
@@ -29,48 +33,74 @@ const FRAME_ARGS = ["--unit", "millimetre", "--axis", "right-handed-z-up"];
 describe("inspectCommand", () => {
   it("reports a closed model with no findings and exits 0 with no policy options", async () => {
     const workspace = createTestWorkspace();
-    const model = workspace.writeFile("model.stl", cubeStlAscii([0, 0, 0], [10, 10, 10]));
+    const model = workspace.writeFile(
+      "model.stl",
+      cubeStlAscii([0, 0, 0], [10, 10, 10]),
+    );
     const { io, stdout } = createCapturedIO();
 
     const code = await inspectCommand([model, ...FRAME_ARGS], io);
 
     expect(code).toBe(EXIT_OK);
-    expect(stdout.some((line) => line.includes("Watertightness: closed"))).toBe(true);
-    expect(stdout.some((line) => line.includes("No topology findings"))).toBe(true);
-    expect(stdout.some((line) => line.includes("informational only"))).toBe(true);
+    expect(stdout.some((line) => line.includes("Watertightness: closed"))).toBe(
+      true,
+    );
+    expect(stdout.some((line) => line.includes("No topology findings"))).toBe(
+      true,
+    );
+    expect(stdout.some((line) => line.includes("informational only"))).toBe(
+      true,
+    );
   });
 
   it("evaluates --require-watertight against the watertightness verdict", async () => {
     const workspace = createTestWorkspace();
-    const closed = workspace.writeFile("closed.stl", cubeStlAscii([0, 0, 0], [10, 10, 10]));
+    const closed = workspace.writeFile(
+      "closed.stl",
+      cubeStlAscii([0, 0, 0], [10, 10, 10]),
+    );
     const open = workspace.writeFile(
       "open.stl",
       cubeStlAscii([0, 0, 0], [10, 10, 10], { omitTop: true }),
     );
 
     const { io: passIo } = createCapturedIO();
-    expect(await inspectCommand([closed, "--require-watertight", ...FRAME_ARGS], passIo)).toBe(
-      EXIT_OK,
-    );
+    expect(
+      await inspectCommand(
+        [closed, "--require-watertight", ...FRAME_ARGS],
+        passIo,
+      ),
+    ).toBe(EXIT_OK);
 
     const { io: failIo, stdout: failOut } = createCapturedIO();
-    const failCode = await inspectCommand([open, "--require-watertight", ...FRAME_ARGS], failIo);
+    const failCode = await inspectCommand(
+      [open, "--require-watertight", ...FRAME_ARGS],
+      failIo,
+    );
     expect(failCode).toBe(EXIT_POLICY_FAILED);
-    expect(failOut.some((line) => line.includes("Policy result: FAILED"))).toBe(true);
+    expect(failOut.some((line) => line.includes("Policy result: FAILED"))).toBe(
+      true,
+    );
   });
 
   it("evaluates --fail-on-degenerate against topology findings", async () => {
     const workspace = createTestWorkspace();
-    const clean = workspace.writeFile("clean.stl", cubeStlAscii([0, 0, 0], [10, 10, 10]));
+    const clean = workspace.writeFile(
+      "clean.stl",
+      cubeStlAscii([0, 0, 0], [10, 10, 10]),
+    );
     const degenerate = workspace.writeFile(
       "degenerate.stl",
       cubeStlWithDegenerateTriangle([0, 0, 0], [10, 10, 10]),
     );
 
     const { io: passIo } = createCapturedIO();
-    expect(await inspectCommand([clean, "--fail-on-degenerate", ...FRAME_ARGS], passIo)).toBe(
-      EXIT_OK,
-    );
+    expect(
+      await inspectCommand(
+        [clean, "--fail-on-degenerate", ...FRAME_ARGS],
+        passIo,
+      ),
+    ).toBe(EXIT_OK);
 
     const { io: failIo } = createCapturedIO();
     const failCode = await inspectCommand(
@@ -82,7 +112,10 @@ describe("inspectCommand", () => {
 
   it("emits deterministic JSON for identical inputs", async () => {
     const workspace = createTestWorkspace();
-    const model = workspace.writeFile("model.stl", cubeStlAscii([0, 0, 0], [10, 10, 10]));
+    const model = workspace.writeFile(
+      "model.stl",
+      cubeStlAscii([0, 0, 0], [10, 10, 10]),
+    );
     const args = [model, "--json", ...FRAME_ARGS];
 
     const first = createCapturedIO();
@@ -97,7 +130,10 @@ describe("inspectCommand", () => {
 
   it("fails closed with a specific reason when the source frame is unresolved", async () => {
     const workspace = createTestWorkspace();
-    const model = workspace.writeFile("model.stl", cubeStlAscii([0, 0, 0], [10, 10, 10]));
+    const model = workspace.writeFile(
+      "model.stl",
+      cubeStlAscii([0, 0, 0], [10, 10, 10]),
+    );
     const { io, stderr } = createCapturedIO();
 
     const code = await inspectCommand([model], io);
@@ -108,7 +144,10 @@ describe("inspectCommand", () => {
 
   it("rejects an out-of-range option value as a usage error", async () => {
     const workspace = createTestWorkspace();
-    const model = workspace.writeFile("model.stl", cubeStlAscii([0, 0, 0], [10, 10, 10]));
+    const model = workspace.writeFile(
+      "model.stl",
+      cubeStlAscii([0, 0, 0], [10, 10, 10]),
+    );
     const { io, stderr } = createCapturedIO();
 
     const code = await run(
@@ -124,7 +163,9 @@ describe("inspectCommand", () => {
     const { io, stderr } = createCapturedIO();
     const code = await run(["inspect"], io);
     expect(code).toBe(EXIT_USAGE_ERROR);
-    expect(stderr.some((line) => line.includes("requires one positional argument"))).toBe(true);
+    expect(
+      stderr.some((line) => line.includes("requires one positional argument")),
+    ).toBe(true);
   });
 
   describe("--sarif and --markdown", () => {
@@ -139,7 +180,15 @@ describe("inspectCommand", () => {
 
       const { io } = createCapturedIO();
       const code = await inspectCommand(
-        [open, "--require-watertight", "--sarif", sarifPath, "--markdown", markdownPath, ...FRAME_ARGS],
+        [
+          open,
+          "--require-watertight",
+          "--sarif",
+          sarifPath,
+          "--markdown",
+          markdownPath,
+          ...FRAME_ARGS,
+        ],
         io,
       );
       const withoutOutputs = createCapturedIO();
@@ -153,7 +202,9 @@ describe("inspectCommand", () => {
 
       const sarif = readSarif(sarifPath);
       const results = sarif.runs[0]?.results ?? [];
-      const watertightResult = results.find((r) => r.ruleId === "not-watertight");
+      const watertightResult = results.find(
+        (r) => r.ruleId === "not-watertight",
+      );
       expect(watertightResult).toBeDefined();
       expect(watertightResult?.level).toBe("error");
 
@@ -172,27 +223,45 @@ describe("inspectCommand", () => {
       const { io } = createCapturedIO();
 
       const code = await inspectCommand(
-        [degenerate, "--fail-on-degenerate", "--sarif", sarifPath, ...FRAME_ARGS],
+        [
+          degenerate,
+          "--fail-on-degenerate",
+          "--sarif",
+          sarifPath,
+          ...FRAME_ARGS,
+        ],
         io,
       );
 
       expect(code).toBe(EXIT_POLICY_FAILED);
       const sarif = readSarif(sarifPath);
       const results = sarif.runs[0]?.results ?? [];
-      const degenerateResult = results.find((r) => r.ruleId === "degenerate-triangles");
+      const degenerateResult = results.find(
+        (r) => r.ruleId === "degenerate-triangles",
+      );
       expect(degenerateResult).toBeDefined();
       expect(degenerateResult?.level).toBe("error");
     });
 
     it("records no findings for a clean model with no policy options (exact findings, not sampled)", async () => {
       const workspace = createTestWorkspace();
-      const clean = workspace.writeFile("clean.stl", cubeStlAscii([0, 0, 0], [10, 10, 10]));
+      const clean = workspace.writeFile(
+        "clean.stl",
+        cubeStlAscii([0, 0, 0], [10, 10, 10]),
+      );
       const sarifPath = join(workspace.dir, "out.sarif");
       const markdownPath = join(workspace.dir, "out.md");
       const { io } = createCapturedIO();
 
       const code = await inspectCommand(
-        [clean, "--sarif", sarifPath, "--markdown", markdownPath, ...FRAME_ARGS],
+        [
+          clean,
+          "--sarif",
+          sarifPath,
+          "--markdown",
+          markdownPath,
+          ...FRAME_ARGS,
+        ],
         io,
       );
 
@@ -222,7 +291,9 @@ describe("inspectCommand", () => {
         createCapturedIO().io,
       );
 
-      expect(readFileSync(firstPath, "utf8")).toBe(readFileSync(secondPath, "utf8"));
+      expect(readFileSync(firstPath, "utf8")).toBe(
+        readFileSync(secondPath, "utf8"),
+      );
     });
   });
 });

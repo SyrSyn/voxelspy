@@ -10,7 +10,10 @@ import {
 } from "../exit-codes.js";
 import { buildExecutionBudget } from "../execution-budget.js";
 import type { CommandIO } from "../io.js";
-import { importFailureExitCode, printImportFailure } from "../import-outcome.js";
+import {
+  importFailureExitCode,
+  printImportFailure,
+} from "../import-outcome.js";
 import { loadModel } from "../load-model.js";
 import {
   parseAxisOption,
@@ -108,7 +111,10 @@ export async function clearanceCommand(
     );
   }
 
-  const desiredClearance = parseRequiredMillimetres("--clearance", values.clearance);
+  const desiredClearance = parseRequiredMillimetres(
+    "--clearance",
+    values.clearance,
+  );
   const maxTightRegions = parseOptionalPositiveInteger(
     "--max-tight-regions",
     values["max-tight-regions"],
@@ -117,13 +123,22 @@ export async function clearanceCommand(
     "--max-interfering-pairs",
     values["max-interfering-pairs"],
   );
-  const maxWorkUnits = parseOptionalPositiveInteger("--max-work-units", values["max-work-units"]);
+  const maxWorkUnits = parseOptionalPositiveInteger(
+    "--max-work-units",
+    values["max-work-units"],
+  );
   const maxMemoryBytes = parseOptionalPositiveInteger(
     "--max-memory-bytes",
     values["max-memory-bytes"],
   );
-  const maxInputBytes = parseOptionalPositiveInteger("--max-input-bytes", values["max-input-bytes"]);
-  const maxTriangles = parseOptionalPositiveInteger("--max-triangles", values["max-triangles"]);
+  const maxInputBytes = parseOptionalPositiveInteger(
+    "--max-input-bytes",
+    values["max-input-bytes"],
+  );
+  const maxTriangles = parseOptionalPositiveInteger(
+    "--max-triangles",
+    values["max-triangles"],
+  );
   const allowTight = values["allow-tight"] === true;
   const failOnIndeterminate = values["fail-on-indeterminate"] === true;
   const sarifPath = values.sarif;
@@ -163,7 +178,10 @@ export async function clearanceCommand(
     result = checkClearance(
       {
         first: { model: firstImport.result.model, modelToComparison: identity },
-        second: { model: secondImport.result.model, modelToComparison: identity },
+        second: {
+          model: secondImport.result.model,
+          modelToComparison: identity,
+        },
         desiredClearanceMillimetres: desiredClearance,
       },
       {
@@ -247,7 +265,9 @@ export async function clearanceCommand(
       description: allowTight
         ? 'state is not "interfering"'
         : 'state is "clear" (not "tight" or "interfering")',
-      passed: allowTight ? result.state !== "interfering" : result.state === "clear",
+      passed: allowTight
+        ? result.state !== "interfering"
+        : result.state === "clear",
       detail: `state=${result.state}, minimum distance=${result.minimumDistanceMillimetres} mm, desired=${result.desiredClearanceMillimetres} mm, interfering triangle pairs=${result.interference.detectedPairCount}`,
     },
   ];
@@ -271,12 +291,15 @@ export async function clearanceCommand(
         },
       });
     }
-    const spacing = result.uncertainty.parameters["maxSampleSpacingMillimetres"];
+    const spacing =
+      result.uncertainty.parameters["maxSampleSpacingMillimetres"];
     const undersampled = result.uncertainty.parameters["undersampled"] === true;
     findings.push({
       ruleId: "approximate-result",
       message: `checkClearance's minimum-distance/closest-point/tight-region evidence is sampled, not exact (interference.trianglePairs alone is exact).${
-        typeof spacing === "number" ? ` Sample spacing bound: ${spacing} mm.` : ""
+        typeof spacing === "number"
+          ? ` Sample spacing bound: ${spacing} mm.`
+          : ""
       } A passing policy result is not a stronger claim than that bound supports.`,
       artifactUris,
       properties: { uncertainty: result.uncertainty },
@@ -328,13 +351,22 @@ export async function clearanceCommand(
           headline: `Checked clearance between \`${firstImport.sourceName}\` (first) and \`${secondImport.sourceName}\` (second).`,
           metrics: [
             { label: "State", value: result.state },
-            { label: "Minimum distance", value: `${result.minimumDistanceMillimetres} mm` },
-            { label: "Desired clearance", value: `${result.desiredClearanceMillimetres} mm` },
+            {
+              label: "Minimum distance",
+              value: `${result.minimumDistanceMillimetres} mm`,
+            },
+            {
+              label: "Desired clearance",
+              value: `${result.desiredClearanceMillimetres} mm`,
+            },
             {
               label: "Interfering triangle pairs",
               value: `${result.interference.detectedPairCount} (exact, not sampled)`,
             },
-            { label: "Tight regions", value: String(result.tightRegions.detectedRegionCount) },
+            {
+              label: "Tight regions",
+              value: String(result.tightRegions.detectedRegionCount),
+            },
           ],
           policyChecks: checks,
           caveats,
@@ -358,9 +390,13 @@ export async function clearanceCommand(
     printWarnings(result.warnings, io);
     io.stdout("Policy checks:");
     for (const check of checks) {
-      io.stdout(`  [${check.passed ? "PASS" : "FAIL"}] ${check.description} -- ${check.detail}`);
+      io.stdout(
+        `  [${check.passed ? "PASS" : "FAIL"}] ${check.description} -- ${check.detail}`,
+      );
     }
-    io.stdout(evaluation.passed ? "Policy result: PASSED" : "Policy result: FAILED");
+    io.stdout(
+      evaluation.passed ? "Policy result: PASSED" : "Policy result: FAILED",
+    );
   }
 
   return evaluation.passed ? EXIT_OK : EXIT_POLICY_FAILED;

@@ -102,7 +102,8 @@ const SARIF_RULE_CATALOGUE: readonly SarifRuleDefinition[] = [
   {
     id: "deviation-exceeds-threshold",
     name: "DeviationExceedsThreshold",
-    shortDescription: "Measured maximum surface deviation exceeds the configured threshold.",
+    shortDescription:
+      "Measured maximum surface deviation exceeds the configured threshold.",
     fullDescription:
       "`compare --max-deviation` failed: the true maximum surface-distance " +
       "(across all detected changed regions, independent of --max-regions " +
@@ -114,7 +115,8 @@ const SARIF_RULE_CATALOGUE: readonly SarifRuleDefinition[] = [
   {
     id: "region-count-exceeds-threshold",
     name: "RegionCountExceedsThreshold",
-    shortDescription: "The true detected changed-region count exceeds the configured threshold.",
+    shortDescription:
+      "The true detected changed-region count exceeds the configured threshold.",
     fullDescription:
       "`compare --fail-on-regions` failed: the true number of detected " +
       "changed regions (independent of --max-regions truncation) exceeds " +
@@ -124,7 +126,8 @@ const SARIF_RULE_CATALOGUE: readonly SarifRuleDefinition[] = [
   {
     id: "not-watertight",
     name: "NotWatertight",
-    shortDescription: "A model is not watertight (closed): it has boundary or non-manifold edges.",
+    shortDescription:
+      "A model is not watertight (closed): it has boundary or non-manifold edges.",
     fullDescription:
       "`--require-watertight` failed for `compare` or `inspect`: at least " +
       "one referenced model is not topologically closed. This is an exact " +
@@ -154,11 +157,12 @@ const SARIF_RULE_CATALOGUE: readonly SarifRuleDefinition[] = [
   {
     id: "clearance-violation",
     name: "ClearanceViolation",
-    shortDescription: 'The clearance state is "tight" or "interfering" against the configured policy.',
+    shortDescription:
+      'The clearance state is "tight" or "interfering" against the configured policy.',
     fullDescription:
-      "`clearance`'s fit-gate policy failed: the state is \"interfering\" " +
+      '`clearance`\'s fit-gate policy failed: the state is "interfering" ' +
       "(confirmed by an exact triangle-triangle intersection, or the sampled " +
-      "minimum distance landed exactly on zero), or \"tight\" and " +
+      'minimum distance landed exactly on zero), or "tight" and ' +
       "--allow-tight was not passed. See the finding's properties for which.",
     level: "error",
   },
@@ -167,7 +171,7 @@ const SARIF_RULE_CATALOGUE: readonly SarifRuleDefinition[] = [
     name: "IndeterminateAnalysis",
     shortDescription: "The engine could not produce a decidable result.",
     fullDescription:
-      "The analysis/clearance/inspection engine hit `state: \"indeterminate\"`, " +
+      'The analysis/clearance/inspection engine hit `state: "indeterminate"`, ' +
       "an execution-budget ceiling, or a resource-limit refusal. Nothing " +
       "about the geometry was proven true or false -- this is fail-closed, " +
       "reported as `error` regardless of whether --fail-on-indeterminate was " +
@@ -178,7 +182,8 @@ const SARIF_RULE_CATALOGUE: readonly SarifRuleDefinition[] = [
   {
     id: "approximate-result",
     name: "ApproximateResult",
-    shortDescription: "This run's method is approximate, not an exact geometric proof.",
+    shortDescription:
+      "This run's method is approximate, not an exact geometric proof.",
     fullDescription:
       "`surface-distance` and `clearance-fit-check` sample each triangle's " +
       "vertices and centroid rather than measuring continuously across the " +
@@ -190,7 +195,8 @@ const SARIF_RULE_CATALOGUE: readonly SarifRuleDefinition[] = [
   {
     id: "undersampled-region",
     name: "UndersampledRegion",
-    shortDescription: "The sample-spacing bound exceeds the requested tolerance/clearance.",
+    shortDescription:
+      "The sample-spacing bound exceeds the requested tolerance/clearance.",
     fullDescription:
       "The farthest any point on an analyzed triangle could be from its " +
       "nearest sample exceeds the requested tolerance/clearance value: a " +
@@ -200,9 +206,10 @@ const SARIF_RULE_CATALOGUE: readonly SarifRuleDefinition[] = [
   },
 ];
 
-const SARIF_RULES: Readonly<Record<SarifRuleId, SarifRuleDefinition>> = Object.fromEntries(
-  SARIF_RULE_CATALOGUE.map((rule) => [rule.id, rule]),
-) as Record<SarifRuleId, SarifRuleDefinition>;
+const SARIF_RULES: Readonly<Record<SarifRuleId, SarifRuleDefinition>> =
+  Object.fromEntries(
+    SARIF_RULE_CATALOGUE.map((rule) => [rule.id, rule]),
+  ) as Record<SarifRuleId, SarifRuleDefinition>;
 
 /** One geometry finding, ready to become one SARIF `result`. `level` is intentionally not a field here -- it is always looked up from the fixed per-rule level in `SARIF_RULE_CATALOGUE`, so a finding can never drift from its rule's documented severity. */
 export interface SarifFinding {
@@ -235,8 +242,8 @@ export interface SarifBuildInput {
 /** Builds a SARIF 2.1.0 log object (one run) from a command's findings. Pure and deterministic: identical input always produces a deep-equal (and, once serialized, byte-identical) result. */
 export function buildSarifLog(input: SarifBuildInput): Record<string, unknown> {
   const usedRuleIds = new Set(input.findings.map((finding) => finding.ruleId));
-  const orderedRuleIds = SARIF_RULE_CATALOGUE.map((rule) => rule.id).filter((id) =>
-    usedRuleIds.has(id),
+  const orderedRuleIds = SARIF_RULE_CATALOGUE.map((rule) => rule.id).filter(
+    (id) => usedRuleIds.has(id),
   );
   const ruleIndexById = new Map(orderedRuleIds.map((id, index) => [id, index]));
 
@@ -261,7 +268,9 @@ export function buildSarifLog(input: SarifBuildInput): Record<string, unknown> {
       locations: finding.artifactUris.map((uri) => ({
         physicalLocation: { artifactLocation: { uri } },
       })),
-      ...(finding.properties === undefined ? {} : { properties: finding.properties }),
+      ...(finding.properties === undefined
+        ? {}
+        : { properties: finding.properties }),
     };
   });
 
@@ -277,17 +286,26 @@ export function buildSarifLog(input: SarifBuildInput): Record<string, unknown> {
             rules,
           },
         },
-        artifacts: input.artifacts.map((artifact) => ({ location: { uri: artifact.uri } })),
+        artifacts: input.artifacts.map((artifact) => ({
+          location: { uri: artifact.uri },
+        })),
         results,
         ...(input.timestampUtc === undefined
           ? {}
-          : { invocations: [{ executionSuccessful: true, startTimeUtc: input.timestampUtc }] }),
+          : {
+              invocations: [
+                { executionSuccessful: true, startTimeUtc: input.timestampUtc },
+              ],
+            }),
         properties: { command: input.command, ...input.runProperties },
       },
     ],
   };
 }
 
-export function writeSarifFile(path: string, log: Record<string, unknown>): void {
+export function writeSarifFile(
+  path: string,
+  log: Record<string, unknown>,
+): void {
   writeFileSync(path, `${JSON.stringify(log, null, 2)}\n`, "utf8");
 }

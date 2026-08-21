@@ -23,6 +23,8 @@ describe("run", () => {
     const { io, stderr } = createCapturedIO();
     const code = await run(["frobnicate"], io);
     expect(code).toBe(EXIT_USAGE_ERROR);
-    expect(stderr.some((line) => line.includes('Unknown command "frobnicate"'))).toBe(true);
+    expect(
+      stderr.some((line) => line.includes('Unknown command "frobnicate"')),
+    ).toBe(true);
   });
 });

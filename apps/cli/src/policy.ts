@@ -12,6 +12,8 @@ export interface PolicyEvaluation {
   readonly passed: boolean;
 }
 
-export function evaluatePolicy(checks: readonly PolicyCheck[]): PolicyEvaluation {
+export function evaluatePolicy(
+  checks: readonly PolicyCheck[],
+): PolicyEvaluation {
   return { checks, passed: checks.every((check) => check.passed) };
 }

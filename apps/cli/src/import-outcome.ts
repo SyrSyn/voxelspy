@@ -1,4 +1,8 @@
-import { EXIT_INDETERMINATE, EXIT_USAGE_ERROR, type ExitCode } from "./exit-codes.js";
+import {
+  EXIT_INDETERMINATE,
+  EXIT_USAGE_ERROR,
+  type ExitCode,
+} from "./exit-codes.js";
 import type { LoadModelResult } from "./load-model.js";
 
 /**
@@ -20,8 +24,12 @@ export function printImportFailure(
   label: string,
   stderr: (line: string) => void,
 ): void {
-  stderr(`${label} import failed: [${failure.result.code}] ${failure.result.message}`);
+  stderr(
+    `${label} import failed: [${failure.result.code}] ${failure.result.message}`,
+  );
   for (const warning of failure.result.warnings) {
-    stderr(`  warning [${warning.severity}] ${warning.code}: ${warning.message}`);
+    stderr(
+      `  warning [${warning.severity}] ${warning.code}: ${warning.message}`,
+    );
   }
 }

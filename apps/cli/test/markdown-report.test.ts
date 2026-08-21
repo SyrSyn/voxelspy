@@ -6,7 +6,8 @@ describe("buildMarkdownSummary", () => {
     const markdown = buildMarkdownSummary({
       command: "compare",
       verdict: "policy failed",
-      headline: "Compared `baseline.stl` (baseline) against `candidate.stl` (candidate).",
+      headline:
+        "Compared `baseline.stl` (baseline) against `candidate.stl` (candidate).",
       metrics: [
         { label: "Maximum distance", value: "2 mm" },
         { label: "Changed regions", value: "3 detected, 3 reported" },
@@ -57,7 +58,13 @@ describe("buildMarkdownSummary", () => {
       metrics: [],
       policyChecks: [],
       caveats: ["Exact topology findings; not sampled."],
-      warnings: [{ severity: "warning", code: "example-code", message: "example message" }],
+      warnings: [
+        {
+          severity: "warning",
+          code: "example-code",
+          message: "example message",
+        },
+      ],
     });
 
     expect(markdown).toContain("### Warnings");

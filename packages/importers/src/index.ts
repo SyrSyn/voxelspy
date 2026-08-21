@@ -282,9 +282,14 @@ function mapImportError(error: unknown): ImportResult {
   return failure("invalid-input", "Input could not be imported safely.");
 }
 
-export function inferFormat(
-  sourceName: string,
-): "stl" | "obj" | "gltf" | "glb" | "3mf" | undefined {
+/**
+ * Every format this package can read. Consumers should name this type rather
+ * than restating the list, so adding a format widens them automatically
+ * instead of leaving a stale literal union behind.
+ */
+export type SupportedFormat = "stl" | "obj" | "gltf" | "glb" | "3mf";
+
+export function inferFormat(sourceName: string): SupportedFormat | undefined {
   const extension = /\.([^.]+)$/u.exec(sourceName)?.[1]?.toLowerCase();
   return extension === "stl" ||
     extension === "obj" ||

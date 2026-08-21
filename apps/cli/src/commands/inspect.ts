@@ -1,5 +1,9 @@
 import { parseArgs } from "node:util";
-import { InspectionResourceLimitError, inspectModel, type InspectionResult } from "@voxelspy/analysis";
+import {
+  InspectionResourceLimitError,
+  inspectModel,
+  type InspectionResult,
+} from "@voxelspy/analysis";
 import { CliUsageError } from "../cli-error.js";
 import {
   EXIT_INDETERMINATE,
@@ -8,7 +12,10 @@ import {
   type ExitCode,
 } from "../exit-codes.js";
 import type { CommandIO } from "../io.js";
-import { importFailureExitCode, printImportFailure } from "../import-outcome.js";
+import {
+  importFailureExitCode,
+  printImportFailure,
+} from "../import-outcome.js";
 import { loadModel } from "../load-model.js";
 import {
   parseAxisOption,
@@ -18,7 +25,12 @@ import {
 } from "../parsing.js";
 import { evaluatePolicy, type PolicyCheck } from "../policy.js";
 import { buildMarkdownSummary, writeMarkdownFile } from "../markdown-report.js";
-import { buildSarifLog, writeSarifFile, type SarifFinding, type SarifRuleId } from "../sarif.js";
+import {
+  buildSarifLog,
+  writeSarifFile,
+  type SarifFinding,
+  type SarifRuleId,
+} from "../sarif.js";
 
 export const INSPECT_HELP = `Usage: voxelspy inspect <model> [options]
 
@@ -88,13 +100,21 @@ export async function inspectCommand(
 
   const [modelPath] = positionals;
   if (modelPath === undefined) {
-    throw new CliUsageError("inspect requires one positional argument: <model>.");
+    throw new CliUsageError(
+      "inspect requires one positional argument: <model>.",
+    );
   }
 
   const unit = parseUnitOption("--unit", values.unit);
   const axis = parseAxisOption("--axis", values.axis);
-  const maxInputBytes = parseOptionalPositiveInteger("--max-input-bytes", values["max-input-bytes"]);
-  const maxTriangles = parseOptionalPositiveInteger("--max-triangles", values["max-triangles"]);
+  const maxInputBytes = parseOptionalPositiveInteger(
+    "--max-input-bytes",
+    values["max-input-bytes"],
+  );
+  const maxTriangles = parseOptionalPositiveInteger(
+    "--max-triangles",
+    values["max-triangles"],
+  );
   const maxTopologyExamples = parseOptionalNonNegativeInteger(
     "--max-topology-examples",
     values["max-topology-examples"],
@@ -125,7 +145,9 @@ export async function inspectCommand(
   try {
     inspection = inspectModel(imported.result.model, {
       ...(maxTopologyExamples === undefined ? {} : { maxTopologyExamples }),
-      ...(maxMeshBreakdownEntries === undefined ? {} : { maxMeshBreakdownEntries }),
+      ...(maxMeshBreakdownEntries === undefined
+        ? {}
+        : { maxMeshBreakdownEntries }),
     });
   } catch (error) {
     if (error instanceof InspectionResourceLimitError) {
@@ -138,7 +160,10 @@ export async function inspectCommand(
             {
               command: "inspect",
               model: { path: modelPath, sourceName: imported.sourceName },
-              error: { code: "resource-limit-exceeded", message: error.message },
+              error: {
+                code: "resource-limit-exceeded",
+                message: error.message,
+              },
             },
             null,
             2,
@@ -151,7 +176,10 @@ export async function inspectCommand(
           ruleId: "indeterminate-analysis",
           message: `Inspection indeterminate (resource-limit-exceeded): ${error.message}`,
           artifactUris,
-          properties: { code: "resource-limit-exceeded", message: error.message },
+          properties: {
+            code: "resource-limit-exceeded",
+            message: error.message,
+          },
         };
         if (sarifPath !== undefined) {
           writeSarifFile(
@@ -160,7 +188,10 @@ export async function inspectCommand(
               command: "inspect",
               artifacts: artifactUris.map((uri) => ({ uri })),
               findings: [finding],
-              runProperties: { state: "indeterminate", code: "resource-limit-exceeded" },
+              runProperties: {
+                state: "indeterminate",
+                code: "resource-limit-exceeded",
+              },
             }),
           );
         }
@@ -171,7 +202,9 @@ export async function inspectCommand(
               command: "inspect",
               verdict: "indeterminate",
               headline: `Inspected \`${imported.sourceName}\` -- the engine could not produce a decidable result.`,
-              metrics: [{ label: "Outcome code", value: "resource-limit-exceeded" }],
+              metrics: [
+                { label: "Outcome code", value: "resource-limit-exceeded" },
+              ],
               policyChecks: [],
               caveats: [
                 "The inspection was indeterminate: nothing about the geometry was proven true or false. This is fail-closed, not a pass.",
@@ -216,7 +249,8 @@ export async function inspectCommand(
     const closed = inspection.watertightness.state === "closed";
     checks.push({
       id: "require-watertight",
-      description: "the model is watertight (closed, no boundary or non-manifold edges)",
+      description:
+        "the model is watertight (closed, no boundary or non-manifold edges)",
       passed: closed,
       detail: `watertightness state: ${inspection.watertightness.state}${
         "reasons" in inspection.watertightness
@@ -230,7 +264,10 @@ export async function inspectCommand(
       id: "fail-on-degenerate",
       description: "no degenerate triangles are present",
       passed: degenerateFinding === undefined,
-      detail: degenerateFinding === undefined ? "none found" : `${degenerateFinding.count} found`,
+      detail:
+        degenerateFinding === undefined
+          ? "none found"
+          : `${degenerateFinding.count} found`,
     });
   }
   if (failOnNonManifold) {
@@ -238,7 +275,10 @@ export async function inspectCommand(
       id: "fail-on-non-manifold",
       description: "no non-manifold edges are present",
       passed: nonManifoldFinding === undefined,
-      detail: nonManifoldFinding === undefined ? "none found" : `${nonManifoldFinding.count} found`,
+      detail:
+        nonManifoldFinding === undefined
+          ? "none found"
+          : `${nonManifoldFinding.count} found`,
     });
   }
   const evaluation = evaluatePolicy(checks);
@@ -250,7 +290,9 @@ export async function inspectCommand(
       if (check.passed) continue;
       const ruleId = INSPECT_CHECK_RULES[check.id];
       if (ruleId === undefined) {
-        throw new Error(`No SARIF rule is mapped for inspect policy check id "${check.id}".`);
+        throw new Error(
+          `No SARIF rule is mapped for inspect policy check id "${check.id}".`,
+        );
       }
       const relatedFinding =
         check.id === "fail-on-degenerate"
@@ -267,7 +309,10 @@ export async function inspectCommand(
           watertightnessState: inspection.watertightness.state,
           ...(relatedFinding === undefined
             ? {}
-            : { count: relatedFinding.count, examples: relatedFinding.examples }),
+            : {
+                count: relatedFinding.count,
+                examples: relatedFinding.examples,
+              }),
         },
       });
     }
@@ -299,9 +344,18 @@ export async function inspectCommand(
                 : "policy failed",
           headline: `Inspected \`${imported.sourceName}\`.`,
           metrics: [
-            { label: "Triangles", value: String(inspection.summary.triangleCount) },
-            { label: "Vertices", value: String(inspection.summary.vertexCount) },
-            { label: "Meshes", value: String(inspection.meshBreakdown.totalMeshCount) },
+            {
+              label: "Triangles",
+              value: String(inspection.summary.triangleCount),
+            },
+            {
+              label: "Vertices",
+              value: String(inspection.summary.vertexCount),
+            },
+            {
+              label: "Meshes",
+              value: String(inspection.meshBreakdown.totalMeshCount),
+            },
             { label: "Watertightness", value: inspection.watertightness.state },
           ],
           policyChecks: checks,
@@ -324,17 +378,25 @@ export async function inspectCommand(
     } else {
       io.stdout("Topology findings:");
       for (const finding of inspection.topologyFindings) {
-        io.stdout(`  [${finding.severity}] ${finding.kind}: ${finding.summary}`);
+        io.stdout(
+          `  [${finding.severity}] ${finding.kind}: ${finding.summary}`,
+        );
       }
     }
     if (checks.length === 0) {
-      io.stdout("No policy options were specified; this run is informational only.");
+      io.stdout(
+        "No policy options were specified; this run is informational only.",
+      );
     } else {
       io.stdout("Policy checks:");
       for (const check of checks) {
-        io.stdout(`  [${check.passed ? "PASS" : "FAIL"}] ${check.description} -- ${check.detail}`);
+        io.stdout(
+          `  [${check.passed ? "PASS" : "FAIL"}] ${check.description} -- ${check.detail}`,
+        );
       }
-      io.stdout(evaluation.passed ? "Policy result: PASSED" : "Policy result: FAILED");
+      io.stdout(
+        evaluation.passed ? "Policy result: PASSED" : "Policy result: FAILED",
+      );
     }
   }
 

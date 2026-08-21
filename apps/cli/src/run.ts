@@ -26,7 +26,10 @@ Reads local files only. No network access, no telemetry.
 `;
 
 /** Dispatches to a subcommand and returns the process exit code. Never throws for an ordinary usage mistake -- `CliUsageError` is caught here and reported through `io.stderr`. */
-export async function run(argv: readonly string[], io: CommandIO): Promise<ExitCode> {
+export async function run(
+  argv: readonly string[],
+  io: CommandIO,
+): Promise<ExitCode> {
   const [command, ...rest] = argv;
   try {
     switch (command) {

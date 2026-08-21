@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import type { ImportResult } from "@voxelspy/contracts";
-import { IMPORTER_SAFETY_LIMITS, importModel, inferFormat } from "@voxelspy/importers";
+import {
+  IMPORTER_SAFETY_LIMITS,
+  importModel,
+  inferFormat,
+} from "@voxelspy/importers";
 import { CliUsageError } from "./cli-error.js";
 import type { ResolvedSourceAxis, ResolvedSourceUnit } from "./parsing.js";
 
@@ -35,8 +39,19 @@ export interface LocalResourceLimit {
 }
 
 export type LoadModelResult =
-  | { readonly ok: true; readonly path: string; readonly sourceName: string; readonly result: Extract<ImportResult, { ok: true }> }
-  | { readonly ok: false; readonly path: string; readonly sourceName: string; readonly result: Extract<ImportResult, { ok: false }> | LocalResourceLimit };
+  | {
+      readonly ok: true;
+      readonly path: string;
+      readonly sourceName: string;
+      readonly result: Extract<ImportResult, { ok: true }>;
+    }
+  | {
+      readonly ok: false;
+      readonly path: string;
+      readonly sourceName: string;
+      readonly result:
+        Extract<ImportResult, { ok: false }> | LocalResourceLimit;
+    };
 
 /** Reads `path`, infers its format from the extension, and imports it into `targetModelId`. Never throws for an ordinary import failure -- only for a usage problem (unreadable file, unrecognized extension). */
 export async function loadModel(

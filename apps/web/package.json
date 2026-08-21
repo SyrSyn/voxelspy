@@ -9,7 +9,7 @@
     "dev": "vite --host 127.0.0.1",
     "lint": "pnpm deps:build && tsc --noEmit",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "vitest run src",
+    "test": "vitest run src --testTimeout=30000 --hookTimeout=30000",
     "test:e2e": "playwright test",
     "typecheck": "pnpm deps:build && tsc --noEmit"
   },

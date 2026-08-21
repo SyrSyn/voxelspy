@@ -12,6 +12,7 @@ import type {
   Vec3,
 } from "@voxelspy/contracts";
 import { inferFormat } from "@voxelspy/importers";
+import type { SupportedFormat } from "@voxelspy/importers";
 
 type ResolvedUnit = Exclude<SourceUnit, "unknown">;
 type ResolvedAxis = Exclude<SourceAxis, "unknown">;
@@ -66,7 +67,7 @@ export interface InspectSource {
  */
 export interface InspectWorkerRequestBase {
   readonly requestId: number;
-  readonly format: "stl" | "obj";
+  readonly format: SupportedFormat;
   readonly sourceName: string;
   readonly bytes: Uint8Array;
   readonly options: {

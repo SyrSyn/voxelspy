@@ -10,6 +10,7 @@ import {
   type ExportOptions,
   type ExportResult,
 } from "@voxelspy/importers";
+import type { SupportedFormat } from "@voxelspy/importers";
 
 /**
  * `exportModel`'s own `ResolvedSourceUnit`/`ResolvedSourceAxis` types
@@ -87,7 +88,7 @@ interface ConvertWorkerRequestBase {
 export type ConvertWorkerRequest =
   | (ConvertWorkerRequestBase & {
       readonly kind: "load";
-      readonly format: "stl" | "obj";
+      readonly format: SupportedFormat;
       readonly sourceName: string;
       readonly bytes: Uint8Array;
       readonly options: {
