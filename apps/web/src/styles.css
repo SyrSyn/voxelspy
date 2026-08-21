@@ -1345,6 +1345,61 @@ kbd {
 .tool-shell-body {
   margin-top: 1rem;
 }
+/* Homepage toolbox section: a denser list than the catalog's cards, since
+   its job is to reveal that more tools exist and route onward, not to
+   explain each one. */
+.home-tools {
+  padding-block: clamp(1.5rem, 3vw, 2.5rem) 1rem;
+}
+.home-tools .section-heading {
+  max-width: 46rem;
+  margin-bottom: 1.5rem;
+}
+.home-tools .section-heading p {
+  color: var(--muted);
+}
+.home-tool-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.75rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.home-tool-list a {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  text-decoration: none;
+}
+.home-tool-list a:hover {
+  border-color: var(--green);
+}
+.home-tool-list strong {
+  font-size: 1rem;
+  font-weight: 850;
+  letter-spacing: -0.01em;
+}
+.home-tool-question {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+.home-tools-more {
+  margin-top: 1.25rem;
+  font-weight: 800;
+}
+.home-tools-more a {
+  color: var(--green);
+  text-decoration: none;
+}
+.home-tools-more a:hover {
+  text-decoration: underline;
+}
 .tools-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));

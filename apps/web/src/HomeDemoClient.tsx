@@ -101,9 +101,14 @@ export function HomeDemoClient() {
       variant="sample"
       enableKeyboardShortcuts={false}
       headerAction={
-        <Link className="button button-primary" to="/compare/">
-          Import Models
-        </Link>
+        <>
+          <a className="button button-secondary" href="#home-tools-title">
+            All tools
+          </a>
+          <Link className="button button-primary" to="/compare/">
+            Import Models
+          </Link>
+        </>
       }
     />
   );

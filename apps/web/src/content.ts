@@ -344,7 +344,7 @@ export const tools: Tool[] = [
     name: "Mesh Health",
     description: "Find non-manifold edges, holes, and other mesh defects.",
     summary:
-      "Scan a mesh for the structural problems that break downstream tools: non-manifold edges, holes, self-intersections, and inverted normals, each located and explained. Mesh Health is not built yet.",
+      "Scan a mesh for the structural problems that break downstream tools. Most of this already works today inside Inspect, which locates boundary loops, non-manifold edges, inconsistently wound faces, and degenerate triangles, and can draw them. A separate Mesh Health tool is not built yet; it would add self-intersection detection and a workflow built around repairing nothing but seeing everything.",
     status: "planned",
     question:
       "Is this mesh actually sound, or does it just look fine rendered?",

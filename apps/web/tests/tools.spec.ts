@@ -106,3 +106,40 @@ test("the primary navigation reads Tools / Compare / Docs, with Home reachable v
     page.getByRole("heading", { level: 1, name: "A toolbox for 3D geometry" }),
   ).toBeVisible();
 });
+
+test("the home page reveals the toolbox rather than only the comparison demo", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  // Reachable without scrolling: the demo header offers a way into the
+  // catalog, not only into comparison.
+  const sample = page.locator(".workbench-sample");
+  await expect(sample.getByRole("link", { name: "All tools" })).toBeVisible();
+  await expect(
+    sample.getByRole("link", { name: "Import Models" }),
+  ).toBeVisible();
+
+  // The overview names every available tool and links each one. It must be
+  // in the served document, so assert before any hydration-dependent state.
+  const overview = page.locator(".home-tools");
+  await expect(
+    overview.getByRole("heading", { name: /tools\. Every one of them local/ }),
+  ).toBeVisible();
+  const toolLinks = overview.locator(".home-tool-list a");
+  const linkCount = await toolLinks.count();
+  expect(linkCount).toBeGreaterThanOrEqual(5);
+
+  // Every listed tool actually goes somewhere in the tools area (or to the
+  // comparison route, which predates it).
+  for (let index = 0; index < linkCount; index += 1) {
+    const href = await toolLinks.nth(index).getAttribute("href");
+    expect(href).toMatch(/^\/(tools\/[a-z-]+|compare)\/$/u);
+  }
+
+  await overview.getByRole("link", { name: /See the full catalog/ }).click();
+  await expect(page).toHaveURL(/\/tools\/$/u);
+  await expect(
+    page.getByRole("heading", { name: "A toolbox for 3D geometry" }),
+  ).toBeVisible();
+});

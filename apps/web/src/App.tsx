@@ -227,8 +227,59 @@ function Footer() {
   );
 }
 
+/**
+ * The homepage leads with the comparison demo, which for a long time was the
+ * only thing on it -- a visitor had no way to learn the site is a toolbox
+ * except by noticing one nav link. This section follows the demo so the rest
+ * of the tools are discoverable by scrolling, and it is plain markup so it
+ * appears in the prerendered document rather than waiting on hydration.
+ */
+function HomeToolsOverview() {
+  const available = tools.filter((tool) => tool.status === "available");
+  const planned = tools.filter((tool) => tool.status === "planned");
+  return (
+    <section className="home-tools shell" aria-labelledby="home-tools-title">
+      <div className="section-heading">
+        <span className="eyebrow">The rest of the toolbox</span>
+        <h2 id="home-tools-title">
+          {available.length} tools. Every one of them local.
+        </h2>
+        <p>
+          Comparison is one of them. The others answer a single question each,
+          about one model or two, and all of them run in this browser without
+          uploading your geometry.
+        </p>
+      </div>
+      <ul className="home-tool-list">
+        {available.map((tool) => (
+          <li key={tool.id}>
+            <Link to={tool.path}>
+              <strong>{tool.name}</strong>
+              <span className="home-tool-question">{tool.question}</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+      <p className="home-tools-more">
+        <Link to="/tools/">
+          See the full catalog
+          {planned.length > 0
+            ? `, including ${planned.length} not built yet`
+            : ""}{" "}
+          →
+        </Link>
+      </p>
+    </section>
+  );
+}
+
 function HomePage() {
-  return <HomeDemo />;
+  return (
+    <>
+      <HomeDemo />
+      <HomeToolsOverview />
+    </>
+  );
 }
 
 function ToolCard({ tool }: { tool: (typeof tools)[number] }) {

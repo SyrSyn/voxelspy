@@ -59,6 +59,20 @@ assert.match(home, /A 3D Toolkit, Free Forever\./);
 assert.match(home, /viewport-difference/);
 assert.match(home, /viewport-baseline/);
 assert.match(home, /viewport-candidate/);
+// The homepage was the comparison demo alone for a long time, which left a
+// visitor no way to learn the site is a toolbox. Assert the overview and a
+// link to every available tool survive in the prerendered document.
+assert.match(home, /home-tool-list/);
+assert.match(home, /See the full catalog/);
+const homeToolLinks = (
+  home
+    .slice(home.indexOf("home-tool-list"), home.indexOf("home-tools-more"))
+    .match(/<a href="/gu) ?? []
+).length;
+assert.ok(
+  homeToolLinks >= 5,
+  `home page lists only ${homeToolLinks} tools; the overview should show every available one`,
+);
 assert.doesNotMatch(home, /See what changed/);
 assert.doesNotMatch(home, /Mounting bracket reinforcement/);
 const compare = await readFile(

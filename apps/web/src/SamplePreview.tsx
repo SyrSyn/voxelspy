@@ -15,6 +15,9 @@ export function SamplePreview({ status }: { status?: string }) {
           <button className="button button-secondary" type="button" disabled>
             Reset camera
           </button>
+          <a className="button button-secondary" href="#home-tools-title">
+            All tools
+          </a>
           <a className="button button-primary" href="/compare/">
             Import Models
           </a>
