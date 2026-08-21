@@ -1,8 +1,23 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { clearanceCommand } from "../src/commands/clearance.js";
 import { EXIT_INDETERMINATE, EXIT_OK, EXIT_POLICY_FAILED, EXIT_USAGE_ERROR } from "../src/exit-codes.js";
 import { run } from "../src/run.js";
 import { createCapturedIO, createTestWorkspace, cubeStlAscii } from "./fixtures.js";
+
+interface SarifLog {
+  readonly runs: readonly {
+    readonly results: readonly {
+      readonly ruleId: string;
+      readonly level: string;
+    }[];
+  }[];
+}
+
+function readSarif(path: string): SarifLog {
+  return JSON.parse(readFileSync(path, "utf8")) as SarifLog;
+}
 
 const FRAME_ARGS = [
   "--first-unit",
@@ -130,5 +145,122 @@ describe("clearanceCommand", () => {
     const code = await run(["clearance", "--clearance", "1"], io);
     expect(code).toBe(EXIT_USAGE_ERROR);
     expect(stderr.some((line) => line.includes("requires two positional arguments"))).toBe(true);
+  });
+
+  describe("--sarif and --markdown", () => {
+    it("writes an error-level clearance-violation result for a tight state, without changing the exit code", async () => {
+      const workspace = createTestWorkspace();
+      const first = workspace.writeFile("first.stl", cubeStlAscii([0, 0, 0], [10, 10, 10]));
+      const second = workspace.writeFile("second.stl", cubeStlAscii([10.5, 0, 0], [20.5, 10, 10]));
+      const sarifPath = join(workspace.dir, "out.sarif");
+      const markdownPath = join(workspace.dir, "out.md");
+
+      const { io } = createCapturedIO();
+      const code = await clearanceCommand(
+        [
+          first,
+          second,
+          "--clearance",
+          "1",
+          "--sarif",
+          sarifPath,
+          "--markdown",
+          markdownPath,
+          ...FRAME_ARGS,
+        ],
+        io,
+      );
+      const withoutOutputs = createCapturedIO();
+      const codeWithoutOutputs = await clearanceCommand(
+        [first, second, "--clearance", "1", ...FRAME_ARGS],
+        withoutOutputs.io,
+      );
+
+      expect(code).toBe(EXIT_POLICY_FAILED);
+      expect(code).toBe(codeWithoutOutputs);
+
+      const sarif = readSarif(sarifPath);
+      const results = sarif.runs[0]?.results ?? [];
+      const violation = results.find((r) => r.ruleId === "clearance-violation");
+      expect(violation).toBeDefined();
+      expect(violation?.level).toBe("error");
+      const approximate = results.find((r) => r.ruleId === "approximate-result");
+      expect(approximate).toBeDefined();
+      expect(approximate?.level).toBe("note");
+
+      const markdown = readFileSync(markdownPath, "utf8");
+      expect(markdown).toContain("POLICY FAILED");
+      expect(markdown).toMatch(/APPROXIMATE/u);
+    });
+
+    it("always records an approximate-result finding for a passing 'clear' state -- never a bare clean pass", async () => {
+      const workspace = createTestWorkspace();
+      const first = workspace.writeFile("first.stl", cubeStlAscii([0, 0, 0], [10, 10, 10]));
+      const second = workspace.writeFile("second.stl", cubeStlAscii([100, 0, 0], [110, 10, 10]));
+      const sarifPath = join(workspace.dir, "out.sarif");
+      const { io } = createCapturedIO();
+
+      const code = await clearanceCommand(
+        [first, second, "--clearance", "1", "--sarif", sarifPath, ...FRAME_ARGS],
+        io,
+      );
+
+      expect(code).toBe(EXIT_OK);
+      const sarif = readSarif(sarifPath);
+      const results = sarif.runs[0]?.results ?? [];
+      const approximate = results.find((r) => r.ruleId === "approximate-result");
+      expect(approximate).toBeDefined();
+      expect(approximate?.level).toBe("note");
+      expect(results.some((r) => r.ruleId === "clearance-violation")).toBe(false);
+    });
+
+    it("maps an indeterminate outcome to an error-level indeterminate-analysis finding", async () => {
+      const workspace = createTestWorkspace();
+      const first = workspace.writeFile("first.stl", cubeStlAscii([0, 0, 0], [10, 10, 10]));
+      const second = workspace.writeFile("second.stl", cubeStlAscii([100, 0, 0], [110, 10, 10]));
+      const sarifPath = join(workspace.dir, "out.sarif");
+      const { io } = createCapturedIO();
+
+      const code = await clearanceCommand(
+        [
+          first,
+          second,
+          "--clearance",
+          "1",
+          "--max-work-units",
+          "1",
+          "--sarif",
+          sarifPath,
+          ...FRAME_ARGS,
+        ],
+        io,
+      );
+
+      expect(code).toBe(EXIT_INDETERMINATE);
+      const sarif = readSarif(sarifPath);
+      const results = sarif.runs[0]?.results ?? [];
+      expect(results).toHaveLength(1);
+      expect(results[0]?.ruleId).toBe("indeterminate-analysis");
+      expect(results[0]?.level).toBe("error");
+    });
+
+    it("produces byte-identical SARIF for identical inputs", async () => {
+      const workspace = createTestWorkspace();
+      const first = workspace.writeFile("first.stl", cubeStlAscii([0, 0, 0], [10, 10, 10]));
+      const second = workspace.writeFile("second.stl", cubeStlAscii([10.5, 0, 0], [20.5, 10, 10]));
+      const firstPath = join(workspace.dir, "first.sarif");
+      const secondPath = join(workspace.dir, "second.sarif");
+
+      await clearanceCommand(
+        [first, second, "--clearance", "1", "--sarif", firstPath, ...FRAME_ARGS],
+        createCapturedIO().io,
+      );
+      await clearanceCommand(
+        [first, second, "--clearance", "1", "--sarif", secondPath, ...FRAME_ARGS],
+        createCapturedIO().io,
+      );
+
+      expect(readFileSync(firstPath, "utf8")).toBe(readFileSync(secondPath, "utf8"));
+    });
   });
 });

@@ -17,6 +17,8 @@ import {
   parseUnitOption,
 } from "../parsing.js";
 import { evaluatePolicy, type PolicyCheck } from "../policy.js";
+import { buildMarkdownSummary, writeMarkdownFile } from "../markdown-report.js";
+import { buildSarifLog, writeSarifFile, type SarifFinding, type SarifRuleId } from "../sarif.js";
 
 export const INSPECT_HELP = `Usage: voxelspy inspect <model> [options]
 
@@ -45,7 +47,12 @@ Policy options (a run with no policy options exits 0 unconditionally):
 
 Output:
   --json                       emit the InspectionResult as JSON
+  --sarif <path>                write a SARIF 2.1.0 log for code-scanning ingestion
+  --markdown <path>             write a compact Markdown summary (for a PR comment)
   --help                       show this message
+
+--sarif and --markdown only change what is written to those files; they never
+change the process exit code (see "Exit codes" in the README).
 `;
 
 export async function inspectCommand(
@@ -68,6 +75,8 @@ export async function inspectCommand(
       "fail-on-non-manifold": { type: "boolean", default: false },
       "fail-on-indeterminate": { type: "boolean", default: false },
       json: { type: "boolean", default: false },
+      sarif: { type: "string" },
+      markdown: { type: "string" },
       help: { type: "boolean", default: false },
     },
   });
@@ -98,6 +107,8 @@ export async function inspectCommand(
   const failOnDegenerate = values["fail-on-degenerate"] === true;
   const failOnNonManifold = values["fail-on-non-manifold"] === true;
   const failOnIndeterminate = values["fail-on-indeterminate"] === true;
+  const sarifPath = values.sarif;
+  const markdownPath = values.markdown;
 
   const imported = await loadModel(
     modelPath,
@@ -133,6 +144,43 @@ export async function inspectCommand(
             2,
           ),
         );
+      }
+      if (sarifPath !== undefined || markdownPath !== undefined) {
+        const artifactUris = [imported.sourceName];
+        const finding: SarifFinding = {
+          ruleId: "indeterminate-analysis",
+          message: `Inspection indeterminate (resource-limit-exceeded): ${error.message}`,
+          artifactUris,
+          properties: { code: "resource-limit-exceeded", message: error.message },
+        };
+        if (sarifPath !== undefined) {
+          writeSarifFile(
+            sarifPath,
+            buildSarifLog({
+              command: "inspect",
+              artifacts: artifactUris.map((uri) => ({ uri })),
+              findings: [finding],
+              runProperties: { state: "indeterminate", code: "resource-limit-exceeded" },
+            }),
+          );
+        }
+        if (markdownPath !== undefined) {
+          writeMarkdownFile(
+            markdownPath,
+            buildMarkdownSummary({
+              command: "inspect",
+              verdict: "indeterminate",
+              headline: `Inspected \`${imported.sourceName}\` -- the engine could not produce a decidable result.`,
+              metrics: [{ label: "Outcome code", value: "resource-limit-exceeded" }],
+              policyChecks: [],
+              caveats: [
+                "The inspection was indeterminate: nothing about the geometry was proven true or false. This is fail-closed, not a pass.",
+                error.message,
+              ],
+              warnings: [],
+            }),
+          );
+        }
       }
       return failOnIndeterminate ? EXIT_POLICY_FAILED : EXIT_INDETERMINATE;
     }
@@ -195,6 +243,77 @@ export async function inspectCommand(
   }
   const evaluation = evaluatePolicy(checks);
 
+  if (sarifPath !== undefined || markdownPath !== undefined) {
+    const artifactUris = [imported.sourceName];
+    const findings: SarifFinding[] = [];
+    for (const check of checks) {
+      if (check.passed) continue;
+      const ruleId = INSPECT_CHECK_RULES[check.id];
+      if (ruleId === undefined) {
+        throw new Error(`No SARIF rule is mapped for inspect policy check id "${check.id}".`);
+      }
+      const relatedFinding =
+        check.id === "fail-on-degenerate"
+          ? degenerateFinding
+          : check.id === "fail-on-non-manifold"
+            ? nonManifoldFinding
+            : undefined;
+      findings.push({
+        ruleId,
+        message: `${check.description} -- ${check.detail}`,
+        artifactUris,
+        properties: {
+          checkId: check.id,
+          watertightnessState: inspection.watertightness.state,
+          ...(relatedFinding === undefined
+            ? {}
+            : { count: relatedFinding.count, examples: relatedFinding.examples }),
+        },
+      });
+    }
+    if (sarifPath !== undefined) {
+      writeSarifFile(
+        sarifPath,
+        buildSarifLog({
+          command: "inspect",
+          artifacts: artifactUris.map((uri) => ({ uri })),
+          findings,
+          runProperties: {
+            modelId: inspection.modelId,
+            semantics: "exact",
+            watertightness: inspection.watertightness,
+          },
+        }),
+      );
+    }
+    if (markdownPath !== undefined) {
+      writeMarkdownFile(
+        markdownPath,
+        buildMarkdownSummary({
+          command: "inspect",
+          verdict:
+            checks.length === 0
+              ? "informational (no policy configured)"
+              : evaluation.passed
+                ? "policy passed"
+                : "policy failed",
+          headline: `Inspected \`${imported.sourceName}\`.`,
+          metrics: [
+            { label: "Triangles", value: String(inspection.summary.triangleCount) },
+            { label: "Vertices", value: String(inspection.summary.vertexCount) },
+            { label: "Meshes", value: String(inspection.meshBreakdown.totalMeshCount) },
+            { label: "Watertightness", value: inspection.watertightness.state },
+          ],
+          policyChecks: checks,
+          caveats: [
+            "inspectModel's topology findings are exact over the tessellated mesh (not sampled), unlike compare/clearance's surface-distance measurements.",
+          ],
+          warnings: [],
+        }),
+      );
+    }
+  }
+
   if (!values.json) {
     io.stdout(
       `Model ${inspection.modelId}: ${inspection.summary.triangleCount} triangles, ${inspection.summary.vertexCount} vertices, ${inspection.meshBreakdown.totalMeshCount} mesh(es).`,
@@ -221,3 +340,10 @@ export async function inspectCommand(
 
   return evaluation.passed ? EXIT_OK : EXIT_POLICY_FAILED;
 }
+
+/** Maps each `inspect`-specific `PolicyCheck.id` to the SARIF rule it becomes when that check fails. */
+const INSPECT_CHECK_RULES: Record<string, SarifRuleId> = {
+  "require-watertight": "not-watertight",
+  "fail-on-degenerate": "degenerate-triangles",
+  "fail-on-non-manifold": "non-manifold-edges",
+};

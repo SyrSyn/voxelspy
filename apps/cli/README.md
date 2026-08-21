@@ -194,6 +194,101 @@ fixed constants chosen by this CLI, not generated (no timestamps, no random
 IDs), and every underlying library call is itself pure and deterministic
 given the same input bytes and options.
 
+## Automation output (`--sarif`, `--markdown`)
+
+Every command additionally accepts two output-file options, independent of
+(and combinable with) `--json`:
+
+- **`--sarif <path>`** writes a [SARIF](https://sarifweb.azurewebsites.net/)
+  2.1.0 log to `<path>`, for a code-scanning system (GitHub code scanning,
+  or any other SARIF consumer) to ingest the same way it ingests a linter or
+  SAST tool. `--sarif` (a file path) was chosen over a `--format sarif`
+  stdout mode because SARIF, `--json`, and the human-readable text summary
+  are three independent, simultaneously useful outputs for a CI step (a bot
+  posts the Markdown as a PR comment, uploads the SARIF as a code-scanning
+  artifact, and still wants the text summary in the job log) -- forcing a
+  single `--format` choice would make that combination require running the
+  command twice.
+- **`--markdown <path>`** writes a compact Markdown summary to `<path>`,
+  the kind of text a CI bot posts as a pull-request comment or a job
+  summary: what was compared, the verdict, the key numbers, and the
+  caveats.
+
+**Neither option changes the process exit code.** Exit codes are decided
+exactly as documented above, before either file is written; a policy
+failure still exits `1` (and an indeterminate outcome still exits `2`)
+whether or not `--sarif`/`--markdown` were passed. A usage error (exit `3`,
+caught before any engine runs) writes neither file -- there is no result to
+report, and stderr already carries the message.
+
+### SARIF rule catalogue and level mapping
+
+Every SARIF result maps to exactly one of these rule ids, with a level
+fixed per rule (never chosen ad hoc per finding) -- defined in
+`src/sarif.ts`:
+
+| Rule id | Level | Emitted when |
+| --- | --- | --- |
+| `deviation-exceeds-threshold` | `error` | `compare --max-deviation` failed |
+| `region-count-exceeds-threshold` | `error` | `compare --fail-on-regions` failed |
+| `not-watertight` | `error` | `compare`/`inspect --require-watertight` failed |
+| `non-manifold-edges` | `error` | `inspect --fail-on-non-manifold` failed |
+| `degenerate-triangles` | `error` | `inspect --fail-on-degenerate` failed |
+| `clearance-violation` | `error` | `clearance`'s fit-gate check failed (`"tight"` without `--allow-tight`, or `"interfering"`) |
+| `indeterminate-analysis` | `error` | the outcome was indeterminate, a resource-limit refusal, or a work-budget ceiling -- **always recorded, independent of `--fail-on-indeterminate`**, which only changes the exit code, never whether this finding exists |
+| `approximate-result` | `note` | **always recorded** on every `compare`/`clearance` run (their method is always `semantics: "approximate"`), whether the run passed or failed |
+| `undersampled-region` | `warning` | on top of `approximate-result`, whenever the sample-spacing bound exceeds the requested tolerance/clearance |
+
+### Honesty rules this mapping follows
+
+- **An unproven pass is never silently "clean."** `compare`/`clearance` are
+  always approximate methods (sampled at each triangle's vertices and
+  centroid), so `approximate-result` is recorded on every run regardless of
+  outcome -- `results: []` never means "nothing to disclose" for an
+  approximate method, only "no policy violation." `inspect`'s topology
+  findings are exact (not sampled), so a genuinely clean `inspect` run can
+  legitimately produce zero results.
+- **No invented source positions.** A geometry finding has no line number.
+  Every result's `locations` point only at the model file(s) involved
+  (`physicalLocation.artifactLocation.uri`, using the same source file name
+  the text/`--json` output reports), with no `region` -- region/triangle
+  evidence (changed-region ids and anchors, topology-finding examples,
+  interfering-triangle-pair counts) goes in the result's `message` text and
+  `properties` instead.
+- **A policy failure is `error`; indeterminate is never a pass.** Both are
+  SARIF's strongest severity short of a tool crash, matching that both are
+  hard CI-gate conditions -- `error` regardless of whether the specific
+  `--fail-on-*` flag that would promote the process exit code was passed.
+- **Provenance travels with the run, not just the exit code.** Every SARIF
+  log's `runs[0].properties` carries the same method id/version, effective
+  tolerance (or desired clearance), `semantics`, and `uncertainty`
+  (description + sample-spacing-bound parameters) the text/`--json` output
+  already reports, so a SARIF consumer never has to re-derive them.
+
+### Determinism
+
+No SARIF result carries a generated timestamp or random identifier.
+`invocations[].startTimeUtc` is the one place SARIF conventionally records
+a timestamp; this CLI only ever sets it from an explicitly-supplied value
+(exposed as an internal `timestampUtc` builder option, not currently wired
+to a CLI flag since nothing in this slice needs it) and omits `invocations`
+entirely by default. Running the same command with the same `--sarif`/
+`--markdown` paths twice therefore produces byte-identical files, matching
+the determinism guarantee `--json` already makes.
+
+### Using the example workflow
+
+`.github/workflows/geometry-check.yml` is a `workflow_dispatch`-triggered
+example wiring this together: build the workspace, generate two tiny
+synthetic STL fixtures, run `voxelspy compare --sarif --markdown` against
+them, upload the SARIF (both as a build artifact and via
+`github/codeql-action/upload-sarif` for code scanning), post the Markdown
+to the job summary, and fail the job when the policy gate fails. It is a
+template to copy and adapt -- as written it compares two throwaway
+fixtures, not any real, versioned asset in this repository -- see the
+comments at the top of that file for exactly what it does and does not
+demonstrate.
+
 ## Resource bounds
 
 This CLI adds no new geometry ceilings of its own -- every `--max-*` option

@@ -25,6 +25,8 @@ import {
   parseUnitOption,
 } from "../parsing.js";
 import { evaluatePolicy, type PolicyCheck } from "../policy.js";
+import { buildMarkdownSummary, writeMarkdownFile } from "../markdown-report.js";
+import { buildSarifLog, writeSarifFile, type SarifFinding, type SarifRuleId } from "../sarif.js";
 import { printSampleSpacing, printWarnings } from "../uncertainty-text.js";
 
 export const COMPARE_HELP = `Usage: voxelspy compare <baseline> <candidate> --tolerance <mm> [options]
@@ -59,7 +61,12 @@ Policy options (a completed run with no policy options exits 0 unconditionally):
 
 Output:
   --json                     emit the full contracts-shaped AnalysisResult
+  --sarif <path>             write a SARIF 2.1.0 log for code-scanning ingestion
+  --markdown <path>          write a compact Markdown summary (for a PR comment)
   --help                     show this message
+
+--sarif and --markdown only change what is written to those files; they never
+change the process exit code (see "Exit codes" in the README).
 `;
 
 export async function compareCommand(
@@ -86,6 +93,8 @@ export async function compareCommand(
       "require-watertight": { type: "boolean", default: false },
       "fail-on-indeterminate": { type: "boolean", default: false },
       json: { type: "boolean", default: false },
+      sarif: { type: "string" },
+      markdown: { type: "string" },
       help: { type: "boolean", default: false },
     },
   });
@@ -118,6 +127,8 @@ export async function compareCommand(
   );
   const requireWatertight = values["require-watertight"] === true;
   const failOnIndeterminate = values["fail-on-indeterminate"] === true;
+  const sarifPath = values.sarif;
+  const markdownPath = values.markdown;
 
   const baselineUnit = parseUnitOption("--baseline-unit", values["baseline-unit"]);
   const baselineAxis = parseAxisOption("--baseline-axis", values["baseline-axis"]);
@@ -198,6 +209,47 @@ export async function compareCommand(
       io.stdout(`Comparison INDETERMINATE: ${result.outcome.code}`);
       for (const reason of result.outcome.reasons) io.stdout(`  ${reason}`);
     }
+    if (sarifPath !== undefined || markdownPath !== undefined) {
+      const artifactUris = [baselineImport.sourceName, candidateImport.sourceName];
+      const finding: SarifFinding = {
+        ruleId: "indeterminate-analysis",
+        message: `Comparison indeterminate (${result.outcome.code}): ${result.outcome.reasons.join("; ")}`,
+        artifactUris,
+        properties: { code: result.outcome.code, reasons: result.outcome.reasons },
+      };
+      if (sarifPath !== undefined) {
+        writeSarifFile(
+          sarifPath,
+          buildSarifLog({
+            command: "compare",
+            artifacts: artifactUris.map((uri) => ({ uri })),
+            findings: [finding],
+            runProperties: {
+              state: "indeterminate",
+              requestedMethod: result.outcome.requestedMethod,
+              requestedTolerance: result.outcome.requestedTolerance,
+            },
+          }),
+        );
+      }
+      if (markdownPath !== undefined) {
+        writeMarkdownFile(
+          markdownPath,
+          buildMarkdownSummary({
+            command: "compare",
+            verdict: "indeterminate",
+            headline: `Compared \`${baselineImport.sourceName}\` (baseline) against \`${candidateImport.sourceName}\` (candidate) with surface-distance -- the engine could not produce a decidable result.`,
+            metrics: [{ label: "Outcome code", value: result.outcome.code }],
+            policyChecks: [],
+            caveats: [
+              "The analysis was indeterminate: nothing about the geometry was proven true or false. This is fail-closed, not a pass.",
+              ...result.outcome.reasons,
+            ],
+            warnings: result.warnings,
+          }),
+        );
+      }
+    }
     return failOnIndeterminate ? EXIT_POLICY_FAILED : EXIT_INDETERMINATE;
   }
 
@@ -242,6 +294,99 @@ export async function compareCommand(
   }
   const evaluation = evaluatePolicy(checks);
 
+  if (sarifPath !== undefined || markdownPath !== undefined) {
+    const artifactUris = [baselineImport.sourceName, candidateImport.sourceName];
+    const findings: SarifFinding[] = [];
+    for (const check of checks) {
+      if (check.passed) continue;
+      const ruleId = COMPARE_CHECK_RULES[check.id];
+      if (ruleId === undefined) {
+        throw new Error(`No SARIF rule is mapped for compare policy check id "${check.id}".`);
+      }
+      findings.push({
+        ruleId,
+        message: `${check.description} -- ${check.detail}`,
+        artifactUris,
+        properties: {
+          checkId: check.id,
+          maximumDistanceMillimetres: maxDistance,
+          changedRegionCount,
+          reportedRegionCount,
+          regions: topRegions(outcome.regions, outcome.orderedRegionIds),
+        },
+      });
+    }
+    const caveats: string[] = [];
+    if (outcome.semantics === "approximate") {
+      const spacing = outcome.uncertainty.parameters["maxSampleSpacingMillimetres"];
+      const undersampled = outcome.uncertainty.parameters["undersampled"] === true;
+      caveats.push(
+        `This is an APPROXIMATE result: ${outcome.uncertainty.description}` +
+          (typeof spacing === "number"
+            ? ` Sample spacing bound: ${spacing} mm (the farthest any surface point could be from its nearest sample).`
+            : ""),
+      );
+      findings.push({
+        ruleId: "approximate-result",
+        message: `surface-distance is a sampled method.${
+          typeof spacing === "number" ? ` Sample spacing bound: ${spacing} mm.` : ""
+        } A passing policy result is not a stronger claim than that bound supports.`,
+        artifactUris,
+        properties: { uncertainty: outcome.uncertainty },
+      });
+      if (undersampled) {
+        caveats.push(
+          "UNDERSAMPLED: the sample spacing bound exceeds the requested tolerance -- a feature confined to a single coarse triangle's interior could have been missed entirely.",
+        );
+        findings.push({
+          ruleId: "undersampled-region",
+          message:
+            "The sample spacing bound exceeds the requested --tolerance value; a feature confined to a single coarse triangle's interior could have been missed entirely.",
+          artifactUris,
+          properties: { uncertainty: outcome.uncertainty },
+        });
+      }
+    }
+    if (sarifPath !== undefined) {
+      writeSarifFile(
+        sarifPath,
+        buildSarifLog({
+          command: "compare",
+          artifacts: artifactUris.map((uri) => ({ uri })),
+          findings,
+          runProperties: {
+            method: outcome.effectiveMethod,
+            tolerance: outcome.effectiveTolerance,
+            semantics: outcome.semantics,
+            ...(outcome.semantics === "approximate" ? { uncertainty: outcome.uncertainty } : {}),
+          },
+        }),
+      );
+    }
+    if (markdownPath !== undefined) {
+      writeMarkdownFile(
+        markdownPath,
+        buildMarkdownSummary({
+          command: "compare",
+          verdict: checks.length === 0 ? "informational (no policy configured)" : evaluation.passed ? "policy passed" : "policy failed",
+          headline: `Compared \`${baselineImport.sourceName}\` (baseline) against \`${candidateImport.sourceName}\` (candidate) with ${outcome.effectiveMethod.id} ${outcome.effectiveMethod.version}.`,
+          metrics: [
+            { label: "Method", value: `${outcome.effectiveMethod.id} ${outcome.effectiveMethod.version}` },
+            { label: "Maximum distance", value: `${maxDistance} mm` },
+            { label: "Changed regions", value: `${changedRegionCount} detected, ${reportedRegionCount} reported` },
+            { label: "Tolerance", value: `${outcome.effectiveTolerance.distanceMillimetres} mm` },
+          ],
+          policyChecks: checks,
+          caveats:
+            caveats.length > 0
+              ? caveats
+              : ["This result's semantics are exact-within-validated-preconditions for the requested method."],
+          warnings: result.warnings,
+        }),
+      );
+    }
+  }
+
   if (!values.json) {
     io.stdout(
       `Method: ${outcome.effectiveMethod.id} ${outcome.effectiveMethod.version} (semantics: ${outcome.semantics})`,
@@ -276,4 +421,39 @@ function numberMetric(
     throw new Error(`Expected metric "${id}" was not present in the analysis result.`);
   }
   return metric.value;
+}
+
+/** Maps each `compare`-specific `PolicyCheck.id` to the SARIF rule it becomes when that check fails. Kept exhaustive by `checks.push({ id: ... })` above only ever using these three ids. */
+const COMPARE_CHECK_RULES: Record<string, SarifRuleId> = {
+  "max-deviation": "deviation-exceeds-threshold",
+  "fail-on-regions": "region-count-exceeds-threshold",
+  "require-watertight": "not-watertight",
+};
+
+/**
+ * Up to 5 changed regions, in `orderedRegionIds` rank order, summarized for
+ * a SARIF finding's `properties` -- region/triangle evidence, since a
+ * geometry finding has no source line to point at. Bounded independently of
+ * `--max-regions`: this is about keeping one SARIF result's payload small,
+ * not about the analysis result's own truncation.
+ */
+function topRegions(
+  regions: readonly {
+    readonly id: string;
+    readonly category: string;
+    readonly anchor: readonly number[];
+    readonly bounds: { readonly min: readonly number[]; readonly max: readonly number[] };
+  }[],
+  orderedRegionIds: readonly string[],
+): readonly { readonly id: string; readonly category: string; readonly anchorMillimetres: readonly number[] }[] {
+  const byId = new Map(regions.map((region) => [region.id, region]));
+  return orderedRegionIds
+    .slice(0, 5)
+    .map((id) => byId.get(id))
+    .filter((region): region is NonNullable<typeof region> => region !== undefined)
+    .map((region) => ({
+      id: region.id,
+      category: region.category,
+      anchorMillimetres: region.anchor,
+    }));
 }

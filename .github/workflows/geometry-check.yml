@@ -1,0 +1,128 @@
+name: Geometry check example
+
+# This workflow is an EXAMPLE, not a guard on any real, versioned asset in
+# this repository. It runs `voxelspy compare` (see `apps/cli/README.md`)
+# against two tiny synthetic STL cubes generated on the fly by
+# `apps/cli/scripts/write-example-fixtures.mjs` -- the same kind of fixture
+# `apps/cli/test/fixtures.ts` builds in-process for vitest -- purely to
+# demonstrate the intended CI shape: build the workspace, run the CLI with
+# `--sarif`/`--markdown`, upload both, and fail the job when the policy
+# gate fails. Point `voxelspy compare` at your own two model files (and
+# tune `--tolerance`/`--max-deviation`/etc. for your part) to use this for
+# real; as written, it protects nothing.
+#
+# This workflow has not been exercised on this repository's own Actions
+# runner as part of adding it (this change only validated the YAML parses
+# and ran the underlying CLI commands locally -- see
+# `apps/cli/README.md`'s "Automation output" section for those transcripts).
+# Confirm it runs end-to-end -- including that `security-events: write` and
+# code scanning are available on the target repository, which
+# `github/codeql-action/upload-sarif` requires -- before relying on it.
+#
+# Trigger is manual-only (`workflow_dispatch`) rather than `push`/
+# `pull_request`: this file is a template to copy and adapt, not a check
+# this repository wants running (and reporting failures) on every commit
+# for a comparison nobody asked for.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  # Only needed for the `upload-sarif` step below; drop this (and that
+  # step) if the target repository does not have code scanning enabled.
+  security-events: write
+
+jobs:
+  geometry-check:
+    name: Compare example geometry fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `@voxelspy/cli...` selects the CLI package plus its workspace
+      # dependencies (`@voxelspy/contracts`, `@voxelspy/importers`,
+      # `@voxelspy/analysis`) and builds them in dependency order -- the
+      # same set `pnpm --filter @voxelspy/cli deps:build` builds for local
+      # development.
+      - name: Build the CLI and its workspace dependencies
+        run: pnpm --filter @voxelspy/cli... build
+
+      - name: Write example fixture models
+        run: node apps/cli/scripts/write-example-fixtures.mjs "$RUNNER_TEMP/voxelspy-fixtures"
+
+      # `--max-deviation 0.5` is deliberately tighter than the 2mm
+      # difference the two fixtures actually have, so this step's policy
+      # gate fails and the "fail the job" step below has something real to
+      # demonstrate. Exit code 1 is a policy failure; the run's SARIF and
+      # Markdown outputs are still written either way (see
+      # apps/cli/README.md's "Design principle: never overclaim" and
+      # "Exit codes" sections) -- capture the exit code rather than letting
+      # a nonzero status abort the step, so the upload steps below still run.
+      - name: Run voxelspy compare
+        id: compare
+        run: |
+          set +e
+          node apps/cli/dist/cli.js compare \
+            "$RUNNER_TEMP/voxelspy-fixtures/baseline.stl" \
+            "$RUNNER_TEMP/voxelspy-fixtures/candidate.stl" \
+            --baseline-unit millimetre --baseline-axis right-handed-z-up \
+            --candidate-unit millimetre --candidate-axis right-handed-z-up \
+            --tolerance 0.01 \
+            --max-deviation 0.5 \
+            --sarif "$RUNNER_TEMP/geometry-check.sarif" \
+            --markdown "$RUNNER_TEMP/geometry-check-summary.md"
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "voxelspy compare exited $code"
+          exit 0
+
+      - name: Post the Markdown summary to the job log
+        if: always()
+        run: cat "$RUNNER_TEMP/geometry-check-summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the SARIF log as a build artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: geometry-check-sarif
+          path: ${{ runner.temp }}/geometry-check.sarif
+          retention-days: 30
+
+      - name: Upload the SARIF log for code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ runner.temp }}/geometry-check.sarif
+
+      # Exit code 1 is "policy failed" (see apps/cli/README.md's "Exit
+      # codes" table); exit code 2 ("indeterminate") is deliberately not
+      # failed here by default -- a real pipeline that wants no exceptions
+      # should instead pass `--fail-on-indeterminate` to the CLI step
+      # above, which promotes that outcome to exit code 1 as well.
+      - name: Fail the job on a policy failure
+        if: steps.compare.outputs.code == '1'
+        run: |
+          echo "voxelspy compare's policy gate failed (exit code 1)." >&2
+          echo "See the uploaded SARIF and the job summary for details." >&2
+          exit 1

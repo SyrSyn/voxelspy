@@ -19,6 +19,8 @@ import {
   parseUnitOption,
 } from "../parsing.js";
 import { evaluatePolicy, type PolicyCheck } from "../policy.js";
+import { buildMarkdownSummary, writeMarkdownFile } from "../markdown-report.js";
+import { buildSarifLog, writeSarifFile, type SarifFinding } from "../sarif.js";
 import { printSampleSpacing, printWarnings } from "../uncertainty-text.js";
 
 export const CLEARANCE_HELP = `Usage: voxelspy clearance <first> <second> --clearance <mm> [options]
@@ -57,7 +59,12 @@ command's entire purpose, not an opt-in extra):
 
 Output:
   --json                      emit the full ClearanceCheckResult as JSON
+  --sarif <path>              write a SARIF 2.1.0 log for code-scanning ingestion
+  --markdown <path>           write a compact Markdown summary (for a PR comment)
   --help                      show this message
+
+--sarif and --markdown only change what is written to those files; they never
+change the process exit code (see "Exit codes" in the README).
 `;
 
 export async function clearanceCommand(
@@ -83,6 +90,8 @@ export async function clearanceCommand(
       "allow-tight": { type: "boolean", default: false },
       "fail-on-indeterminate": { type: "boolean", default: false },
       json: { type: "boolean", default: false },
+      sarif: { type: "string" },
+      markdown: { type: "string" },
       help: { type: "boolean", default: false },
     },
   });
@@ -117,6 +126,8 @@ export async function clearanceCommand(
   const maxTriangles = parseOptionalPositiveInteger("--max-triangles", values["max-triangles"]);
   const allowTight = values["allow-tight"] === true;
   const failOnIndeterminate = values["fail-on-indeterminate"] === true;
+  const sarifPath = values.sarif;
+  const markdownPath = values.markdown;
 
   const firstUnit = parseUnitOption("--first-unit", values["first-unit"]);
   const firstAxis = parseAxisOption("--first-axis", values["first-axis"]);
@@ -190,6 +201,43 @@ export async function clearanceCommand(
       io.stdout(`Clearance check INDETERMINATE: ${result.code}`);
       for (const reason of result.reasons) io.stdout(`  ${reason}`);
     }
+    if (sarifPath !== undefined || markdownPath !== undefined) {
+      const artifactUris = [firstImport.sourceName, secondImport.sourceName];
+      const finding: SarifFinding = {
+        ruleId: "indeterminate-analysis",
+        message: `Clearance check indeterminate (${result.code}): ${result.reasons.join("; ")}`,
+        artifactUris,
+        properties: { code: result.code, reasons: result.reasons },
+      };
+      if (sarifPath !== undefined) {
+        writeSarifFile(
+          sarifPath,
+          buildSarifLog({
+            command: "clearance",
+            artifacts: artifactUris.map((uri) => ({ uri })),
+            findings: [finding],
+            runProperties: { state: "indeterminate" },
+          }),
+        );
+      }
+      if (markdownPath !== undefined) {
+        writeMarkdownFile(
+          markdownPath,
+          buildMarkdownSummary({
+            command: "clearance",
+            verdict: "indeterminate",
+            headline: `Checked clearance between \`${firstImport.sourceName}\` and \`${secondImport.sourceName}\` -- the engine could not produce a decidable result.`,
+            metrics: [{ label: "Outcome code", value: result.code }],
+            policyChecks: [],
+            caveats: [
+              "The clearance check was indeterminate: nothing about the geometry was proven true or false. This is fail-closed, not a pass.",
+              ...result.reasons,
+            ],
+            warnings: [],
+          }),
+        );
+      }
+    }
     return failOnIndeterminate ? EXIT_POLICY_FAILED : EXIT_INDETERMINATE;
   }
 
@@ -204,6 +252,97 @@ export async function clearanceCommand(
     },
   ];
   const evaluation = evaluatePolicy(checks);
+
+  if (sarifPath !== undefined || markdownPath !== undefined) {
+    const artifactUris = [firstImport.sourceName, secondImport.sourceName];
+    const findings: SarifFinding[] = [];
+    const [clearanceCheck] = checks;
+    if (clearanceCheck !== undefined && !clearanceCheck.passed) {
+      findings.push({
+        ruleId: "clearance-violation",
+        message: `${clearanceCheck.description} -- ${clearanceCheck.detail}`,
+        artifactUris,
+        properties: {
+          state: result.state,
+          minimumDistanceMillimetres: result.minimumDistanceMillimetres,
+          desiredClearanceMillimetres: result.desiredClearanceMillimetres,
+          interferingTrianglePairs: result.interference.detectedPairCount,
+          tightRegionsDetected: result.tightRegions.detectedRegionCount,
+        },
+      });
+    }
+    const spacing = result.uncertainty.parameters["maxSampleSpacingMillimetres"];
+    const undersampled = result.uncertainty.parameters["undersampled"] === true;
+    findings.push({
+      ruleId: "approximate-result",
+      message: `checkClearance's minimum-distance/closest-point/tight-region evidence is sampled, not exact (interference.trianglePairs alone is exact).${
+        typeof spacing === "number" ? ` Sample spacing bound: ${spacing} mm.` : ""
+      } A passing policy result is not a stronger claim than that bound supports.`,
+      artifactUris,
+      properties: { uncertainty: result.uncertainty },
+    });
+    if (undersampled) {
+      findings.push({
+        ruleId: "undersampled-region",
+        message:
+          "The sample spacing bound exceeds the requested --clearance value; a feature confined to a single coarse triangle's interior could have been missed entirely.",
+        artifactUris,
+        properties: { uncertainty: result.uncertainty },
+      });
+    }
+    if (sarifPath !== undefined) {
+      writeSarifFile(
+        sarifPath,
+        buildSarifLog({
+          command: "clearance",
+          artifacts: artifactUris.map((uri) => ({ uri })),
+          findings,
+          runProperties: {
+            method: result.method,
+            desiredClearanceMillimetres: result.desiredClearanceMillimetres,
+            semantics: result.semantics,
+            uncertainty: result.uncertainty,
+          },
+        }),
+      );
+    }
+    if (markdownPath !== undefined) {
+      const caveats = [
+        "This is an APPROXIMATE result: minimum-distance/closest-point/tight-region evidence is sampled at each part's triangle vertices and centroids, not measured continuously across the surface. Only interference.trianglePairs (exact triangle-triangle intersection) is exact.",
+      ];
+      if (typeof spacing === "number") {
+        caveats.push(
+          `Sample spacing bound: ${spacing} mm (the farthest any surface point could be from its nearest sample).`,
+        );
+      }
+      if (undersampled) {
+        caveats.push(
+          "UNDERSAMPLED: the sample spacing bound exceeds the requested clearance -- a feature confined to a single coarse triangle's interior could have been missed entirely.",
+        );
+      }
+      writeMarkdownFile(
+        markdownPath,
+        buildMarkdownSummary({
+          command: "clearance",
+          verdict: evaluation.passed ? "policy passed" : "policy failed",
+          headline: `Checked clearance between \`${firstImport.sourceName}\` (first) and \`${secondImport.sourceName}\` (second).`,
+          metrics: [
+            { label: "State", value: result.state },
+            { label: "Minimum distance", value: `${result.minimumDistanceMillimetres} mm` },
+            { label: "Desired clearance", value: `${result.desiredClearanceMillimetres} mm` },
+            {
+              label: "Interfering triangle pairs",
+              value: `${result.interference.detectedPairCount} (exact, not sampled)`,
+            },
+            { label: "Tight regions", value: String(result.tightRegions.detectedRegionCount) },
+          ],
+          policyChecks: checks,
+          caveats,
+          warnings: result.warnings,
+        }),
+      );
+    }
+  }
 
   if (!values.json) {
     io.stdout(
