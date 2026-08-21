@@ -16,20 +16,24 @@ import {
   type NormalizedModel,
   type RequestId,
   type RigidTransform,
-  type SourceAxis,
-  type SourceUnit,
   type WorkerOutboundMessage,
 } from "@voxelspy/contracts";
-import { inferFormat } from "@voxelspy/importers";
+import {
+  type FrameSource,
+  requireSupportedFormat,
+  resolveFrameOptions,
+  type ResolvedSourceAxis,
+  type ResolvedSourceUnit,
+} from "./formats";
 
-type ResolvedUnit = Exclude<SourceUnit, "unknown">;
-type ResolvedAxis = Exclude<SourceAxis, "unknown">;
+type ResolvedUnit = ResolvedSourceUnit;
+type ResolvedAxis = ResolvedSourceAxis;
 
 export interface ComparisonSource {
   file: File;
-  unit: ResolvedUnit;
-  axis: ResolvedAxis;
-  frameSource?: "default" | "expert";
+  unit: ResolvedUnit | "";
+  axis: ResolvedAxis | "";
+  frameSource?: FrameSource;
 }
 
 export interface CompletedComparison {
@@ -361,19 +365,19 @@ async function specFromSource(
   role: "baseline" | "candidate",
   source: ComparisonSource,
 ): Promise<SessionImportSpec> {
-  const format = inferFormat(source.file.name);
-  if (!format)
-    throw new Error(`${source.file.name} is not a supported STL or OBJ file.`);
+  const format = requireSupportedFormat(source.file.name);
   const bytes = new Uint8Array(await source.file.arrayBuffer());
   return {
     targetModelId: modelIdSchema.parse(`model.${role}`),
     format,
     sourceName: source.file.name,
     bytes,
-    options:
-      source.frameSource === "expert"
-        ? { userUnit: source.unit, userAxis: source.axis }
-        : { declaredUnit: source.unit, declaredAxis: source.axis },
+    options: resolveFrameOptions(
+      format,
+      source.frameSource ?? "default",
+      source.unit,
+      source.axis,
+    ),
   };
 }
 

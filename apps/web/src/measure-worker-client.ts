@@ -6,23 +6,24 @@ import type {
   SectionPlane,
   SectionResult,
 } from "@voxelspy/analysis";
-import type {
-  ContractWarning,
-  NormalizedModel,
-  SourceAxis,
-  SourceUnit,
-} from "@voxelspy/contracts";
-import { inferFormat } from "@voxelspy/importers";
+import type { ContractWarning, NormalizedModel } from "@voxelspy/contracts";
 import type { SupportedFormat } from "@voxelspy/importers";
+import {
+  requireSupportedFormat,
+  resolveFrameOptions,
+  type FrameSource,
+  type ResolvedSourceAxis,
+  type ResolvedSourceUnit,
+} from "./formats";
 
-type ResolvedUnit = Exclude<SourceUnit, "unknown">;
-type ResolvedAxis = Exclude<SourceAxis, "unknown">;
+type ResolvedUnit = ResolvedSourceUnit;
+type ResolvedAxis = ResolvedSourceAxis;
 
 export interface MeasureSource {
   file: File;
-  unit: ResolvedUnit;
-  axis: ResolvedAxis;
-  frameSource?: "default" | "expert";
+  unit: ResolvedUnit | "";
+  axis: ResolvedAxis | "";
+  frameSource?: FrameSource;
 }
 
 /** What one successful `"load"` call hands back: the imported model itself
@@ -184,9 +185,7 @@ export async function openMeasureSession(
   source: MeasureSource,
   signal?: AbortSignal,
 ): Promise<MeasureSession> {
-  const format = inferFormat(source.file.name);
-  if (!format)
-    throw new Error(`${source.file.name} is not a supported STL or OBJ file.`);
+  const format = requireSupportedFormat(source.file.name);
   const bytes = new Uint8Array(await source.file.arrayBuffer());
   if (signal?.aborted) throw new MeasurementSessionCancelledError();
 
@@ -263,10 +262,12 @@ export async function openMeasureSession(
         format,
         sourceName: source.file.name,
         bytes,
-        options:
-          source.frameSource === "expert"
-            ? { userUnit: source.unit, userAxis: source.axis }
-            : { declaredUnit: source.unit, declaredAxis: source.axis },
+        options: resolveFrameOptions(
+          format,
+          source.frameSource ?? "default",
+          source.unit,
+          source.axis,
+        ),
       }),
       [bytes.buffer],
     );

@@ -10,13 +10,24 @@ import {
   type ScaleObservation,
   type WallThicknessCheck,
 } from "@voxelspy/analysis";
-import type { SourceAxis, SourceUnit, Vec3 } from "@voxelspy/contracts";
+import type { NormalizedModel, Vec3 } from "@voxelspy/contracts";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   evaluateCapabilityPreflight,
   readEnvironmentReadings,
   type CapabilityPreflight,
 } from "./capability";
+import {
+  ACCEPTED_UPLOAD_ACCEPT,
+  defaultFrameForFormat,
+  formatDeclaresOwnFrame,
+  formatFrameDeclarationSummary,
+  hasAcceptedExtension,
+  inferFormat,
+  unsupportedFormatMessage,
+  type ResolvedSourceAxis,
+  type ResolvedSourceUnit,
+} from "./formats";
 import {
   assessPrintabilitySourceAsync,
   InspectionCancelledError,
@@ -70,9 +81,6 @@ const PrintabilityViewer = lazy(async () => {
   return { default: module.PrintabilityViewer };
 });
 
-type ResolvedSourceUnit = Exclude<SourceUnit, "unknown">;
-type ResolvedSourceAxis = Exclude<SourceAxis, "unknown">;
-
 const units: { value: ResolvedSourceUnit; label: string }[] = [
   { value: "millimetre", label: "Millimetres" },
   { value: "centimetre", label: "Centimetres" },
@@ -93,15 +101,6 @@ interface ModelSourceSelection {
   frameSource: "default" | "expert";
 }
 
-const defaultSourceFrame = {
-  unit: "millimetre",
-  axis: "right-handed-z-up",
-  frameSource: "default",
-} as const satisfies Pick<
-  ModelSourceSelection,
-  "unit" | "axis" | "frameSource"
->;
-
 /** Same shape and preconditions as `InspectFlow`'s/`ClearanceFlow`'s/
  *  `MeasureSectionFlow`'s own single-file source selection -- deliberately
  *  duplicated rather than imported, matching the precedent all three already
@@ -109,17 +108,15 @@ const defaultSourceFrame = {
 export function modelSourceSelectionForFile(
   file: File | null,
 ): ModelSourceSelection {
-  return { file, ...defaultSourceFrame };
+  const format = file ? inferFormat(file.name) : undefined;
+  return { file, ...defaultFrameForFormat(format), frameSource: "default" };
 }
 
 export function modelSourceCapability(selection: ModelSourceSelection) {
   if (!selection.file)
-    return { ready: false, message: "Choose a local STL or OBJ file." };
-  if (!/\.(?:stl|obj)$/iu.test(selection.file.name))
-    return {
-      ready: false,
-      message: "This release supports STL and OBJ mesh files.",
-    };
+    return { ready: false, message: "Choose a local model file." };
+  if (!hasAcceptedExtension(selection.file.name))
+    return { ready: false, message: unsupportedFormatMessage() };
   if (selection.file.size === 0)
     return { ready: false, message: "The selected file is empty." };
   if (selection.file.size > 32 * 1024 * 1024)
@@ -127,11 +124,22 @@ export function modelSourceCapability(selection: ModelSourceSelection) {
       ready: false,
       message: "The selected file exceeds the 32 MiB importer safety ceiling.",
     };
-  if (!selection.unit || !selection.axis)
+  const declaresOwnFrame = formatDeclaresOwnFrame(
+    inferFormat(selection.file.name),
+  );
+  if (!declaresOwnFrame && (!selection.unit || !selection.axis))
     return {
       ready: false,
       message:
         "Choose the source unit and up-axis; this format does not declare them authoritatively.",
+    };
+  if (declaresOwnFrame)
+    return {
+      ready: true,
+      message:
+        selection.unit || selection.axis
+          ? "Ready for local assessment using the selected override source frame."
+          : "Ready for local assessment using this file's own declared source frame.",
     };
   return {
     ready: true,
@@ -260,6 +268,24 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)} KiB`;
 }
 
+function unitLabel(unit: string): string {
+  const known = units.find((entry) => entry.value === unit)?.label;
+  if (known) return known;
+  return unit === "unknown" ? "not declared by the file" : unit;
+}
+
+function axisLabel(axis: string): string {
+  const known = axes.find((entry) => entry.value === axis)?.label;
+  if (known) return known;
+  return axis === "unknown" ? "not declared by the file" : axis;
+}
+
+function originLabel(origin: "embedded" | "declared" | "user"): string {
+  if (origin === "embedded") return "embedded in the file";
+  if (origin === "declared") return "import default";
+  return "expert override";
+}
+
 function pointLabel(point: Vec3): string {
   return `(${point.map(conciseNumber).join(", ")}) mm`;
 }
@@ -304,6 +330,8 @@ function ModelSourceCard({
   update: (selection: ModelSourceSelection) => void;
 }) {
   const capability = modelSourceCapability(selection);
+  const format = selection.file ? inferFormat(selection.file.name) : undefined;
+  const declaresOwnFrame = formatDeclaresOwnFrame(format);
   return (
     <fieldset className="source-card">
       <legend>Model</legend>
@@ -312,12 +340,12 @@ function ModelSourceCard({
         <small>
           {selection.file
             ? `${(selection.file.size / 1024).toFixed(1)} KiB · local file`
-            : "STL or OBJ, up to 32 MiB"}
+            : "STL, OBJ, glTF, GLB, or 3MF, up to 32 MiB"}
         </small>
         <input
           id="model-file"
           type="file"
-          accept=".stl,.obj"
+          accept={ACCEPTED_UPLOAD_ACCEPT}
           onChange={(event) =>
             update(
               modelSourceSelectionForFile(
@@ -333,8 +361,9 @@ function ModelSourceCard({
       <details>
         <summary>Expert settings</summary>
         <p>
-          Change these only when the source uses a different unit or up-axis.
-          The selected values are recorded with the assessment.
+          {declaresOwnFrame
+            ? formatFrameDeclarationSummary(format)
+            : "Change these only when the source uses a different unit or up-axis. The selected values are recorded with the assessment."}
         </p>
         <div className="source-frame">
           <label>
@@ -350,6 +379,9 @@ function ModelSourceCard({
                 })
               }
             >
+              {declaresOwnFrame && (
+                <option value="">Use the file&rsquo;s declared value</option>
+              )}
               {units.map((unit) => (
                 <option key={unit.value} value={unit.value}>
                   {unit.label}
@@ -370,6 +402,9 @@ function ModelSourceCard({
                 })
               }
             >
+              {declaresOwnFrame && (
+                <option value="">Use the file&rsquo;s declared value</option>
+              )}
               {axes.map((axis) => (
                 <option key={axis.value} value={axis.value}>
                   {axis.label}
@@ -985,9 +1020,11 @@ function BuildVolumeSection({
 function ScaleSection({
   scale,
   warnings,
+  provenance,
 }: {
   scale: ScaleObservation;
   warnings: readonly PrintabilityWarning[];
+  provenance: NormalizedModel["provenance"];
 }) {
   return (
     <section aria-labelledby="printability-scale-title">
@@ -1010,11 +1047,21 @@ function ScaleSection({
         </div>
         <div role="row">
           <strong role="rowheader">Source unit</strong>
-          <span>{scale.sourceUnit}</span>
+          <span>
+            {unitLabel(scale.sourceUnit)} (
+            {originLabel(provenance.sourceResolution.unit)})
+          </span>
         </div>
         <div role="row">
           <strong role="rowheader">Detected unit</strong>
-          <span>{scale.detectedSourceUnit}</span>
+          <span>{unitLabel(scale.detectedSourceUnit)}</span>
+        </div>
+        <div role="row">
+          <strong role="rowheader">Resolved up-axis</strong>
+          <span>
+            {axisLabel(provenance.sourceAxis)} (
+            {originLabel(provenance.sourceResolution.axis)})
+          </span>
         </div>
       </div>
       <CheckWarnings warnings={warnings} />
@@ -1249,6 +1296,7 @@ function PrintabilityReport({
       <ScaleSection
         scale={assessment.scale}
         warnings={warningsWithCodes(assessment.warnings, SCALE_WARNING_CODES)}
+        provenance={model.provenance}
       />
 
       {otherWarnings.length > 0 && (
@@ -1315,7 +1363,7 @@ export function PrintabilityFlow() {
     capability.analysisSupported;
 
   const assess = async () => {
-    if (!ready || !selection.file || !selection.unit || !selection.axis) return;
+    if (!ready || !selection.file) return;
     activeRunRef.current?.abort();
     const controller = new AbortController();
     activeRunRef.current = controller;
@@ -1363,7 +1411,7 @@ export function PrintabilityFlow() {
   };
 
   const recompute = async () => {
-    if (!selection.file || !selection.unit || !selection.axis) return;
+    if (!selection.file) return;
     const options = assessmentRequestOptions(parameters);
     if (!options) return;
     activeRunRef.current?.abort();

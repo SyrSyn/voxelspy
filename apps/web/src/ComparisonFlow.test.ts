@@ -53,6 +53,29 @@ describe("comparison source defaults", () => {
         "Ready for local comparison using millimetres and right-handed Z-up.",
     });
   });
+
+  it("refuses an unsupported extension with an honest message naming what is supported", () => {
+    expect(
+      sourceCapability(sourceSelectionForFile(new File(["x"], "model.step"))),
+    ).toEqual({
+      ready: false,
+      message:
+        "This release supports STL, OBJ, glTF, GLB, or 3MF mesh files (.stl, .obj, .gltf, .glb, .3mf).",
+    });
+  });
+
+  it("accepts glTF/GLB/3MF and starts from the file's own declared frame, not a default", () => {
+    const glb = sourceSelectionForFile(new File(["x"], "baseline.glb"));
+    expect(glb).toMatchObject({ unit: "", axis: "", frameSource: "default" });
+    expect(sourceCapability(glb)).toEqual({
+      ready: true,
+      message:
+        "Ready for local comparison using this file's own declared source frame.",
+    });
+    const threeMf = sourceSelectionForFile(new File(["x"], "baseline.3mf"));
+    expect(threeMf).toMatchObject({ unit: "", axis: "" });
+    expect(sourceCapability(threeMf)).toMatchObject({ ready: true });
+  });
 });
 
 describe("analysis capacity", () => {

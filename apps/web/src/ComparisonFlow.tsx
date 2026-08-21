@@ -7,13 +7,7 @@ import {
   type CorrespondencePoint,
   type ModelComparisonPresentationSummary,
 } from "@voxelspy/analysis";
-import {
-  IDENTITY_MAT4,
-  type Mat4,
-  type Report,
-  type SourceAxis,
-  type SourceUnit,
-} from "@voxelspy/contracts";
+import { IDENTITY_MAT4, type Mat4, type Report } from "@voxelspy/contracts";
 import { SessionArchiveError } from "@voxelspy/session-archive";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -26,6 +20,17 @@ import {
   readEnvironmentReadings,
   type CapabilityPreflight,
 } from "./capability";
+import {
+  ACCEPTED_UPLOAD_ACCEPT,
+  defaultFrameForFormat,
+  formatDeclaresOwnFrame,
+  formatFrameDeclarationSummary,
+  hasAcceptedExtension,
+  inferFormat,
+  unsupportedFormatMessage,
+  type ResolvedSourceAxis,
+  type ResolvedSourceUnit,
+} from "./formats";
 import {
   boundedEntityId,
   brandId,
@@ -57,9 +62,6 @@ import {
   type CompletedComparison,
 } from "./worker-client";
 
-type ResolvedSourceUnit = Exclude<SourceUnit, "unknown">;
-type ResolvedSourceAxis = Exclude<SourceAxis, "unknown">;
-
 const Workbench = lazy(async () => {
   const module = await import("./Workbench");
   return { default: module.Workbench };
@@ -85,14 +87,9 @@ type SourceSelection = {
   frameSource: "default" | "expert";
 };
 
-const defaultSourceFrame = {
-  unit: "millimetre",
-  axis: "right-handed-z-up",
-  frameSource: "default",
-} as const satisfies Pick<SourceSelection, "unit" | "axis" | "frameSource">;
-
 export function sourceSelectionForFile(file: File | null): SourceSelection {
-  return { file, ...defaultSourceFrame };
+  const format = file ? inferFormat(file.name) : undefined;
+  return { file, ...defaultFrameForFormat(format), frameSource: "default" };
 }
 
 const emptySource = (): SourceSelection => sourceSelectionForFile(null);
@@ -118,12 +115,9 @@ const INITIAL_CAPABILITY: CapabilityPreflight = {
 
 export function sourceCapability(selection: SourceSelection) {
   if (!selection.file)
-    return { ready: false, message: "Choose a local STL or OBJ file." };
-  if (!/\.(?:stl|obj)$/iu.test(selection.file.name))
-    return {
-      ready: false,
-      message: "This release supports STL and OBJ mesh files.",
-    };
+    return { ready: false, message: "Choose a local model file." };
+  if (!hasAcceptedExtension(selection.file.name))
+    return { ready: false, message: unsupportedFormatMessage() };
   if (selection.file.size === 0)
     return { ready: false, message: "The selected file is empty." };
   if (selection.file.size > 32 * 1024 * 1024)
@@ -131,11 +125,22 @@ export function sourceCapability(selection: SourceSelection) {
       ready: false,
       message: "The selected file exceeds the 32 MiB importer safety ceiling.",
     };
-  if (!selection.unit || !selection.axis)
+  const declaresOwnFrame = formatDeclaresOwnFrame(
+    inferFormat(selection.file.name),
+  );
+  if (!declaresOwnFrame && (!selection.unit || !selection.axis))
     return {
       ready: false,
       message:
         "Choose the source unit and up-axis; this format does not declare them authoritatively.",
+    };
+  if (declaresOwnFrame)
+    return {
+      ready: true,
+      message:
+        selection.unit || selection.axis
+          ? "Ready for local comparison using the selected override source frame."
+          : "Ready for local comparison using this file's own declared source frame.",
     };
   return {
     ready: true,
@@ -157,6 +162,8 @@ function SourceCard({
 }) {
   const capability = sourceCapability(selection);
   const id = role.toLocaleLowerCase("en-US");
+  const format = selection.file ? inferFormat(selection.file.name) : undefined;
+  const declaresOwnFrame = formatDeclaresOwnFrame(format);
   return (
     <fieldset className="source-card">
       <legend>{role}</legend>
@@ -165,12 +172,12 @@ function SourceCard({
         <small>
           {selection.file
             ? `${(selection.file.size / 1024).toFixed(1)} KiB · local file`
-            : "STL or OBJ, up to 32 MiB"}
+            : "STL, OBJ, glTF, GLB, or 3MF, up to 32 MiB"}
         </small>
         <input
           id={`${id}-file`}
           type="file"
-          accept=".stl,.obj"
+          accept={ACCEPTED_UPLOAD_ACCEPT}
           onChange={(event) =>
             update(
               sourceSelectionForFile(event.currentTarget.files?.[0] ?? null),
@@ -184,8 +191,9 @@ function SourceCard({
       <details>
         <summary>Expert settings</summary>
         <p>
-          Change these only when the source uses a different unit or up-axis.
-          The selected values are recorded with the comparison.
+          {declaresOwnFrame
+            ? formatFrameDeclarationSummary(format)
+            : "Change these only when the source uses a different unit or up-axis. The selected values are recorded with the comparison."}
         </p>
         <div className="source-frame">
           <label>
@@ -200,6 +208,9 @@ function SourceCard({
                 })
               }
             >
+              {declaresOwnFrame && (
+                <option value="">Use the file&rsquo;s declared value</option>
+              )}
               {units.map((unit) => (
                 <option key={unit.value} value={unit.value}>
                   {unit.label}
@@ -219,6 +230,9 @@ function SourceCard({
                 })
               }
             >
+              {declaresOwnFrame && (
+                <option value="">Use the file&rsquo;s declared value</option>
+              )}
               {axes.map((axis) => (
                 <option key={axis.value} value={axis.value}>
                   {axis.label}
@@ -694,16 +708,7 @@ export function ComparisonFlow() {
     capability.analysisSupported;
 
   const refineWithIcp = async () => {
-    if (
-      !alignmentEstimate ||
-      !baseline.file ||
-      !baseline.unit ||
-      !baseline.axis ||
-      !candidate.file ||
-      !candidate.unit ||
-      !candidate.axis
-    )
-      return;
+    if (!alignmentEstimate || !baseline.file || !candidate.file) return;
     alignmentRunRef.current?.abort();
     const controller = new AbortController();
     alignmentRunRef.current = controller;
@@ -760,16 +765,7 @@ export function ComparisonFlow() {
   const activeAlignment = alignmentEnabled ? acceptedAlignment : undefined;
 
   const compare = async () => {
-    if (
-      !ready ||
-      !baseline.file ||
-      !baseline.unit ||
-      !baseline.axis ||
-      !candidate.file ||
-      !candidate.unit ||
-      !candidate.axis
-    )
-      return;
+    if (!ready || !baseline.file || !candidate.file) return;
     // A new run replaces any in-flight one; make sure it is stopped first.
     activeRunRef.current?.abort();
     activeOpenRunRef.current?.abort();

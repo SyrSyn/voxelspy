@@ -7,21 +7,25 @@ import type {
   ContractWarning,
   GeometryProvenance,
   NormalizedModel,
-  SourceAxis,
-  SourceUnit,
   Vec3,
 } from "@voxelspy/contracts";
-import { inferFormat } from "@voxelspy/importers";
 import type { SupportedFormat } from "@voxelspy/importers";
+import {
+  requireSupportedFormat,
+  resolveFrameOptions,
+  type FrameSource,
+  type ResolvedSourceAxis,
+  type ResolvedSourceUnit,
+} from "./formats";
 
-type ResolvedUnit = Exclude<SourceUnit, "unknown">;
-type ResolvedAxis = Exclude<SourceAxis, "unknown">;
+type ResolvedUnit = ResolvedSourceUnit;
+type ResolvedAxis = ResolvedSourceAxis;
 
 export interface InspectSource {
   file: File;
-  unit: ResolvedUnit;
-  axis: ResolvedAxis;
-  frameSource?: "default" | "expert";
+  unit: ResolvedUnit | "";
+  axis: ResolvedAxis | "";
+  frameSource?: FrameSource;
 }
 
 /**
@@ -288,9 +292,7 @@ async function runInspectWorker<K extends InspectWorkerRequest["kind"]>(
   kind: K,
   signal?: AbortSignal,
 ): Promise<Extract<InspectWorkerResponse, { kind: K }>> {
-  const format = inferFormat(source.file.name);
-  if (!format)
-    throw new Error(`${source.file.name} is not a supported STL or OBJ file.`);
+  const format = requireSupportedFormat(source.file.name);
   const bytes = new Uint8Array(await source.file.arrayBuffer());
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -339,10 +341,12 @@ async function runInspectWorker<K extends InspectWorkerRequest["kind"]>(
       format,
       sourceName: source.file.name,
       bytes,
-      options:
-        source.frameSource === "expert"
-          ? { userUnit: source.unit, userAxis: source.axis }
-          : { declaredUnit: source.unit, declaredAxis: source.axis },
+      options: resolveFrameOptions(
+        format,
+        source.frameSource ?? "default",
+        source.unit,
+        source.axis,
+      ),
     };
     worker.postMessage(request, [request.bytes.buffer]);
   });
@@ -418,9 +422,7 @@ async function runPrintabilityWorker(
   assessmentOptions: PrintabilityAssessmentRequestOptions,
   signal?: AbortSignal,
 ): Promise<Extract<InspectWorkerResponse, { kind: "printability" }>> {
-  const format = inferFormat(source.file.name);
-  if (!format)
-    throw new Error(`${source.file.name} is not a supported STL or OBJ file.`);
+  const format = requireSupportedFormat(source.file.name);
   const bytes = new Uint8Array(await source.file.arrayBuffer());
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -467,10 +469,12 @@ async function runPrintabilityWorker(
       format,
       sourceName: source.file.name,
       bytes,
-      options:
-        source.frameSource === "expert"
-          ? { userUnit: source.unit, userAxis: source.axis }
-          : { declaredUnit: source.unit, declaredAxis: source.axis },
+      options: resolveFrameOptions(
+        format,
+        source.frameSource ?? "default",
+        source.unit,
+        source.axis,
+      ),
       assessmentOptions,
     };
     worker.postMessage(request, [request.bytes.buffer]);

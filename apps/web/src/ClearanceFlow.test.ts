@@ -50,14 +50,18 @@ describe("clearance part source defaults", () => {
   it("reports why a part is not ready, for each precondition", () => {
     expect(partSourceCapability(partSelectionForFile(null))).toEqual({
       ready: false,
-      message: "Choose a local STL or OBJ file.",
+      message: "Choose a local model file.",
+    });
+    expect(
+      partSourceCapability(partSelectionForFile(new File(["x"], "model.step"))),
+    ).toEqual({
+      ready: false,
+      message:
+        "This release supports STL, OBJ, glTF, GLB, or 3MF mesh files (.stl, .obj, .gltf, .glb, .3mf).",
     });
     expect(
       partSourceCapability(partSelectionForFile(new File(["x"], "model.glb"))),
-    ).toEqual({
-      ready: false,
-      message: "This release supports STL and OBJ mesh files.",
-    });
+    ).toMatchObject({ ready: true });
     expect(
       partSourceCapability(partSelectionForFile(new File([], "empty.stl"))),
     ).toEqual({ ready: false, message: "The selected file is empty." });

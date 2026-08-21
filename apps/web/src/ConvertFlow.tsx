@@ -22,6 +22,15 @@ import {
   type ResolvedSourceAxis,
   type ResolvedSourceUnit,
 } from "./convert-worker-client";
+import {
+  ACCEPTED_UPLOAD_ACCEPT,
+  defaultFrameForFormat,
+  formatDeclaresOwnFrame,
+  formatFrameDeclarationSummary,
+  hasAcceptedExtension,
+  inferFormat,
+  unsupportedFormatMessage,
+} from "./formats";
 import { ToolShell } from "./ToolShell";
 import { DEFAULT_ANALYSIS_MEMORY_MIB } from "./worker-client";
 
@@ -94,19 +103,11 @@ type ModelSourceSelection = {
   frameSource: "default" | "expert";
 };
 
-const defaultSourceFrame = {
-  unit: "millimetre",
-  axis: "right-handed-z-up",
-  frameSource: "default",
-} as const satisfies Pick<
-  ModelSourceSelection,
-  "unit" | "axis" | "frameSource"
->;
-
 export function modelSourceSelectionForFile(
   file: File | null,
 ): ModelSourceSelection {
-  return { file, ...defaultSourceFrame };
+  const format = file ? inferFormat(file.name) : undefined;
+  return { file, ...defaultFrameForFormat(format), frameSource: "default" };
 }
 
 /** Same preconditions as Inspect's/Forensics'/Compare's own `*Capability`
@@ -114,12 +115,9 @@ export function modelSourceSelectionForFile(
  *  conversion session rather than a measurement report. */
 export function modelSourceCapability(selection: ModelSourceSelection) {
   if (!selection.file)
-    return { ready: false, message: "Choose a local STL or OBJ file." };
-  if (!/\.(?:stl|obj)$/iu.test(selection.file.name))
-    return {
-      ready: false,
-      message: "This release supports STL and OBJ mesh files.",
-    };
+    return { ready: false, message: "Choose a local model file." };
+  if (!hasAcceptedExtension(selection.file.name))
+    return { ready: false, message: unsupportedFormatMessage() };
   if (selection.file.size === 0)
     return { ready: false, message: "The selected file is empty." };
   if (selection.file.size > IMPORTER_SAFETY_LIMITS.inputBytes)
@@ -127,11 +125,22 @@ export function modelSourceCapability(selection: ModelSourceSelection) {
       ready: false,
       message: "The selected file exceeds the 32 MiB importer safety ceiling.",
     };
-  if (!selection.unit || !selection.axis)
+  const declaresOwnFrame = formatDeclaresOwnFrame(
+    inferFormat(selection.file.name),
+  );
+  if (!declaresOwnFrame && (!selection.unit || !selection.axis))
     return {
       ready: false,
       message:
         "Choose the source unit and up-axis; this format does not declare them authoritatively.",
+    };
+  if (declaresOwnFrame)
+    return {
+      ready: true,
+      message:
+        selection.unit || selection.axis
+          ? "Ready to load locally using the selected override source frame."
+          : "Ready to load locally using this file's own declared source frame.",
     };
   return {
     ready: true,
@@ -152,6 +161,8 @@ function ModelSourceCard({
   disabled: boolean;
 }) {
   const capability = modelSourceCapability(selection);
+  const format = selection.file ? inferFormat(selection.file.name) : undefined;
+  const declaresOwnFrame = formatDeclaresOwnFrame(format);
   return (
     <fieldset className="source-card" disabled={disabled}>
       <legend>Model</legend>
@@ -160,12 +171,12 @@ function ModelSourceCard({
         <small>
           {selection.file
             ? `${(selection.file.size / 1024).toFixed(1)} KiB · local file`
-            : "STL or OBJ, up to 32 MiB"}
+            : "STL, OBJ, glTF, GLB, or 3MF, up to 32 MiB"}
         </small>
         <input
           id="model-file"
           type="file"
-          accept=".stl,.obj"
+          accept={ACCEPTED_UPLOAD_ACCEPT}
           onChange={(event) =>
             update(
               modelSourceSelectionForFile(
@@ -181,9 +192,9 @@ function ModelSourceCard({
       <details>
         <summary>Expert settings</summary>
         <p>
-          Change these only when the source uses a different unit or up-axis.
-          This affects the applied source-to-model transform, not just how the
-          model looks.
+          {declaresOwnFrame
+            ? formatFrameDeclarationSummary(format)
+            : "Change these only when the source uses a different unit or up-axis. This affects the applied source-to-model transform, not just how the model looks."}
         </p>
         <div className="source-frame">
           <label>
@@ -199,6 +210,9 @@ function ModelSourceCard({
                 })
               }
             >
+              {declaresOwnFrame && (
+                <option value="">Use the file&rsquo;s declared value</option>
+              )}
               {units.map((unit) => (
                 <option key={unit.value} value={unit.value}>
                   {unit.label}
@@ -219,6 +233,9 @@ function ModelSourceCard({
                 })
               }
             >
+              {declaresOwnFrame && (
+                <option value="">Use the file&rsquo;s declared value</option>
+              )}
               {axes.map((axis) => (
                 <option key={axis.value} value={axis.value}>
                   {axis.label}
@@ -251,6 +268,24 @@ function formatFileSize(bytes: number): string {
 
 function formatCount(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+function unitLabel(unit: string): string {
+  const known = units.find((entry) => entry.value === unit)?.label;
+  if (known) return known;
+  return unit === "unknown" ? "not declared by the file" : unit;
+}
+
+function axisLabel(axis: string): string {
+  const known = axes.find((entry) => entry.value === axis)?.label;
+  if (known) return known;
+  return axis === "unknown" ? "not declared by the file" : axis;
+}
+
+function originLabel(origin: "embedded" | "declared" | "user"): string {
+  if (origin === "embedded") return "embedded in the file";
+  if (origin === "declared") return "import default";
+  return "expert override";
 }
 
 /** Sub-millimetre certification figures need more headroom than the 6
@@ -850,7 +885,7 @@ export function ConvertFlow() {
     capabilityCheck.ready && !loadProgress && capability.analysisSupported;
 
   const load = async () => {
-    if (!ready || !selection.file || !selection.unit || !selection.axis) return;
+    if (!ready || !selection.file) return;
     activeLoadRef.current?.abort();
     sessionRef.current?.close();
     const controller = new AbortController();
@@ -1064,6 +1099,35 @@ export function ConvertFlow() {
               </button>
             </div>
           </div>
+        )}
+        {session && (
+          <details className="technical-details">
+            <summary>Source frame</summary>
+            <dl className="provenance-list">
+              <div>
+                <dt>Detected unit</dt>
+                <dd>{unitLabel(session.load.provenance.detectedSourceUnit)}</dd>
+              </div>
+              <div>
+                <dt>Detected up-axis</dt>
+                <dd>{axisLabel(session.load.provenance.detectedSourceAxis)}</dd>
+              </div>
+              <div>
+                <dt>Resolved unit</dt>
+                <dd>
+                  {unitLabel(session.load.provenance.sourceUnit)} (
+                  {originLabel(session.load.provenance.sourceResolution.unit)})
+                </dd>
+              </div>
+              <div>
+                <dt>Resolved up-axis</dt>
+                <dd>
+                  {axisLabel(session.load.provenance.sourceAxis)} (
+                  {originLabel(session.load.provenance.sourceResolution.axis)})
+                </dd>
+              </div>
+            </dl>
+          </details>
         )}
         {session && <WarningsList warnings={session.load.warnings} />}
         <p className="boundary-note">

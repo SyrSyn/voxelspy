@@ -73,8 +73,8 @@ export const inspectFocusPages: InspectFocusPage[] = [
     description:
       "Check a model's dimensions against the unit and axis VoxelSpy actually resolved, and reinterpret them deliberately if the file guessed wrong.",
     intro: [
-      "Neither STL nor the OBJ subset this release supports declares a unit or an up-axis authoritatively, so an import starts from millimetre, right-handed Z-up defaults and records exactly that choice as provenance. This page leads with the resulting dimensions and the control that lets you say the file actually meant something else -- open below.",
-      "Reinterpreting a unit is a deliberate, provenance-recorded choice you make before inspecting, never a silent rescale: the source unit and axis you select stay attached to the result and are shown next to what the file itself suggested.",
+      "Neither STL nor the OBJ subset this release supports declares a unit or an up-axis authoritatively, so an import of either format starts from millimetre, right-handed Z-up defaults and records exactly that choice as provenance. glTF/GLB and 3MF are different: both declare their own frame (glTF/GLB always metres and right-handed Y-up; 3MF its own unit and right-handed Z-up), so an import of either resolves that frame from the file itself rather than defaulting -- still shown here, and still overridable. This page leads with the resulting dimensions and the control that lets you say the file actually meant something else -- open below.",
+      "Reinterpreting a unit is a deliberate, provenance-recorded choice you make before inspecting, never a silent rescale: the source unit and axis you select stay attached to the result and are shown next to what the file itself declared or suggested.",
     ],
     question: "Is this model in millimetres or inches?",
   },
@@ -118,7 +118,7 @@ export const docs: DocPage[] = [
         title: "Choose a baseline and candidate",
         paragraphs: [
           "The baseline is the model you trust. The candidate is the revision you want to inspect. Choose both from your device; normal comparison keeps their geometry in your browser.",
-          "The import starts with common millimetre and right-handed Z-up settings. If either source uses a different frame, change its Expert settings before comparison; the selected interpretation remains attached to the result.",
+          "This release accepts STL, OBJ, glTF, GLB, and 3MF. STL and OBJ import starts with common millimetre and right-handed Z-up settings, since neither format declares a source frame; glTF/GLB and 3MF resolve their frame from the file itself instead. If a source needs a different interpretation than what it starts from or declares, change its Expert settings before comparison; the selected interpretation remains attached to the result.",
         ],
       },
       {
@@ -258,8 +258,9 @@ export const docs: DocPage[] = [
         id: "supported-input",
         title: "Supported input",
         paragraphs: [
-          "This release imports binary and text STL and a documented OBJ subset of vertices and faces. Each source file is accepted up to 32 MiB and 500,000 triangles. Content outside those subsets, including materials, curves, and free-form surfaces, is refused with a stated reason rather than partially interpreted.",
-          "Neither format authoritatively declares units or an up-axis, so import begins with millimetres and right-handed Z-up and exposes other interpretations as expert settings. The interpretation you choose stays attached to the result.",
+          "This release imports binary and text STL, a documented OBJ subset of vertices and faces, static mesh geometry from glTF 2.0 and GLB, and mesh geometry from the 3MF Core specification. Each source file is accepted up to 32 MiB and 500,000 triangles (1,500,000 vertices for OBJ). Content outside those documented subsets -- materials, curves, free-form surfaces, animations, skins, morph targets, and 3MF's Beam Lattice, Slice, Materials/Colours, and Production extensions -- is refused with a stated reason, or ignored with a named warning, rather than partially or silently reinterpreted.",
+          "Neither STL nor OBJ authoritatively declares a unit or an up-axis, so importing either begins with millimetres and right-handed Z-up and exposes other interpretations as expert settings. glTF/GLB and 3MF are different: both declare their own frame in the file itself (glTF/GLB always metres and right-handed Y-up; 3MF its own unit, defaulting to millimetre, and right-handed Z-up per specification), so importing either resolves that declaration rather than defaulting -- an expert override is still available and is recorded distinctly from the file's own declaration. Whichever way a source's frame was resolved, the interpretation stays attached to the result.",
+          "3MF's container is a ZIP archive, so its decompression carries its own bounded limits (entry count, per-entry and total decompressed bytes, and compression-ratio ceilings) independent of the triangle/vertex ceilings every format shares -- a maliciously crafted archive fails closed well before its declared content could be fully expanded.",
         ],
       },
       {
@@ -364,7 +365,7 @@ export const tools: Tool[] = [
     name: "File Forensics",
     description: "Understand what a model file actually encodes, byte by byte.",
     summary:
-      "Open a single STL or OBJ file from your device and see what this importer actually saw: the detected format, byte size against its declared ceilings, content digest, mesh and instance structure, the declared-vs-resolved unit and axis with the exact applied transform, and every warning, note, and refused input. Runs entirely in your browser.",
+      "Open a single model file (STL, OBJ, glTF, GLB, or 3MF) from your device and see what this importer actually saw: the detected format, byte size against its declared ceilings, content digest, mesh and instance structure, the declared-vs-resolved unit and axis with the exact applied transform, and every warning, note, and refused input. Runs entirely in your browser.",
     status: "available",
     question: "What is this file actually telling me, and can I trust it?",
   },

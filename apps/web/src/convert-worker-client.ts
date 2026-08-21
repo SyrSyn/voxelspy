@@ -1,32 +1,22 @@
 import type { SimplificationResult, SimplifyOptions } from "@voxelspy/analysis";
-import type {
-  ContractWarning,
-  NormalizedModel,
-  SourceAxis,
-  SourceUnit,
-} from "@voxelspy/contracts";
-import {
-  inferFormat,
-  type ExportOptions,
-  type ExportResult,
-} from "@voxelspy/importers";
+import type { ContractWarning, NormalizedModel } from "@voxelspy/contracts";
+import type { ExportOptions, ExportResult } from "@voxelspy/importers";
 import type { SupportedFormat } from "@voxelspy/importers";
+import {
+  requireSupportedFormat,
+  resolveFrameOptions,
+  type FrameSource,
+  type ResolvedSourceAxis,
+  type ResolvedSourceUnit,
+} from "./formats";
 
-/**
- * `exportModel`'s own `ResolvedSourceUnit`/`ResolvedSourceAxis` types
- * (`packages/importers/src/normalize.ts`) are not part of that package's
- * public surface, so this tool defines the identical `Exclude<..., "unknown">`
- * shape locally -- the same convention `worker-client.ts`, `measure-worker-
- * client.ts`, and every source-frame selection in this app already use.
- */
-export type ResolvedSourceUnit = Exclude<SourceUnit, "unknown">;
-export type ResolvedSourceAxis = Exclude<SourceAxis, "unknown">;
+export type { ResolvedSourceAxis, ResolvedSourceUnit };
 
 export interface ConvertSource {
   file: File;
-  unit: ResolvedSourceUnit;
-  axis: ResolvedSourceAxis;
-  frameSource?: "default" | "expert";
+  unit: ResolvedSourceUnit | "";
+  axis: ResolvedSourceAxis | "";
+  frameSource?: FrameSource;
 }
 
 /**
@@ -194,9 +184,7 @@ export async function openConvertSession(
   source: ConvertSource,
   signal?: AbortSignal,
 ): Promise<ConvertSession> {
-  const format = inferFormat(source.file.name);
-  if (!format)
-    throw new Error(`${source.file.name} is not a supported STL or OBJ file.`);
+  const format = requireSupportedFormat(source.file.name);
   const bytes = new Uint8Array(await source.file.arrayBuffer());
   if (signal?.aborted) throw new ConvertSessionCancelledError();
 
@@ -273,10 +261,12 @@ export async function openConvertSession(
         format,
         sourceName: source.file.name,
         bytes,
-        options:
-          source.frameSource === "expert"
-            ? { userUnit: source.unit, userAxis: source.axis }
-            : { declaredUnit: source.unit, declaredAxis: source.axis },
+        options: resolveFrameOptions(
+          format,
+          source.frameSource ?? "default",
+          source.unit,
+          source.axis,
+        ),
       }),
       [bytes.buffer],
     );

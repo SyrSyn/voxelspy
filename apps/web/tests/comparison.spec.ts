@@ -285,9 +285,7 @@ test("keeps capability guidance usable on a compact viewport", async ({
   await expect(
     page.getByRole("heading", { name: "Start with two models" }),
   ).toBeVisible();
-  await expect(page.getByText("Choose a local STL or OBJ file.")).toHaveCount(
-    2,
-  );
+  await expect(page.getByText("Choose a local model file.")).toHaveCount(2);
   await expect(
     page.getByRole("button", { name: "Validate and compare" }),
   ).toBeDisabled();

@@ -3,14 +3,18 @@ import type {
   ContractWarning,
   Mat4,
   NormalizedModel,
-  SourceAxis,
-  SourceUnit,
 } from "@voxelspy/contracts";
-import { inferFormat } from "@voxelspy/importers";
 import type { SupportedFormat } from "@voxelspy/importers";
+import {
+  requireSupportedFormat,
+  resolveFrameOptions,
+  type FrameSource,
+  type ResolvedSourceAxis,
+  type ResolvedSourceUnit,
+} from "./formats";
 
-type ResolvedUnit = Exclude<SourceUnit, "unknown">;
-type ResolvedAxis = Exclude<SourceAxis, "unknown">;
+type ResolvedUnit = ResolvedSourceUnit;
+type ResolvedAxis = ResolvedSourceAxis;
 
 /**
  * Message protocol for the dedicated clearance worker (`clearance.worker.ts`).
@@ -27,9 +31,9 @@ type ResolvedAxis = Exclude<SourceAxis, "unknown">;
  */
 export interface ClearancePartSource {
   readonly file: File;
-  readonly unit: ResolvedUnit;
-  readonly axis: ResolvedAxis;
-  readonly frameSource?: "default" | "expert";
+  readonly unit: ResolvedUnit | "";
+  readonly axis: ResolvedAxis | "";
+  readonly frameSource?: FrameSource;
   /**
    * This part's own rigid placement into the shared comparison frame, built
    * by `buildPlacementMatrix` (`clearance-placement.ts`) from the explicit
@@ -119,16 +123,8 @@ export async function checkClearanceAsync(
   source: CheckClearanceSource,
   signal?: AbortSignal,
 ): Promise<ClearanceOutcome> {
-  const firstFormat = inferFormat(source.first.file.name);
-  if (!firstFormat)
-    throw new Error(
-      `${source.first.file.name} is not a supported STL or OBJ file.`,
-    );
-  const secondFormat = inferFormat(source.second.file.name);
-  if (!secondFormat)
-    throw new Error(
-      `${source.second.file.name} is not a supported STL or OBJ file.`,
-    );
+  const firstFormat = requireSupportedFormat(source.first.file.name);
+  const secondFormat = requireSupportedFormat(source.second.file.name);
 
   const [firstBytes, secondBytes] = await Promise.all([
     source.first.file.arrayBuffer().then((buffer) => new Uint8Array(buffer)),
@@ -183,10 +179,12 @@ export async function checkClearanceAsync(
       format,
       sourceName: part.file.name,
       bytes,
-      options:
-        part.frameSource === "expert"
-          ? { userUnit: part.unit, userAxis: part.axis }
-          : { declaredUnit: part.unit, declaredAxis: part.axis },
+      options: resolveFrameOptions(
+        format,
+        part.frameSource ?? "default",
+        part.unit,
+        part.axis,
+      ),
       modelToComparison: part.modelToComparison,
     });
 

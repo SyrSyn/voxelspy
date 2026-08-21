@@ -44,15 +44,16 @@ describe("forensics source defaults", () => {
   it("reports why a selection is not ready, for each precondition", () => {
     expect(modelSourceCapability(modelSourceSelectionForFile(null))).toEqual({
       ready: false,
-      message: "Choose a local STL or OBJ file.",
+      message: "Choose a local model file.",
     });
     expect(
       modelSourceCapability(
-        modelSourceSelectionForFile(new File(["x"], "model.glb")),
+        modelSourceSelectionForFile(new File(["x"], "model.step")),
       ),
     ).toEqual({
       ready: false,
-      message: "This release supports STL and OBJ mesh files.",
+      message:
+        "This release supports STL, OBJ, glTF, GLB, or 3MF mesh files (.stl, .obj, .gltf, .glb, .3mf).",
     });
     expect(
       modelSourceCapability(
@@ -68,6 +69,16 @@ describe("forensics source defaults", () => {
     ).toEqual({
       ready: false,
       message: "The selected file exceeds the 32 MiB importer safety ceiling.",
+    });
+  });
+
+  it("accepts glTF/GLB/3MF and starts from the file's own declared frame, not a default", () => {
+    const glb = modelSourceSelectionForFile(new File(["x"], "model.glb"));
+    expect(glb).toMatchObject({ unit: "", axis: "", frameSource: "default" });
+    expect(modelSourceCapability(glb)).toEqual({
+      ready: true,
+      message:
+        "Ready for local analysis using this file's own declared source frame.",
     });
   });
 });

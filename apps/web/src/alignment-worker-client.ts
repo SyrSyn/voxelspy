@@ -1,14 +1,16 @@
 import type { AlignmentEstimate } from "@voxelspy/analysis";
-import type {
-  RigidTransform,
-  SourceAxis,
-  SourceUnit,
-} from "@voxelspy/contracts";
-import { inferFormat } from "@voxelspy/importers";
+import type { RigidTransform } from "@voxelspy/contracts";
 import type { SupportedFormat } from "@voxelspy/importers";
+import {
+  requireSupportedFormat,
+  resolveFrameOptions,
+  type FrameSource,
+  type ResolvedSourceAxis,
+  type ResolvedSourceUnit,
+} from "./formats";
 
-type ResolvedUnit = Exclude<SourceUnit, "unknown">;
-type ResolvedAxis = Exclude<SourceAxis, "unknown">;
+type ResolvedUnit = ResolvedSourceUnit;
+type ResolvedAxis = ResolvedSourceAxis;
 
 /**
  * Message protocol for the dedicated alignment worker (`alignment.worker.ts`).
@@ -32,9 +34,9 @@ type ResolvedAxis = Exclude<SourceAxis, "unknown">;
  */
 export interface AlignmentPartSource {
   readonly file: File;
-  readonly unit: ResolvedUnit;
-  readonly axis: ResolvedAxis;
-  readonly frameSource?: "default" | "expert";
+  readonly unit: ResolvedUnit | "";
+  readonly axis: ResolvedAxis | "";
+  readonly frameSource?: FrameSource;
 }
 
 export interface EstimateIcpAlignmentSource {
@@ -106,16 +108,8 @@ export async function estimateIcpAlignmentAsync(
   source: EstimateIcpAlignmentSource,
   signal?: AbortSignal,
 ): Promise<AlignmentEstimate> {
-  const movingFormat = inferFormat(source.moving.file.name);
-  if (!movingFormat)
-    throw new Error(
-      `${source.moving.file.name} is not a supported STL or OBJ file.`,
-    );
-  const fixedFormat = inferFormat(source.fixed.file.name);
-  if (!fixedFormat)
-    throw new Error(
-      `${source.fixed.file.name} is not a supported STL or OBJ file.`,
-    );
+  const movingFormat = requireSupportedFormat(source.moving.file.name);
+  const fixedFormat = requireSupportedFormat(source.fixed.file.name);
 
   const [movingBytes, fixedBytes] = await Promise.all([
     source.moving.file.arrayBuffer().then((buffer) => new Uint8Array(buffer)),
@@ -170,10 +164,12 @@ export async function estimateIcpAlignmentAsync(
       format,
       sourceName: part.file.name,
       bytes,
-      options:
-        part.frameSource === "expert"
-          ? { userUnit: part.unit, userAxis: part.axis }
-          : { declaredUnit: part.unit, declaredAxis: part.axis },
+      options: resolveFrameOptions(
+        format,
+        part.frameSource ?? "default",
+        part.unit,
+        part.axis,
+      ),
     });
 
     const request: AlignmentIcpWorkerRequest = {

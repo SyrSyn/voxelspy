@@ -44,7 +44,7 @@ const baseMetadata = {
   "/tools/file-forensics/": {
     title: "File Forensics — VoxelSpy",
     description:
-      "See what this importer actually saw in one local STL or OBJ file: detected format, structure, provenance, and every warning or refused input.",
+      "See what this importer actually saw in one local model file: detected format, structure, provenance, and every warning or refused input.",
   },
   "/tools/clearance-fit/": {
     title: "Clearance & Fit — VoxelSpy",

@@ -1,8 +1,4 @@
-import type {
-  ContractWarning,
-  SourceAxis,
-  SourceUnit,
-} from "@voxelspy/contracts";
+import type { ContractWarning } from "@voxelspy/contracts";
 import {
   IMPORTER_SAFETY_LIMITS,
   importerDescriptor,
@@ -14,6 +10,17 @@ import {
   type CapabilityPreflight,
 } from "./capability";
 import {
+  ACCEPTED_UPLOAD_ACCEPT,
+  defaultFrameForFormat,
+  formatDeclaresOwnFrame,
+  formatFrameDeclarationSummary,
+  hasAcceptedExtension,
+  inferFormat,
+  unsupportedFormatMessage,
+  type ResolvedSourceAxis,
+  type ResolvedSourceUnit,
+} from "./formats";
+import {
   forensicsSourceAsync,
   InspectionCancelledError,
   type ForensicsOutcome,
@@ -24,16 +31,13 @@ import { DEFAULT_ANALYSIS_MEMORY_MIB } from "./worker-client";
 
 /**
  * `/tools/file-forensics/`: the structural and provenance truth of one local
- * STL or OBJ file, as distinct from `/tools/inspect/`'s geometric
+ * model file, as distinct from `/tools/inspect/`'s geometric
  * measurements. Both tools import the same file through the same
  * `@voxelspy/importers` `importModel` and the same dedicated worker channel
  * (`inspect-worker-client.ts`'s `"forensics"` message kind); this page never
  * runs a second importer or a separate validator, and never claims to answer
  * "is this file valid" in general -- only "what did *this* importer see".
  */
-
-type ResolvedSourceUnit = Exclude<SourceUnit, "unknown">;
-type ResolvedSourceAxis = Exclude<SourceAxis, "unknown">;
 
 // ---------------------------------------------------------------------------
 // Source selection. Deliberately duplicated from InspectFlow.tsx/
@@ -63,19 +67,11 @@ type ModelSourceSelection = {
   frameSource: "default" | "expert";
 };
 
-const defaultSourceFrame = {
-  unit: "millimetre",
-  axis: "right-handed-z-up",
-  frameSource: "default",
-} as const satisfies Pick<
-  ModelSourceSelection,
-  "unit" | "axis" | "frameSource"
->;
-
 export function modelSourceSelectionForFile(
   file: File | null,
 ): ModelSourceSelection {
-  return { file, ...defaultSourceFrame };
+  const format = file ? inferFormat(file.name) : undefined;
+  return { file, ...defaultFrameForFormat(format), frameSource: "default" };
 }
 
 /** Same preconditions as Inspect's and Compare's own `*Capability` checks
@@ -83,12 +79,9 @@ export function modelSourceSelectionForFile(
  *  report rather than a measurement report or a comparison. */
 export function modelSourceCapability(selection: ModelSourceSelection) {
   if (!selection.file)
-    return { ready: false, message: "Choose a local STL or OBJ file." };
-  if (!/\.(?:stl|obj)$/iu.test(selection.file.name))
-    return {
-      ready: false,
-      message: "This release supports STL and OBJ mesh files.",
-    };
+    return { ready: false, message: "Choose a local model file." };
+  if (!hasAcceptedExtension(selection.file.name))
+    return { ready: false, message: unsupportedFormatMessage() };
   if (selection.file.size === 0)
     return { ready: false, message: "The selected file is empty." };
   if (selection.file.size > IMPORTER_SAFETY_LIMITS.inputBytes)
@@ -96,11 +89,22 @@ export function modelSourceCapability(selection: ModelSourceSelection) {
       ready: false,
       message: "The selected file exceeds the 32 MiB importer safety ceiling.",
     };
-  if (!selection.unit || !selection.axis)
+  const declaresOwnFrame = formatDeclaresOwnFrame(
+    inferFormat(selection.file.name),
+  );
+  if (!declaresOwnFrame && (!selection.unit || !selection.axis))
     return {
       ready: false,
       message:
         "Choose the source unit and up-axis; this format does not declare them authoritatively.",
+    };
+  if (declaresOwnFrame)
+    return {
+      ready: true,
+      message:
+        selection.unit || selection.axis
+          ? "Ready for local analysis using the selected override source frame."
+          : "Ready for local analysis using this file's own declared source frame.",
     };
   return {
     ready: true,
@@ -119,6 +123,8 @@ function ModelSourceCard({
   update: (selection: ModelSourceSelection) => void;
 }) {
   const capability = modelSourceCapability(selection);
+  const format = selection.file ? inferFormat(selection.file.name) : undefined;
+  const declaresOwnFrame = formatDeclaresOwnFrame(format);
   return (
     <fieldset className="source-card">
       <legend>Model</legend>
@@ -127,12 +133,12 @@ function ModelSourceCard({
         <small>
           {selection.file
             ? `${(selection.file.size / 1024).toFixed(1)} KiB · local file`
-            : "STL or OBJ, up to 32 MiB"}
+            : "STL, OBJ, glTF, GLB, or 3MF, up to 32 MiB"}
         </small>
         <input
           id="forensics-model-file"
           type="file"
-          accept=".stl,.obj"
+          accept={ACCEPTED_UPLOAD_ACCEPT}
           onChange={(event) =>
             update(
               modelSourceSelectionForFile(
@@ -148,9 +154,9 @@ function ModelSourceCard({
       <details>
         <summary>Expert settings</summary>
         <p>
-          Change these only when the source uses a different unit or up-axis.
-          This affects the applied source-to-model transform reported below, not
-          just how the model looks.
+          {declaresOwnFrame
+            ? formatFrameDeclarationSummary(format)
+            : "Change these only when the source uses a different unit or up-axis. This affects the applied source-to-model transform reported below, not just how the model looks."}
         </p>
         <div className="source-frame">
           <label>
@@ -166,6 +172,9 @@ function ModelSourceCard({
                 })
               }
             >
+              {declaresOwnFrame && (
+                <option value="">Use the file&rsquo;s declared value</option>
+              )}
               {units.map((unit) => (
                 <option key={unit.value} value={unit.value}>
                   {unit.label}
@@ -186,6 +195,9 @@ function ModelSourceCard({
                 })
               }
             >
+              {declaresOwnFrame && (
+                <option value="">Use the file&rsquo;s declared value</option>
+              )}
               {axes.map((axis) => (
                 <option key={axis.value} value={axis.value}>
                   {axis.label}
@@ -611,7 +623,7 @@ export function ForensicsFlow() {
     capabilityCheck.ready && !progress && capability.analysisSupported;
 
   const analyze = async () => {
-    if (!ready || !selection.file || !selection.unit || !selection.axis) return;
+    if (!ready || !selection.file) return;
     activeRunRef.current?.abort();
     const controller = new AbortController();
     activeRunRef.current = controller;
@@ -653,7 +665,7 @@ export function ForensicsFlow() {
     <ToolShell
       eyebrow="File Forensics"
       title="What is actually inside this file?"
-      description="Load one local STL or OBJ file and see its structural and provenance truth: the format this importer detected, the structure it built, and everything it warned about, refused, or could not represent. This is not a repeat of Inspect's dimensions and volume, and not a general file-format validator -- a file this tool accepts may still be rejected elsewhere, and a file it refuses may be valid input for another tool."
+      description="Load one local model file (STL, OBJ, glTF, GLB, or 3MF) and see its structural and provenance truth: the format this importer detected, the structure it built, and everything it warned about, refused, or could not represent. This is not a repeat of Inspect's dimensions and volume, and not a general file-format validator -- a file this tool accepts may still be rejected elsewhere, and a file it refuses may be valid input for another tool."
     >
       <ImporterSupportPanel />
       {outcome && sourceMeta ? (

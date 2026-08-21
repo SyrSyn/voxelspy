@@ -1,5 +1,5 @@
 import type { ClearanceState, ClearanceTightRegion } from "@voxelspy/analysis";
-import type { Mat4, SourceAxis, SourceUnit, Vec3 } from "@voxelspy/contracts";
+import type { Mat4, Vec3 } from "@voxelspy/contracts";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   evaluateCapabilityPreflight,
@@ -18,6 +18,17 @@ import {
   type CheckClearanceSource,
   type ClearanceOutcome,
 } from "./clearance-worker-client";
+import {
+  ACCEPTED_UPLOAD_ACCEPT,
+  defaultFrameForFormat,
+  formatDeclaresOwnFrame,
+  formatFrameDeclarationSummary,
+  hasAcceptedExtension,
+  inferFormat,
+  unsupportedFormatMessage,
+  type ResolvedSourceAxis,
+  type ResolvedSourceUnit,
+} from "./formats";
 import { ToolShell } from "./ToolShell";
 import { DEFAULT_ANALYSIS_MEMORY_MIB } from "./worker-client";
 
@@ -36,9 +47,6 @@ const ClearanceViewer = lazy(async () => {
   const module = await import("./ClearanceViewer");
   return { default: module.ClearanceViewer };
 });
-
-type ResolvedSourceUnit = Exclude<SourceUnit, "unknown">;
-type ResolvedSourceAxis = Exclude<SourceAxis, "unknown">;
 
 const units: { value: ResolvedSourceUnit; label: string }[] = [
   { value: "millimetre", label: "Millimetres" },
@@ -61,18 +69,18 @@ interface PartSelection {
   placement: PartPlacement;
 }
 
-const defaultSourceFrame = {
-  unit: "millimetre",
-  axis: "right-handed-z-up",
-  frameSource: "default",
-} as const satisfies Pick<PartSelection, "unit" | "axis" | "frameSource">;
-
 /** Choosing (or replacing) a file always starts from a clean slate: import
  *  defaults and the identity placement, exactly like every other tool in
  *  this app resets its unit/axis defaults on file choice. Placement is never
  *  carried over from a previous file. */
 export function partSelectionForFile(file: File | null): PartSelection {
-  return { file, ...defaultSourceFrame, placement: IDENTITY_PLACEMENT };
+  const format = file ? inferFormat(file.name) : undefined;
+  return {
+    file,
+    ...defaultFrameForFormat(format),
+    frameSource: "default",
+    placement: IDENTITY_PLACEMENT,
+  };
 }
 
 function placementIsNumeric(placement: PartPlacement): boolean {
@@ -88,12 +96,9 @@ function placementIsNumeric(placement: PartPlacement): boolean {
  *  translation/rotation field must hold a real number before a run starts. */
 export function partSourceCapability(selection: PartSelection) {
   if (!selection.file)
-    return { ready: false, message: "Choose a local STL or OBJ file." };
-  if (!/\.(?:stl|obj)$/iu.test(selection.file.name))
-    return {
-      ready: false,
-      message: "This release supports STL and OBJ mesh files.",
-    };
+    return { ready: false, message: "Choose a local model file." };
+  if (!hasAcceptedExtension(selection.file.name))
+    return { ready: false, message: unsupportedFormatMessage() };
   if (selection.file.size === 0)
     return { ready: false, message: "The selected file is empty." };
   if (selection.file.size > 32 * 1024 * 1024)
@@ -101,7 +106,10 @@ export function partSourceCapability(selection: PartSelection) {
       ready: false,
       message: "The selected file exceeds the 32 MiB importer safety ceiling.",
     };
-  if (!selection.unit || !selection.axis)
+  const declaresOwnFrame = formatDeclaresOwnFrame(
+    inferFormat(selection.file.name),
+  );
+  if (!declaresOwnFrame && (!selection.unit || !selection.axis))
     return {
       ready: false,
       message:
@@ -346,6 +354,8 @@ function PartCard({
 }) {
   const capability = partSourceCapability(selection);
   const idBase = role === "First part" ? "first" : "second";
+  const format = selection.file ? inferFormat(selection.file.name) : undefined;
+  const declaresOwnFrame = formatDeclaresOwnFrame(format);
   return (
     <fieldset className="source-card">
       <legend>{role}</legend>
@@ -354,12 +364,12 @@ function PartCard({
         <small>
           {selection.file
             ? `${(selection.file.size / 1024).toFixed(1)} KiB · local file`
-            : "STL or OBJ, up to 32 MiB"}
+            : "STL, OBJ, glTF, GLB, or 3MF, up to 32 MiB"}
         </small>
         <input
           id={`${idBase}-file`}
           type="file"
-          accept=".stl,.obj"
+          accept={ACCEPTED_UPLOAD_ACCEPT}
           onChange={(event) =>
             update(partSelectionForFile(event.currentTarget.files?.[0] ?? null))
           }
@@ -371,8 +381,9 @@ function PartCard({
       <details>
         <summary>Expert settings</summary>
         <p>
-          Change these only when the source uses a different unit or up-axis.
-          The selected values are recorded with the check.
+          {declaresOwnFrame
+            ? formatFrameDeclarationSummary(format)
+            : "Change these only when the source uses a different unit or up-axis. The selected values are recorded with the check."}
         </p>
         <div className="source-frame">
           <label>
@@ -387,6 +398,9 @@ function PartCard({
                 })
               }
             >
+              {declaresOwnFrame && (
+                <option value="">Use the file&rsquo;s declared value</option>
+              )}
               {units.map((unit) => (
                 <option key={unit.value} value={unit.value}>
                   {unit.label}
@@ -406,6 +420,9 @@ function PartCard({
                 })
               }
             >
+              {declaresOwnFrame && (
+                <option value="">Use the file&rsquo;s declared value</option>
+              )}
               {axes.map((axis) => (
                 <option key={axis.value} value={axis.value}>
                   {axis.label}
@@ -824,15 +841,15 @@ export function ClearanceFlow() {
       const source: CheckClearanceSource = {
         first: {
           file: firstSelection.file,
-          unit: firstSelection.unit as ResolvedSourceUnit,
-          axis: firstSelection.axis as ResolvedSourceAxis,
+          unit: firstSelection.unit,
+          axis: firstSelection.axis,
           frameSource: firstSelection.frameSource,
           modelToComparison: firstMatrix,
         },
         second: {
           file: secondSelection.file,
-          unit: secondSelection.unit as ResolvedSourceUnit,
-          axis: secondSelection.axis as ResolvedSourceAxis,
+          unit: secondSelection.unit,
+          axis: secondSelection.axis,
           frameSource: secondSelection.frameSource,
           modelToComparison: secondMatrix,
         },
