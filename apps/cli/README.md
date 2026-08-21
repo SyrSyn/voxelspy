@@ -71,15 +71,18 @@ distance tolerance) and `--max-regions <n>` (caps ranked regions returned,
 **Policy options** (a completed run with none of these specified always
 exits `0` -- it is informational only):
 
-| Option | Fails when |
-| --- | --- |
-| `--max-deviation <mm>` | the true maximum distance (`surface.maximum-distance`, across *all* detected regions, independent of `--max-regions` truncation) exceeds `<mm>` |
-| `--fail-on-regions <n>` | the true detected changed-region count exceeds `<n>` (pass `0` to fail on any change) |
-| `--require-watertight` | either baseline or candidate is not closed (has boundary or non-manifold edges) |
-| `--fail-on-indeterminate` | the analysis outcome is `indeterminate` (default: indeterminate exits `2`, not `0` or `1`) |
+| Option                    | Fails when                                                                                                                                      |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--max-deviation <mm>`    | the true maximum distance (`surface.maximum-distance`, across _all_ detected regions, independent of `--max-regions` truncation) exceeds `<mm>` |
+| `--fail-on-regions <n>`   | the true detected changed-region count exceeds `<n>` (pass `0` to fail on any change)                                                           |
+| `--require-watertight`    | either baseline or candidate is not closed (has boundary or non-manifold edges)                                                                 |
+| `--fail-on-indeterminate` | the analysis outcome is `indeterminate` (default: indeterminate exits `2`, not `0` or `1`)                                                      |
 
 Both baseline and candidate are placed at identity in the comparison frame
 (no alignment/pre-placement option is exposed yet -- see "Known limitations").
+
+**`--figure <path>`** writes a deterministic SVG comparison figure -- see
+"Comparison figure (`compare --figure`)" under "Automation output" below.
 
 ### `voxelspy inspect <model>`
 
@@ -97,11 +100,11 @@ fields are always the true total.
 
 **Policy options** (none specified &rarr; always exits `0`):
 
-| Option | Fails when |
-| --- | --- |
-| `--require-watertight` | `watertightness.state !== "closed"` |
-| `--fail-on-degenerate` | at least one degenerate (zero/non-finite-area) triangle is present |
-| `--fail-on-non-manifold` | at least one non-manifold edge is present |
+| Option                    | Fails when                                                                                                     |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `--require-watertight`    | `watertightness.state !== "closed"`                                                                            |
+| `--fail-on-degenerate`    | at least one degenerate (zero/non-finite-area) triangle is present                                             |
+| `--fail-on-non-manifold`  | at least one non-manifold edge is present                                                                      |
 | `--fail-on-indeterminate` | inspection hit its own resource-limit ceiling (an internal `InspectionResourceLimitError`; default: exits `2`) |
 
 `inspectModel`'s own findings are exact (not sampled) -- it reports on the
@@ -111,7 +114,7 @@ print here, unlike `compare`/`clearance`.
 ### `voxelspy clearance <first> <second>`
 
 Runs `checkClearance` -- collision regions, the sampled minimum
-surface-to-surface distance, regions below a desired clearance, and *exact*
+surface-to-surface distance, regions below a desired clearance, and _exact_
 intersecting-triangle-pair interference evidence, between two independently
 placed parts.
 
@@ -144,12 +147,12 @@ order (a usage problem is caught before any engine runs; an indeterminate
 result is reported before policy evaluation, since a policy cannot be
 honestly evaluated against a result the engine did not produce):
 
-| Code | Name | Meaning |
-| --- | --- | --- |
-| `0` | policy passed | The engine produced a complete result and every policy option the caller specified was satisfied. A run with no policy options specified always exits `0` when the engine completes -- there was nothing to gate on. |
-| `1` | policy failed | The engine produced a complete result and at least one specified policy option was violated. Also used for an indeterminate outcome when `--fail-on-indeterminate` was passed. |
-| `2` | indeterminate / fail-closed | The engine could not produce a decidable result: `state: "indeterminate"` from `analyzeModelPair`/`checkClearance`, an `InspectionResourceLimitError`, a `WorkBudgetExceeded`, or an import rejected with `code: "resource-limit"`. Nothing was proven either way -- never conflated with `0`. |
-| `3` | usage or input error | The command line, an option value, or the input file was invalid before geometry analysis could meaningfully run: missing/unreadable files, an unrecognized extension, a bad option value, or an import rejected with `code: "invalid-input" \| "unsupported-input" \| "unsafe-archive" \| "needs-input"`. |
+| Code | Name                        | Meaning                                                                                                                                                                                                                                                                                                    |
+| ---- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | policy passed               | The engine produced a complete result and every policy option the caller specified was satisfied. A run with no policy options specified always exits `0` when the engine completes -- there was nothing to gate on.                                                                                       |
+| `1`  | policy failed               | The engine produced a complete result and at least one specified policy option was violated. Also used for an indeterminate outcome when `--fail-on-indeterminate` was passed.                                                                                                                             |
+| `2`  | indeterminate / fail-closed | The engine could not produce a decidable result: `state: "indeterminate"` from `analyzeModelPair`/`checkClearance`, an `InspectionResourceLimitError`, a `WorkBudgetExceeded`, or an import rejected with `code: "resource-limit"`. Nothing was proven either way -- never conflated with `0`.             |
+| `3`  | usage or input error        | The command line, an option value, or the input file was invalid before geometry analysis could meaningfully run: missing/unreadable files, an unrecognized extension, a bad option value, or an import rejected with `code: "invalid-input" \| "unsupported-input" \| "unsafe-archive" \| "needs-input"`. |
 
 The full rationale (including why import's `resource-limit` code lands in
 bucket `2` rather than `3`, and why `resource-limit` is distinguished from
@@ -194,10 +197,10 @@ fixed constants chosen by this CLI, not generated (no timestamps, no random
 IDs), and every underlying library call is itself pure and deterministic
 given the same input bytes and options.
 
-## Automation output (`--sarif`, `--markdown`)
+## Automation output (`--sarif`, `--markdown`, `--figure`)
 
 Every command additionally accepts two output-file options, independent of
-(and combinable with) `--json`:
+(and combinable with) `--json`; `compare` additionally accepts a third:
 
 - **`--sarif <path>`** writes a [SARIF](https://sarifweb.azurewebsites.net/)
   2.1.0 log to `<path>`, for a code-scanning system (GitHub code scanning,
@@ -213,13 +216,21 @@ Every command additionally accepts two output-file options, independent of
   the kind of text a CI bot posts as a pull-request comment or a job
   summary: what was compared, the verdict, the key numbers, and the
   caveats.
+- **`--figure <path>`** (`compare` only) writes a deterministic SVG
+  "comparison figure" to `<path>` -- see "Comparison figure (`compare
+--figure`)" below for what it draws and why.
 
-**Neither option changes the process exit code.** Exit codes are decided
-exactly as documented above, before either file is written; a policy
-failure still exits `1` (and an indeterminate outcome still exits `2`)
-whether or not `--sarif`/`--markdown` were passed. A usage error (exit `3`,
-caught before any engine runs) writes neither file -- there is no result to
-report, and stderr already carries the message.
+**None of these options changes the process exit code.** Exit codes are
+decided exactly as documented above, before any of these files is written;
+a policy failure still exits `1` (and an indeterminate outcome still exits
+`2`) whether or not `--sarif`/`--markdown`/`--figure` were passed. A usage
+error (exit `3`, caught before any engine runs) writes none of them -- there
+is no result to report, and stderr already carries the message. `--figure`
+is additionally isolated at the implementation level: if building the
+figure itself fails (see "Bounding strategy" below), the command writes a
+small fallback SVG stating why and continues exactly as if `--figure` had
+not been passed -- a figure problem never turns a successful `compare` run
+into a crash or a different exit code.
 
 ### SARIF rule catalogue and level mapping
 
@@ -227,17 +238,17 @@ Every SARIF result maps to exactly one of these rule ids, with a level
 fixed per rule (never chosen ad hoc per finding) -- defined in
 `src/sarif.ts`:
 
-| Rule id | Level | Emitted when |
-| --- | --- | --- |
-| `deviation-exceeds-threshold` | `error` | `compare --max-deviation` failed |
-| `region-count-exceeds-threshold` | `error` | `compare --fail-on-regions` failed |
-| `not-watertight` | `error` | `compare`/`inspect --require-watertight` failed |
-| `non-manifold-edges` | `error` | `inspect --fail-on-non-manifold` failed |
-| `degenerate-triangles` | `error` | `inspect --fail-on-degenerate` failed |
-| `clearance-violation` | `error` | `clearance`'s fit-gate check failed (`"tight"` without `--allow-tight`, or `"interfering"`) |
-| `indeterminate-analysis` | `error` | the outcome was indeterminate, a resource-limit refusal, or a work-budget ceiling -- **always recorded, independent of `--fail-on-indeterminate`**, which only changes the exit code, never whether this finding exists |
-| `approximate-result` | `note` | **always recorded** on every `compare`/`clearance` run (their method is always `semantics: "approximate"`), whether the run passed or failed |
-| `undersampled-region` | `warning` | on top of `approximate-result`, whenever the sample-spacing bound exceeds the requested tolerance/clearance |
+| Rule id                          | Level     | Emitted when                                                                                                                                                                                                            |
+| -------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deviation-exceeds-threshold`    | `error`   | `compare --max-deviation` failed                                                                                                                                                                                        |
+| `region-count-exceeds-threshold` | `error`   | `compare --fail-on-regions` failed                                                                                                                                                                                      |
+| `not-watertight`                 | `error`   | `compare`/`inspect --require-watertight` failed                                                                                                                                                                         |
+| `non-manifold-edges`             | `error`   | `inspect --fail-on-non-manifold` failed                                                                                                                                                                                 |
+| `degenerate-triangles`           | `error`   | `inspect --fail-on-degenerate` failed                                                                                                                                                                                   |
+| `clearance-violation`            | `error`   | `clearance`'s fit-gate check failed (`"tight"` without `--allow-tight`, or `"interfering"`)                                                                                                                             |
+| `indeterminate-analysis`         | `error`   | the outcome was indeterminate, a resource-limit refusal, or a work-budget ceiling -- **always recorded, independent of `--fail-on-indeterminate`**, which only changes the exit code, never whether this finding exists |
+| `approximate-result`             | `note`    | **always recorded** on every `compare`/`clearance` run (their method is always `semantics: "approximate"`), whether the run passed or failed                                                                            |
+| `undersampled-region`            | `warning` | on top of `approximate-result`, whenever the sample-spacing bound exceeds the requested tolerance/clearance                                                                                                             |
 
 ### Honesty rules this mapping follows
 
@@ -276,6 +287,94 @@ entirely by default. Running the same command with the same `--sarif`/
 `--markdown` paths twice therefore produces byte-identical files, matching
 the determinism guarantee `--json` already makes.
 
+### Comparison figure (`compare --figure`)
+
+CI has no GPU and no browser, so this cannot be a real 3D render. `--figure
+<path>` instead writes a deterministic **SVG** -- text, no graphics device,
+no new dependency (built as escaped strings in `src/figure.ts`), embeddable
+directly in a Markdown PR comment and viewable in any browser.
+
+**Viewpoint choice.** The figure draws three fixed axis-aligned orthographic
+views -- top (X-Y), front (X-Z), side (Y-Z) -- the standard engineering
+multiview convention, instead of one isometric view. Reasoning: an
+axis-aligned orthographic projection of a point is just dropping the third
+coordinate, so the renderer's projection math has no rotation matrix or
+trigonometry to get subtly wrong; and a single isometric angle can hide a
+changed region behind the silhouette it draws, where three axis-aligned
+views together cannot both hide the same region (a region invisible face-on
+in one view is edge-on, not hidden, in one of the other two).
+
+**Non-colour encoding (never colour alone).** Every changed-region category
+(`added` | `removed` | `deviation`) is marked on three independent
+non-colour channels, so the figure stays legible in grayscale or to a
+colour-blind reader: a distinct SVG `<pattern>` fill hatch (diagonal /
+counter-diagonal / crosshatch), a distinct `stroke-dasharray` outline
+(solid `"0"` / dashed `"6,3"` / dotted `"1,3"`), and a distinct anchor-marker
+shape (circle / square / triangle) carrying the category's letter. The
+legend always spells out colour, pattern, dash, shape, and a full-word label
+for all three categories -- never only the categories the current
+comparison happens to use -- plus the baseline/candidate bounding-box
+styling (solid gray vs. dashed blue).
+
+**Rounding rule.** SVG does not need Float64 precision. Every coordinate or
+size written into an SVG attribute is rounded to two decimal places
+(`Math.round(value * 100) / 100`, formatted with a fixed `toFixed(2)`, `-0`
+normalized to `0`) before being stringified -- fixing this rule keeps output
+both small and stable across runs, independent of whatever long,
+run-irrelevant tail of digits the projection arithmetic happens to produce.
+Millimetre values quoted in surrounding text (headline, verdict) are left at
+their normal precision, unrounded, matching how the text/`--json`/Markdown
+outputs already report them.
+
+**Bounding strategy (never a gigabyte of SVG for a million-triangle
+model).** Unchanged surface is _never_ drawn as geometry, at any model
+size -- only its bounding box (one rectangle per view, baseline solid gray,
+candidate dashed blue) is drawn for each model as a whole, an O(1) cost
+independent of triangle count. Changed-region geometry is drawn from the
+actual triangles the analysis reported -- resolved back to world-space
+positions exclusively via `@voxelspy/analysis`'s supported
+`flattenedTriangleLocator` (never a re-derived traversal) -- but bounded
+twice over: at most 50 regions (by rank, i.e. `orderedRegionIds` order) ever
+receive any drawing, and across those, at most 400 triangles total are ever
+drawn as full triangle geometry. A region beyond either budget still gets
+its anchor marker, label, and a bounds-only rectangle (from the region's own
+reported `bounds`, always present even when triangle geometry is not) --
+it is never silently dropped. **Every omission is stated in the figure
+itself** (its caption text, not only this document): how many of the true
+detected region count are shown, how many available regions were not drawn,
+how many triangles among shown regions were left out, and how many shown
+regions had no resolved triangle geometry at all and fell back to a
+bounds-only box. If resolving the figure's own geometry fails outright (for
+example, the same execution-budget ceiling the caller configured for the
+comparison is also too small for the figure's own flatten/locate step), the
+command falls back to a small, still-valid, still-accessible SVG stating
+that the figure is unavailable and why -- never a crash, and never a
+silently empty file.
+
+**Determinism.** No timestamp, random id, or platform-dependent formatting
+is ever emitted; the rounding rule above removes the one remaining source of
+run-to-run drift (floating-point tail digits). Running `compare --figure`
+twice against the same inputs and options produces a byte-identical SVG,
+matching the determinism guarantee `--json`/`--sarif`/`--markdown` already
+make.
+
+**Accessibility.** Every figure -- including the "figure unavailable"
+fallback -- carries a `<title>` (the comparison headline) and a `<desc>`
+(the verdict plus a summary of what the views show and omit), so a screen
+reader gets the substance of the comparison, not silence.
+
+**Honesty caveat.** The figure's `<desc>` and on-figure caption both state
+plainly that it is a projection of tessellated, sampled comparison geometry,
+not a rendered proof of exact shape -- matching this package's "Design
+principle: never overclaim" above. A passing verdict drawn next to two
+clean-looking bounding boxes is not a stronger claim than the sampled
+`surface-distance` result it illustrates already makes.
+
+**Markdown integration.** When both `--figure` and `--markdown` are passed,
+the Markdown summary includes a `### Figure` section with a
+`![Comparison figure](<path>)` image reference, so a CI bot posting that
+summary as a PR comment embeds the figure directly.
+
 ### Using the example workflow
 
 `.github/workflows/geometry-check.yml` is a `workflow_dispatch`-triggered
@@ -292,7 +391,7 @@ demonstrate.
 ## Resource bounds
 
 This CLI adds no new geometry ceilings of its own -- every `--max-*` option
-only *lowers* an existing engine or importer ceiling, never raises it:
+only _lowers_ an existing engine or importer ceiling, never raises it:
 
 - Import: `IMPORTER_SAFETY_LIMITS` (32 MiB input, 500,000 triangles,
   1,500,000 vertices).

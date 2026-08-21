@@ -18,12 +18,27 @@ export interface MarkdownSummaryInput {
   readonly verdict: string;
   /** One-line description of what was compared/inspected and with which files. */
   readonly headline: string;
-  readonly metrics: readonly { readonly label: string; readonly value: string }[];
+  readonly metrics: readonly {
+    readonly label: string;
+    readonly value: string;
+  }[];
   /** Present for every specified `--max-*`/`--fail-on-*`/`--require-*` option; empty when the run was informational only. */
   readonly policyChecks: readonly PolicyCheck[];
   /** Always non-empty for an approximate-method run (`compare`/`clearance`); the first entry is always the plain "this is sampled, not exact" statement. */
   readonly caveats: readonly string[];
-  readonly warnings: readonly { readonly severity: string; readonly code: string; readonly message: string }[];
+  readonly warnings: readonly {
+    readonly severity: string;
+    readonly code: string;
+    readonly message: string;
+  }[];
+  /**
+   * The path `compare --figure` wrote its deterministic SVG comparison
+   * figure to, when the caller passed that option alongside `--markdown`.
+   * When present, rendered as a Markdown image reference so a CI bot
+   * posting this summary as a PR comment embeds the figure directly,
+   * without a second round trip to fetch it.
+   */
+  readonly figurePath?: string;
 }
 
 function escapeCell(value: string): string {
@@ -43,7 +58,9 @@ export function buildMarkdownSummary(input: MarkdownSummaryInput): string {
     lines.push("| Metric | Value |");
     lines.push("| --- | --- |");
     for (const metric of input.metrics) {
-      lines.push(`| ${escapeCell(metric.label)} | ${escapeCell(metric.value)} |`);
+      lines.push(
+        `| ${escapeCell(metric.label)} | ${escapeCell(metric.value)} |`,
+      );
     }
     lines.push("");
   }
@@ -66,6 +83,21 @@ export function buildMarkdownSummary(input: MarkdownSummaryInput): string {
     lines.push("");
   }
 
+  if (input.figurePath !== undefined) {
+    lines.push("### Figure");
+    lines.push("");
+    lines.push(`![Comparison figure](${input.figurePath})`);
+    lines.push("");
+    lines.push(
+      `See \`${input.figurePath}\` for a deterministic SVG rendering of this comparison: three ` +
+        "orthographic views (top, front, side), changed regions marked by fill pattern, outline " +
+        "style, and marker shape (not colour alone), and a caption stating what geometry was " +
+        "omitted, if any. It is a projection of tessellated, sampled comparison geometry, not an " +
+        "exact rendering.",
+    );
+    lines.push("");
+  }
+
   lines.push("### Caveats");
   lines.push("");
   if (input.caveats.length === 0) {
@@ -81,7 +113,9 @@ export function buildMarkdownSummary(input: MarkdownSummaryInput): string {
     lines.push("### Warnings");
     lines.push("");
     for (const warning of input.warnings) {
-      lines.push(`- [${warning.severity}] \`${warning.code}\`: ${warning.message}`);
+      lines.push(
+        `- [${warning.severity}] \`${warning.code}\`: ${warning.message}`,
+      );
     }
     lines.push("");
   }

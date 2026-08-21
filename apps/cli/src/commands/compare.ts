@@ -3,8 +3,9 @@ import {
   IDENTITY_MAT4,
   analysisRequestSchema,
   type AnalysisResult,
+  type NormalizedModel,
 } from "@voxelspy/contracts";
-import { analyzeModelPair } from "@voxelspy/analysis";
+import { analyzeModelPair, flattenedTriangleLocator } from "@voxelspy/analysis";
 import { CliUsageError } from "../cli-error.js";
 import {
   EXIT_INDETERMINATE,
@@ -14,7 +15,10 @@ import {
 } from "../exit-codes.js";
 import { buildExecutionBudget } from "../execution-budget.js";
 import type { CommandIO } from "../io.js";
-import { importFailureExitCode, printImportFailure } from "../import-outcome.js";
+import {
+  importFailureExitCode,
+  printImportFailure,
+} from "../import-outcome.js";
 import { loadModel } from "../load-model.js";
 import {
   parseAxisOption,
@@ -26,8 +30,21 @@ import {
 } from "../parsing.js";
 import { evaluatePolicy, type PolicyCheck } from "../policy.js";
 import { buildMarkdownSummary, writeMarkdownFile } from "../markdown-report.js";
-import { buildSarifLog, writeSarifFile, type SarifFinding, type SarifRuleId } from "../sarif.js";
+import {
+  buildSarifLog,
+  writeSarifFile,
+  type SarifFinding,
+  type SarifRuleId,
+} from "../sarif.js";
 import { printSampleSpacing, printWarnings } from "../uncertainty-text.js";
+import {
+  MAX_DRAWN_REGIONS,
+  MAX_DRAWN_TRIANGLES,
+  buildComparisonFigureSvg,
+  buildFigureUnavailableSvg,
+  writeFigureFile,
+  type FigureRegionInput,
+} from "../figure.js";
 
 export const COMPARE_HELP = `Usage: voxelspy compare <baseline> <candidate> --tolerance <mm> [options]
 
@@ -63,10 +80,11 @@ Output:
   --json                     emit the full contracts-shaped AnalysisResult
   --sarif <path>             write a SARIF 2.1.0 log for code-scanning ingestion
   --markdown <path>          write a compact Markdown summary (for a PR comment)
+  --figure <path>            write a deterministic SVG comparison figure (see README)
   --help                     show this message
 
---sarif and --markdown only change what is written to those files; they never
-change the process exit code (see "Exit codes" in the README).
+--sarif, --markdown, and --figure only change what is written to those files;
+they never change the process exit code (see "Exit codes" in the README).
 `;
 
 export async function compareCommand(
@@ -95,6 +113,7 @@ export async function compareCommand(
       json: { type: "boolean", default: false },
       sarif: { type: "string" },
       markdown: { type: "string" },
+      figure: { type: "string" },
       help: { type: "boolean", default: false },
     },
   });
@@ -112,15 +131,30 @@ export async function compareCommand(
   }
 
   const tolerance = parseRequiredMillimetres("--tolerance", values.tolerance);
-  const maxRegions = parseOptionalPositiveInteger("--max-regions", values["max-regions"]);
-  const maxWorkUnits = parseOptionalPositiveInteger("--max-work-units", values["max-work-units"]);
+  const maxRegions = parseOptionalPositiveInteger(
+    "--max-regions",
+    values["max-regions"],
+  );
+  const maxWorkUnits = parseOptionalPositiveInteger(
+    "--max-work-units",
+    values["max-work-units"],
+  );
   const maxMemoryBytes = parseOptionalPositiveInteger(
     "--max-memory-bytes",
     values["max-memory-bytes"],
   );
-  const maxInputBytes = parseOptionalPositiveInteger("--max-input-bytes", values["max-input-bytes"]);
-  const maxTriangles = parseOptionalPositiveInteger("--max-triangles", values["max-triangles"]);
-  const maxDeviation = parseOptionalMillimetres("--max-deviation", values["max-deviation"]);
+  const maxInputBytes = parseOptionalPositiveInteger(
+    "--max-input-bytes",
+    values["max-input-bytes"],
+  );
+  const maxTriangles = parseOptionalPositiveInteger(
+    "--max-triangles",
+    values["max-triangles"],
+  );
+  const maxDeviation = parseOptionalMillimetres(
+    "--max-deviation",
+    values["max-deviation"],
+  );
   const failOnRegions = parseOptionalNonNegativeInteger(
     "--fail-on-regions",
     values["fail-on-regions"],
@@ -129,11 +163,24 @@ export async function compareCommand(
   const failOnIndeterminate = values["fail-on-indeterminate"] === true;
   const sarifPath = values.sarif;
   const markdownPath = values.markdown;
+  const figurePath = values.figure;
 
-  const baselineUnit = parseUnitOption("--baseline-unit", values["baseline-unit"]);
-  const baselineAxis = parseAxisOption("--baseline-axis", values["baseline-axis"]);
-  const candidateUnit = parseUnitOption("--candidate-unit", values["candidate-unit"]);
-  const candidateAxis = parseAxisOption("--candidate-axis", values["candidate-axis"]);
+  const baselineUnit = parseUnitOption(
+    "--baseline-unit",
+    values["baseline-unit"],
+  );
+  const baselineAxis = parseAxisOption(
+    "--baseline-axis",
+    values["baseline-axis"],
+  );
+  const candidateUnit = parseUnitOption(
+    "--candidate-unit",
+    values["candidate-unit"],
+  );
+  const candidateAxis = parseAxisOption(
+    "--candidate-axis",
+    values["candidate-axis"],
+  );
 
   const baselineImport = await loadModel(
     baselinePath,
@@ -194,8 +241,14 @@ export async function compareCommand(
       JSON.stringify(
         {
           command: "compare",
-          baseline: { path: baselineImport.path, sourceName: baselineImport.sourceName },
-          candidate: { path: candidatePath, sourceName: candidateImport.sourceName },
+          baseline: {
+            path: baselineImport.path,
+            sourceName: baselineImport.sourceName,
+          },
+          candidate: {
+            path: candidatePath,
+            sourceName: candidateImport.sourceName,
+          },
           result,
         },
         null,
@@ -210,12 +263,18 @@ export async function compareCommand(
       for (const reason of result.outcome.reasons) io.stdout(`  ${reason}`);
     }
     if (sarifPath !== undefined || markdownPath !== undefined) {
-      const artifactUris = [baselineImport.sourceName, candidateImport.sourceName];
+      const artifactUris = [
+        baselineImport.sourceName,
+        candidateImport.sourceName,
+      ];
       const finding: SarifFinding = {
         ruleId: "indeterminate-analysis",
         message: `Comparison indeterminate (${result.outcome.code}): ${result.outcome.reasons.join("; ")}`,
         artifactUris,
-        properties: { code: result.outcome.code, reasons: result.outcome.reasons },
+        properties: {
+          code: result.outcome.code,
+          reasons: result.outcome.reasons,
+        },
       };
       if (sarifPath !== undefined) {
         writeSarifFile(
@@ -246,17 +305,39 @@ export async function compareCommand(
               ...result.outcome.reasons,
             ],
             warnings: result.warnings,
+            ...(figurePath === undefined ? {} : { figurePath }),
           }),
         );
       }
+    }
+    if (figurePath !== undefined) {
+      writeComparisonFigureFile({
+        figurePath,
+        baselineModel: baselineImport.result.model,
+        candidateModel: candidateImport.result.model,
+        executionBudget,
+        baselineSourceName: baselineImport.sourceName,
+        candidateSourceName: candidateImport.sourceName,
+        methodLabel: `${result.outcome.requestedMethod.id} ${result.outcome.requestedMethod.version}`,
+        verdict: "indeterminate",
+        regions: [],
+        orderedRegionIds: [],
+        totalDetectedRegionCount: 0,
+      });
     }
     return failOnIndeterminate ? EXIT_POLICY_FAILED : EXIT_INDETERMINATE;
   }
 
   const outcome = result.outcome;
   const maxDistance = numberMetric(outcome.metrics, "surface.maximum-distance");
-  const changedRegionCount = numberMetric(outcome.metrics, "surface.changed-region-count");
-  const reportedRegionCount = numberMetric(outcome.metrics, "surface.reported-region-count");
+  const changedRegionCount = numberMetric(
+    outcome.metrics,
+    "surface.changed-region-count",
+  );
+  const reportedRegionCount = numberMetric(
+    outcome.metrics,
+    "surface.reported-region-count",
+  );
 
   const checks: PolicyCheck[] = [];
   if (maxDeviation !== undefined) {
@@ -285,7 +366,8 @@ export async function compareCommand(
     const closed = baselineMesh.closed && candidateMesh.closed;
     checks.push({
       id: "require-watertight",
-      description: "both baseline and candidate are watertight (closed, no boundary/non-manifold edges)",
+      description:
+        "both baseline and candidate are watertight (closed, no boundary/non-manifold edges)",
       passed: closed,
       detail: closed
         ? "both inputs are closed"
@@ -295,13 +377,18 @@ export async function compareCommand(
   const evaluation = evaluatePolicy(checks);
 
   if (sarifPath !== undefined || markdownPath !== undefined) {
-    const artifactUris = [baselineImport.sourceName, candidateImport.sourceName];
+    const artifactUris = [
+      baselineImport.sourceName,
+      candidateImport.sourceName,
+    ];
     const findings: SarifFinding[] = [];
     for (const check of checks) {
       if (check.passed) continue;
       const ruleId = COMPARE_CHECK_RULES[check.id];
       if (ruleId === undefined) {
-        throw new Error(`No SARIF rule is mapped for compare policy check id "${check.id}".`);
+        throw new Error(
+          `No SARIF rule is mapped for compare policy check id "${check.id}".`,
+        );
       }
       findings.push({
         ruleId,
@@ -318,8 +405,10 @@ export async function compareCommand(
     }
     const caveats: string[] = [];
     if (outcome.semantics === "approximate") {
-      const spacing = outcome.uncertainty.parameters["maxSampleSpacingMillimetres"];
-      const undersampled = outcome.uncertainty.parameters["undersampled"] === true;
+      const spacing =
+        outcome.uncertainty.parameters["maxSampleSpacingMillimetres"];
+      const undersampled =
+        outcome.uncertainty.parameters["undersampled"] === true;
       caveats.push(
         `This is an APPROXIMATE result: ${outcome.uncertainty.description}` +
           (typeof spacing === "number"
@@ -329,7 +418,9 @@ export async function compareCommand(
       findings.push({
         ruleId: "approximate-result",
         message: `surface-distance is a sampled method.${
-          typeof spacing === "number" ? ` Sample spacing bound: ${spacing} mm.` : ""
+          typeof spacing === "number"
+            ? ` Sample spacing bound: ${spacing} mm.`
+            : ""
         } A passing policy result is not a stronger claim than that bound supports.`,
         artifactUris,
         properties: { uncertainty: outcome.uncertainty },
@@ -358,7 +449,9 @@ export async function compareCommand(
             method: outcome.effectiveMethod,
             tolerance: outcome.effectiveTolerance,
             semantics: outcome.semantics,
-            ...(outcome.semantics === "approximate" ? { uncertainty: outcome.uncertainty } : {}),
+            ...(outcome.semantics === "approximate"
+              ? { uncertainty: outcome.uncertainty }
+              : {}),
           },
         }),
       );
@@ -368,23 +461,61 @@ export async function compareCommand(
         markdownPath,
         buildMarkdownSummary({
           command: "compare",
-          verdict: checks.length === 0 ? "informational (no policy configured)" : evaluation.passed ? "policy passed" : "policy failed",
+          verdict:
+            checks.length === 0
+              ? "informational (no policy configured)"
+              : evaluation.passed
+                ? "policy passed"
+                : "policy failed",
           headline: `Compared \`${baselineImport.sourceName}\` (baseline) against \`${candidateImport.sourceName}\` (candidate) with ${outcome.effectiveMethod.id} ${outcome.effectiveMethod.version}.`,
           metrics: [
-            { label: "Method", value: `${outcome.effectiveMethod.id} ${outcome.effectiveMethod.version}` },
+            {
+              label: "Method",
+              value: `${outcome.effectiveMethod.id} ${outcome.effectiveMethod.version}`,
+            },
             { label: "Maximum distance", value: `${maxDistance} mm` },
-            { label: "Changed regions", value: `${changedRegionCount} detected, ${reportedRegionCount} reported` },
-            { label: "Tolerance", value: `${outcome.effectiveTolerance.distanceMillimetres} mm` },
+            {
+              label: "Changed regions",
+              value: `${changedRegionCount} detected, ${reportedRegionCount} reported`,
+            },
+            {
+              label: "Tolerance",
+              value: `${outcome.effectiveTolerance.distanceMillimetres} mm`,
+            },
           ],
           policyChecks: checks,
           caveats:
             caveats.length > 0
               ? caveats
-              : ["This result's semantics are exact-within-validated-preconditions for the requested method."],
+              : [
+                  "This result's semantics are exact-within-validated-preconditions for the requested method.",
+                ],
           warnings: result.warnings,
+          ...(figurePath === undefined ? {} : { figurePath }),
         }),
       );
     }
+  }
+
+  if (figurePath !== undefined) {
+    writeComparisonFigureFile({
+      figurePath,
+      baselineModel: baselineImport.result.model,
+      candidateModel: candidateImport.result.model,
+      executionBudget,
+      baselineSourceName: baselineImport.sourceName,
+      candidateSourceName: candidateImport.sourceName,
+      methodLabel: `${outcome.effectiveMethod.id} ${outcome.effectiveMethod.version}`,
+      verdict:
+        checks.length === 0
+          ? "informational (no policy configured)"
+          : evaluation.passed
+            ? "policy passed"
+            : "policy failed",
+      regions: outcome.regions,
+      orderedRegionIds: outcome.orderedRegionIds,
+      totalDetectedRegionCount: changedRegionCount,
+    });
   }
 
   if (!values.json) {
@@ -399,13 +530,19 @@ export async function compareCommand(
     }
     printWarnings(result.warnings, io);
     if (checks.length === 0) {
-      io.stdout("No policy options were specified; this run is informational only.");
+      io.stdout(
+        "No policy options were specified; this run is informational only.",
+      );
     } else {
       io.stdout("Policy checks:");
       for (const check of checks) {
-        io.stdout(`  [${check.passed ? "PASS" : "FAIL"}] ${check.description} -- ${check.detail}`);
+        io.stdout(
+          `  [${check.passed ? "PASS" : "FAIL"}] ${check.description} -- ${check.detail}`,
+        );
       }
-      io.stdout(evaluation.passed ? "Policy result: PASSED" : "Policy result: FAILED");
+      io.stdout(
+        evaluation.passed ? "Policy result: PASSED" : "Policy result: FAILED",
+      );
     }
   }
 
@@ -418,7 +555,9 @@ function numberMetric(
 ): number {
   const metric = metrics.find((entry) => entry.id === id);
   if (metric === undefined) {
-    throw new Error(`Expected metric "${id}" was not present in the analysis result.`);
+    throw new Error(
+      `Expected metric "${id}" was not present in the analysis result.`,
+    );
   }
   return metric.value;
 }
@@ -442,18 +581,185 @@ function topRegions(
     readonly id: string;
     readonly category: string;
     readonly anchor: readonly number[];
-    readonly bounds: { readonly min: readonly number[]; readonly max: readonly number[] };
+    readonly bounds: {
+      readonly min: readonly number[];
+      readonly max: readonly number[];
+    };
   }[],
   orderedRegionIds: readonly string[],
-): readonly { readonly id: string; readonly category: string; readonly anchorMillimetres: readonly number[] }[] {
+): readonly {
+  readonly id: string;
+  readonly category: string;
+  readonly anchorMillimetres: readonly number[];
+}[] {
   const byId = new Map(regions.map((region) => [region.id, region]));
   return orderedRegionIds
     .slice(0, 5)
     .map((id) => byId.get(id))
-    .filter((region): region is NonNullable<typeof region> => region !== undefined)
+    .filter(
+      (region): region is NonNullable<typeof region> => region !== undefined,
+    )
     .map((region) => ({
       id: region.id,
       category: region.category,
       anchorMillimetres: region.anchor,
     }));
+}
+
+/**
+ * The minimal shape `writeComparisonFigureFile` needs from one changed
+ * region -- structurally satisfied by `AnalysisOutcome["regions"][number]`
+ * (a `ChangeRegion`) without importing that type directly, so this module
+ * stays decoupled from exactly which `@voxelspy/contracts` region shape is
+ * in play.
+ */
+interface FigureableRegion {
+  readonly id: string;
+  readonly category: "added" | "removed" | "deviation";
+  readonly bounds: {
+    readonly min: readonly number[];
+    readonly max: readonly number[];
+  };
+  readonly anchor: readonly number[];
+  readonly geometry?:
+    | {
+        readonly kind: "triangle-set";
+        readonly model: "baseline" | "candidate";
+        readonly triangleIndices: readonly number[];
+      }
+    | undefined;
+}
+
+function boundingBoxOf(geometry: {
+  readonly positions: Float64Array;
+  readonly vertexCount: number;
+}): {
+  readonly min: readonly [number, number, number];
+  readonly max: readonly [number, number, number];
+} {
+  if (geometry.vertexCount === 0) return { min: [0, 0, 0], max: [0, 0, 0] };
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let minZ = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  let maxZ = Number.NEGATIVE_INFINITY;
+  for (let vertex = 0; vertex < geometry.vertexCount; vertex += 1) {
+    const base = vertex * 3;
+    const x = geometry.positions[base]!;
+    const y = geometry.positions[base + 1]!;
+    const z = geometry.positions[base + 2]!;
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (z < minZ) minZ = z;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+    if (z > maxZ) maxZ = z;
+  }
+  return { min: [minX, minY, minZ], max: [maxX, maxY, maxZ] };
+}
+
+/**
+ * Builds and writes the `--figure` SVG for one `compare` run (complete or
+ * indeterminate). Never throws: `flattenedTriangleLocator` or triangle
+ * resolution failing (e.g. its own resource-limit ceiling, distinct from
+ * `analyzeModelPair`'s) falls back to `buildFigureUnavailableSvg` so an
+ * already-successful comparison's exit code and other outputs are never put
+ * at risk by the figure step -- see "Emitting a figure must not change exit
+ * behavior" in the README.
+ */
+function writeComparisonFigureFile(params: {
+  readonly figurePath: string;
+  readonly baselineModel: NormalizedModel;
+  readonly candidateModel: NormalizedModel;
+  readonly executionBudget:
+    | { readonly maxWorkUnits: number; readonly maxMemoryBytes: number }
+    | undefined;
+  readonly baselineSourceName: string;
+  readonly candidateSourceName: string;
+  readonly methodLabel: string;
+  readonly verdict: string;
+  readonly regions: readonly FigureableRegion[];
+  readonly orderedRegionIds: readonly string[];
+  readonly totalDetectedRegionCount: number;
+}): void {
+  const headline = `Compared \`${params.baselineSourceName}\` (baseline) against \`${params.candidateSourceName}\` (candidate) with ${params.methodLabel}.`;
+  try {
+    const budgetOption =
+      params.executionBudget === undefined
+        ? {}
+        : { executionBudget: params.executionBudget };
+    const baselineLocator = flattenedTriangleLocator(
+      params.baselineModel,
+      budgetOption,
+    );
+    const candidateLocator = flattenedTriangleLocator(
+      params.candidateModel,
+      budgetOption,
+    );
+
+    const regionById = new Map(
+      params.regions.map((region) => [region.id, region]),
+    );
+    const orderedRegions = params.orderedRegionIds
+      .map((id) => regionById.get(id))
+      .filter((region): region is FigureableRegion => region !== undefined)
+      .slice(0, MAX_DRAWN_REGIONS);
+
+    let trianglesRemaining = MAX_DRAWN_TRIANGLES;
+    const figureRegions: FigureRegionInput[] = orderedRegions.map((region) => {
+      let triangles: FigureRegionInput["triangles"];
+      if (region.geometry !== undefined && trianglesRemaining > 0) {
+        const locator =
+          region.geometry.model === "baseline"
+            ? baselineLocator
+            : candidateLocator;
+        const indices = region.geometry.triangleIndices.slice(
+          0,
+          trianglesRemaining,
+        );
+        const resolved = indices.map(
+          (index) => locator.resolve(index).positionsMillimetres,
+        );
+        trianglesRemaining -= resolved.length;
+        triangles = resolved;
+      }
+      return {
+        id: region.id,
+        category: region.category,
+        boundsMinMm: [
+          region.bounds.min[0]!,
+          region.bounds.min[1]!,
+          region.bounds.min[2]!,
+        ],
+        boundsMaxMm: [
+          region.bounds.max[0]!,
+          region.bounds.max[1]!,
+          region.bounds.max[2]!,
+        ],
+        anchorMm: [region.anchor[0]!, region.anchor[1]!, region.anchor[2]!],
+        ...(triangles === undefined ? {} : { triangles }),
+      };
+    });
+
+    const svg = buildComparisonFigureSvg({
+      headline,
+      verdict: params.verdict,
+      baselineLabel: params.baselineSourceName,
+      candidateLabel: params.candidateSourceName,
+      baselineBoundsMm: boundingBoxOf(baselineLocator.geometry),
+      candidateBoundsMm: boundingBoxOf(candidateLocator.geometry),
+      regions: figureRegions,
+      totalDetectedRegionCount: params.totalDetectedRegionCount,
+    });
+    writeFigureFile(params.figurePath, svg);
+  } catch (error) {
+    writeFigureFile(
+      params.figurePath,
+      buildFigureUnavailableSvg({
+        headline,
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
 }
