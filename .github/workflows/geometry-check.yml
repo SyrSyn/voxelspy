@@ -91,7 +91,8 @@ jobs:
             --tolerance 0.01 \
             --max-deviation 0.5 \
             --sarif "$RUNNER_TEMP/geometry-check.sarif" \
-            --markdown "$RUNNER_TEMP/geometry-check-summary.md"
+            --markdown "$RUNNER_TEMP/geometry-check-summary.md" \
+            --figure "$RUNNER_TEMP/geometry-check-figure.svg"
           code=$?
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "voxelspy compare exited $code"
@@ -107,6 +108,17 @@ jobs:
         with:
           name: geometry-check-sarif
           path: ${{ runner.temp }}/geometry-check.sarif
+          retention-days: 30
+
+      # The figure shows where the comparison found differences. The job
+      # summary above references it by path; upload it so a reviewer can
+      # open it from the run.
+      - name: Upload the comparison figure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: geometry-check-figure
+          path: ${{ runner.temp }}/geometry-check-figure.svg
           retention-days: 30
 
       - name: Upload the SARIF log for code scanning
