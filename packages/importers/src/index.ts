@@ -7,14 +7,18 @@ import {
   importerDescriptorSchema,
   instanceIdSchema,
   meshIdSchema,
+  nodeIdSchema,
   normalizedModelSchema,
   warningSchema,
   type ContractWarning,
   type ImportRequest,
   type ImportResult,
   type NormalizedModel,
+  type SourceAxis,
+  type SourceUnit,
 } from "@voxelspy/contracts";
 import { UnsupportedInputError } from "./errors.js";
+import { parseGltf, type ParsedGltf } from "./gltf.js";
 import {
   normalizePositions,
   countDegenerateTriangles,
@@ -51,12 +55,26 @@ export const IMPORTER_SAFETY_LIMITS = Object.freeze({
 export const importerDescriptor = importerDescriptorSchema.parse({
   id: "voxelspy.mesh",
   version: "0.1.0",
-  formats: ["stl", "obj"],
-  mediaTypes: ["model/stl", "application/sla", "model/obj", "text/plain"],
-  extensions: ["stl", "obj"],
+  formats: ["stl", "obj", "gltf", "glb"],
+  mediaTypes: [
+    "model/stl",
+    "application/sla",
+    "model/obj",
+    "text/plain",
+    "model/gltf+json",
+    "model/gltf-binary",
+  ],
+  extensions: ["stl", "obj", "gltf", "glb"],
   capabilities: {
-    assemblies: false,
+    // glTF/GLB node hierarchies are imported as `placement: { kind:
+    // "hierarchy" }`; STL/OBJ always produce a single flat instance.
+    assemblies: true,
     tessellationProvenance: false,
+    // Every resource this importer reads (buffers, and -- defensively --
+    // images) must be embedded (a data URI, or the GLB binary chunk);
+    // anything external or relative fails closed rather than being
+    // fetched, so "external resources" is honestly false, not merely
+    // unimplemented.
     externalResources: false,
   },
 });
@@ -64,8 +82,10 @@ export const importerDescriptor = importerDescriptorSchema.parse({
 interface ResolvedFrame {
   readonly unit: ResolvedSourceUnit;
   readonly axis: ResolvedSourceAxis;
-  readonly unitOrigin: "declared" | "user";
-  readonly axisOrigin: "declared" | "user";
+  readonly unitOrigin: "embedded" | "declared" | "user";
+  readonly axisOrigin: "embedded" | "declared" | "user";
+  readonly detectedUnit: SourceUnit;
+  readonly detectedAxis: SourceAxis;
 }
 
 type ImportFailureCode =
@@ -90,31 +110,61 @@ export async function importModel(input: unknown): Promise<ImportResult> {
       "Input exceeds the importer byte safety limit.",
     );
   }
-  if (request.format !== "stl" && request.format !== "obj") {
+  if (
+    request.format !== "stl" &&
+    request.format !== "obj" &&
+    request.format !== "gltf" &&
+    request.format !== "glb"
+  ) {
     return failure(
       "unsupported-input",
       `Format ${request.format} is not supported.`,
     );
   }
 
-  const frame = resolveFrame(request);
+  // glTF/GLB declare metres and Y-up by specification: the frame is
+  // resolved FROM THE FORMAT (an "embedded" resolution), never defaulted
+  // and never required as caller input, though a user (or declared)
+  // override is still honored like any other format. STL/OBJ have no such
+  // embedded metadata, so `resolveFrame` falls back to `needs-input`
+  // unless the caller supplies one.
+  const isGltf = request.format === "gltf" || request.format === "glb";
+  const frame = resolveFrame(
+    request,
+    isGltf ? "metre" : "unknown",
+    isGltf ? "right-handed-y-up" : "unknown",
+  );
   if ("result" in frame) return frame.result;
 
   try {
-    const parsedMesh =
-      request.format === "stl"
-        ? parseStl(
+    const model = isGltf
+      ? await createGltfModel(
+          request,
+          frame,
+          parseGltf(
             request.bytes,
-            request.options.limits.triangleCount,
-            IMPORTER_SAFETY_LIMITS.triangleCount,
-          )
-        : parseObj(
-            request.bytes,
+            request.format as "gltf" | "glb",
             request.options.limits.triangleCount,
             IMPORTER_SAFETY_LIMITS.triangleCount,
             IMPORTER_SAFETY_LIMITS.vertexCount,
-          );
-    const model = await createModel(request, frame, parsedMesh);
+          ),
+        )
+      : await createModel(
+          request,
+          frame,
+          request.format === "stl"
+            ? parseStl(
+                request.bytes,
+                request.options.limits.triangleCount,
+                IMPORTER_SAFETY_LIMITS.triangleCount,
+              )
+            : parseObj(
+                request.bytes,
+                request.options.limits.triangleCount,
+                IMPORTER_SAFETY_LIMITS.triangleCount,
+                IMPORTER_SAFETY_LIMITS.vertexCount,
+              ),
+        );
     const result = importResultSchema.parse({
       contractVersion: 1,
       ok: true,
@@ -135,16 +185,29 @@ export async function importModel(input: unknown): Promise<ImportResult> {
   }
 }
 
-export function inferFormat(sourceName: string): "stl" | "obj" | undefined {
+export function inferFormat(
+  sourceName: string,
+): "stl" | "obj" | "gltf" | "glb" | undefined {
   const extension = /\.([^.]+)$/u.exec(sourceName)?.[1]?.toLowerCase();
-  return extension === "stl" || extension === "obj" ? extension : undefined;
+  return extension === "stl" ||
+    extension === "obj" ||
+    extension === "gltf" ||
+    extension === "glb"
+    ? extension
+    : undefined;
 }
 
 function resolveFrame(
   request: ImportRequest,
+  detectedUnit: SourceUnit,
+  detectedAxis: SourceAxis,
 ): ResolvedFrame | { readonly result: ImportResult } {
-  const unit = request.options.userUnit ?? request.options.declaredUnit;
-  const axis = request.options.userAxis ?? request.options.declaredAxis;
+  const embeddedUnit = detectedUnit === "unknown" ? undefined : detectedUnit;
+  const embeddedAxis = detectedAxis === "unknown" ? undefined : detectedAxis;
+  const unit =
+    request.options.userUnit ?? request.options.declaredUnit ?? embeddedUnit;
+  const axis =
+    request.options.userAxis ?? request.options.declaredAxis ?? embeddedAxis;
   const warnings: ContractWarning[] = [];
   if (!unit) {
     warnings.push(
@@ -173,12 +236,17 @@ function resolveFrame(
       ),
     };
   }
-  return {
-    unit,
-    axis,
-    unitOrigin: request.options.userUnit ? "user" : "declared",
-    axisOrigin: request.options.userAxis ? "user" : "declared",
-  };
+  const unitOrigin = request.options.userUnit
+    ? "user"
+    : request.options.declaredUnit
+      ? "declared"
+      : "embedded";
+  const axisOrigin = request.options.userAxis
+    ? "user"
+    : request.options.declaredAxis
+      ? "declared"
+      : "embedded";
+  return { unit, axis, unitOrigin, axisOrigin, detectedUnit, detectedAxis };
 }
 
 async function createModel(
@@ -233,7 +301,7 @@ async function createModel(
       }),
     );
   }
-  if (frame.unitOrigin === "user" || frame.axisOrigin === "user") {
+  if (userOrDeclaredSourceFrameOverride(frame)) {
     warnings.push(
       warning({
         code: "user-source-frame",
@@ -266,13 +334,175 @@ async function createModel(
       importerVersion: importerDescriptor.version,
       sourceName: request.sourceName,
       sourceDigest: await sha256(request.bytes),
-      detectedSourceUnit: "unknown" as const,
-      detectedSourceAxis: "unknown" as const,
+      detectedSourceUnit: frame.detectedUnit,
+      detectedSourceAxis: frame.detectedAxis,
       sourceUnit: frame.unit,
       sourceAxis: frame.axis,
       sourceResolution: { unit: frame.unitOrigin, axis: frame.axisOrigin },
       appliedSourceToModel: sourceToModelTransform(frame.unit, frame.axis),
       notes: parsed.notes,
+    },
+  };
+  return normalizedModelSchema.parse(model);
+}
+
+/**
+ * True when the resolved unit or axis differs from what a format's own
+ * embedded metadata declares -- for STL/OBJ (no embedded metadata,
+ * `frame.detectedUnit`/`detectedAxis` always `"unknown"`) this only fires
+ * for an explicit `userUnit`/`userAxis`, matching the original behavior;
+ * for glTF/GLB (which always has an embedded metre/Y-up declaration) it
+ * also fires for a `declaredUnit`/`declaredAxis` override, since that is
+ * still overriding an authoritative, format-supplied value.
+ */
+function userOrDeclaredSourceFrameOverride(frame: ResolvedFrame): boolean {
+  if (frame.unitOrigin === "user" || frame.axisOrigin === "user") return true;
+  const embeddedUnit = frame.detectedUnit !== "unknown";
+  const embeddedAxis = frame.detectedAxis !== "unknown";
+  return (
+    (embeddedUnit && frame.unitOrigin !== "embedded") ||
+    (embeddedAxis && frame.axisOrigin !== "embedded")
+  );
+}
+
+/**
+ * Assembles a `NormalizedModel` from a parsed glTF/GLB document as a
+ * `placement: { kind: "hierarchy" }`: the node graph `src/gltf.ts` read is
+ * reproduced faithfully (each glTF node becomes one assembly node, keeping
+ * its own authored TRS/matrix transform unmodified, in the file's own
+ * unit/axis), wrapped under two synthetic ancestor nodes --
+ * `node.gltf.root` (identity, satisfying `normalizedModelSchema`'s
+ * requirement that hierarchy roots use an identity `localToParent`) and
+ * `node.gltf.frame` (carrying `sourceToModelTransform(frame.unit,
+ * frame.axis)`, the exact same source-to-canonical-frame conversion STL/OBJ
+ * apply per-vertex). Composing the transform once, at the top of the
+ * hierarchy, means every mesh's `positions` and every real glTF node's
+ * `localToParent` are stored exactly as authored (metres, Y-up, unless
+ * overridden) -- never rescaled or axis-swapped individually -- while the
+ * resolved world transform for every instance still lands in the
+ * canonical millimetre, right-handed-Z-up frame.
+ */
+async function createGltfModel(
+  request: ImportRequest,
+  frame: ResolvedFrame,
+  parsed: ParsedGltf,
+): Promise<NormalizedModel> {
+  const warnings: ContractWarning[] = [];
+  if (userOrDeclaredSourceFrameOverride(frame)) {
+    warnings.push(
+      warning({
+        code: "user-source-frame",
+        severity: "info",
+        message:
+          "A source frame correction overrides glTF's format-declared metre, right-handed-Y-up frame and was recorded in provenance.",
+      }),
+    );
+  }
+  if (parsed.ignoredAttributes.length > 0) {
+    warnings.push(
+      warning({
+        code: "gltf-attributes-not-evaluated",
+        severity: "info",
+        message: "Non-geometric glTF vertex attributes were not evaluated.",
+        details: { attributes: [...parsed.ignoredAttributes] },
+      }),
+    );
+  }
+  const droppedCounts: Record<string, number> = {
+    materials: parsed.ignoredMaterialCount,
+    textures: parsed.ignoredTextureCount,
+    images: parsed.ignoredImageCount,
+    samplers: parsed.ignoredSamplerCount,
+    cameras: parsed.ignoredCameraCount,
+  };
+  const droppedEntries = Object.entries(droppedCounts).filter(
+    ([, count]) => count > 0,
+  );
+  if (droppedEntries.length > 0) {
+    warnings.push(
+      warning({
+        code: "gltf-decorative-data-ignored",
+        severity: "info",
+        message: `glTF material, texture, image, sampler, and/or camera data does not affect geometry output and was not evaluated: ${droppedEntries
+          .map(([key, count]) => `${count} ${key}`)
+          .join(", ")}.`,
+        details: Object.fromEntries(droppedEntries),
+      }),
+    );
+  }
+  if (parsed.ignoredExtensions.length > 0) {
+    warnings.push(
+      warning({
+        code: "gltf-extension-ignored",
+        severity: "info",
+        message: `glTF extension(s) were present but not applied to geometry: ${parsed.ignoredExtensions.join(", ")}.`,
+        details: { extensions: [...parsed.ignoredExtensions] },
+      }),
+    );
+  }
+
+  const meshes = parsed.meshes.map((mesh) => ({
+    id: meshIdSchema.parse(mesh.id),
+    geometry: { positions: mesh.positions, indices: mesh.indices },
+  }));
+
+  const rootId = nodeIdSchema.parse("node.gltf.root");
+  const frameNodeId = nodeIdSchema.parse("node.gltf.frame");
+  const appliedSourceToModel = sourceToModelTransform(frame.unit, frame.axis);
+  const nodes = [
+    {
+      id: rootId,
+      childIds: [frameNodeId],
+      instanceIds: [],
+      localToParent: IDENTITY_MAT4,
+    },
+    {
+      id: frameNodeId,
+      childIds: parsed.sceneRootIds.map((id) => nodeIdSchema.parse(id)),
+      instanceIds: [],
+      localToParent: appliedSourceToModel,
+    },
+    ...parsed.nodes.map((node) => ({
+      id: nodeIdSchema.parse(node.id),
+      childIds: node.childIds.map((childId) => nodeIdSchema.parse(childId)),
+      instanceIds: node.instanceIds.map((instanceId) =>
+        instanceIdSchema.parse(instanceId),
+      ),
+      localToParent: node.localToParent,
+    })),
+  ];
+
+  const model = {
+    contractVersion: 1 as const,
+    id: request.targetModelId,
+    frame: CANONICAL_FRAME,
+    meshes,
+    placement: {
+      kind: "hierarchy" as const,
+      instances: parsed.instances.map((instance) => ({
+        id: instanceIdSchema.parse(instance.id),
+        meshId: meshIdSchema.parse(instance.meshId),
+        meshToNode: IDENTITY_MAT4,
+      })),
+      rootIds: [rootId],
+      nodes,
+    },
+    warnings,
+    provenance: {
+      formatId: request.format,
+      importerId: importerDescriptor.id,
+      importerVersion: importerDescriptor.version,
+      sourceName: request.sourceName,
+      sourceDigest: await sha256(request.bytes),
+      detectedSourceUnit: frame.detectedUnit,
+      detectedSourceAxis: frame.detectedAxis,
+      sourceUnit: frame.unit,
+      sourceAxis: frame.axis,
+      sourceResolution: { unit: frame.unitOrigin, axis: frame.axisOrigin },
+      appliedSourceToModel,
+      notes: [
+        "glTF materials, textures, images, samplers, cameras, and animations are not evaluated; only static mesh geometry (POSITION attributes and mode-4 TRIANGLES primitives) is imported.",
+      ],
     },
   };
   return normalizedModelSchema.parse(model);

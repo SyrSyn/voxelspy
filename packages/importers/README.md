@@ -29,6 +29,38 @@ const result = await importModel({
 
 Successful imports contain full-span `Float64Array` position buffers, full-span `Uint32Array` index buffers, a SHA-256 source digest, warnings, notes, flat placement, and source-frame provenance validated by `@voxelspy/contracts`.
 
+## glTF 2.0 / GLB inputs (static mesh geometry only)
+
+`importModel` also accepts `.gltf` (plain JSON, with every buffer embedded as a base64 `data:` URI) and `.glb` (the binary container: a 12-byte header, one JSON chunk, and an optional second chunk holding buffer 0's bytes). Only static mesh geometry is in scope -- see `spikes/phase-1/EVIDENCE.md` for the accepted boundary this importer implements.
+
+**Supported.** `POSITION` accessors (`FLOAT` `VEC3` only); `mode: 4` (`TRIANGLES`) primitives, indexed (`UNSIGNED_BYTE`/`UNSIGNED_SHORT`/`UNSIGNED_INT`) or non-indexed (vertices are read as sequential triangles); multiple primitives per mesh and multiple meshes; and a full node hierarchy with either a `matrix` or `translation`/`rotation`/`scale` transform per node.
+
+**Frame resolution is FROM THE FORMAT, not defaulted.** glTF declares metres and right-handed Y-up by specification, so import never returns `needs-input` for these formats and never requires `declaredUnit`/`declaredAxis`: `provenance.detectedSourceUnit`/`detectedSourceAxis` are always `"metre"`/`"right-handed-y-up"`, and `sourceResolution` is `"embedded"` unless overridden. A `userUnit`/`userAxis` (or `declaredUnit`/`declaredAxis`) request option still overrides the embedded declaration -- recorded as `"user"`/`"declared"` in `sourceResolution` -- and, because that overrides an authoritative value the file itself supplied, also raises the same `user-source-frame` warning STL/OBJ raise only for an explicit user correction.
+
+**Placement is a hierarchy, not flattened.** Unlike STL/OBJ (always `placement: { kind: "flat" }`, one mesh, one instance), a glTF import produces `placement: { kind: "hierarchy" }`: every glTF node becomes one assembly node, keeping its own authored transform completely unconverted (still in the file's own metre/Y-up numbers). Two synthetic ancestor nodes are added above the file's own scene roots -- `node.gltf.root` (identity, satisfying the contract's rule that hierarchy roots use an identity transform) and `node.gltf.frame` (carrying exactly `sourceToModelTransform(sourceUnit, sourceAxis)`, the same conversion STL/OBJ apply per vertex). Composing the frame conversion once, at the top of the hierarchy, means every mesh and every real glTF node's transform is stored exactly as authored; only the resolved world transform for a given instance lands in the canonical millimetre, right-handed-Z-up frame.
+
+**Scene selection.** The document's default scene (`scene`, or the sole entry of `scenes` when there is exactly one) is imported. When the default scene is ambiguous (multiple `scenes`, no `scene` index) or entirely absent, every node that is nobody's child (scanned across the whole `nodes` array) is treated as a root -- a deliberate, documented fallback for minimal or library-style assets that declare `nodes`/`meshes` without a `scenes` array, never a guess about any single node's own geometry or transform.
+
+**Explicit rejections -- every one fails the import outright, never silently:**
+
+- Animations; skins (`skins`, `node.skin`); morph targets (`primitive.targets`, `mesh.weights`, `node.weights`).
+- Any `extensionsRequired` entry, named in the failure message -- this importer implements no glTF extension.
+- Any primitive `mode` other than `4` -- including `5`/`6` (`TRIANGLE_STRIP`/`TRIANGLE_FAN`) -- named by number and name. Strip/fan topologies are deliberately never converted to an indexed triangle list, since doing so would silently change connectivity.
+- Sparse accessors, and any accessor with no `bufferView` (e.g. one an unsupported extension would otherwise populate).
+- Any component type other than `FLOAT` for `POSITION`, or other than the three unsigned integer types for indices; `JOINTS_0`/`WEIGHTS_0` primitive attributes (skinning, even without `node.skin`); a `normalized` accessor.
+- Any buffer or image reference that is not an embedded `data:` base64 URI or (buffer 0 of a GLB only) the binary chunk -- refused even for images, whose content this importer never reads, so an external reference can never be silently ignored.
+- A malformed GLB container: wrong magic number; an unsupported version; a declared total or chunk length that does not match the actual bytes; a non-4-byte-aligned, mistyped, or misordered chunk; unexpected trailing bytes.
+- A malformed document: invalid JSON; a missing or non-`"2.x"` `asset.version`; an out-of-range buffer/bufferView/accessor/node/mesh reference; an accessor or bufferView span that overruns its buffer's actual byte length; an index value beyond `POSITION`'s vertex count; a non-indexed or indexed primitive whose index count is not a multiple of 3.
+- A document with no static mesh geometry reachable from its selected scene.
+
+**Ignored, but always reported as a warning naming what was dropped:**
+
+- Non-required `extensionsUsed` entries (`gltf-extension-ignored`).
+- Materials, textures, images, samplers, and cameras, none of which affect geometry output (`gltf-decorative-data-ignored`, with per-category counts).
+- Non-`POSITION` vertex attributes such as `NORMAL`, `TEXCOORD_0`, `COLOR_0`, and `TANGENT` (`gltf-attributes-not-evaluated`).
+
+**Bounds.** glTF/GLB import reuses this package's existing `IMPORTER_SAFETY_LIMITS` (32 MiB input, 500,000 triangles, 1,500,000 vertices) plus the caller's own `options.limits.triangleCount`, both checked cumulatively across every primitive in the document. Every accessor's declared `count`, `byteOffset`, and `byteStride` is validated against its bufferView's ACTUAL byte length -- itself validated against its buffer's actual decoded byte length -- before any `Float64Array`/`Uint32Array` is allocated: because the whole input is already capped at 32 MiB, an attacker-declared accessor `count` in the billions is rejected by plain arithmetic, at zero allocation cost, rather than by attempting (and failing) a huge allocation. Base64 data URIs are decoded with the platform `atob`, consistent with this package's existing browser-platform-API assumption (`TextDecoder`, `crypto.subtle`, `DataView`) -- no Node-specific API is used.
+
 ## Exporting models
 
 `exportModel` serializes a `NormalizedModel` to bytes for one of three targets: `"stl-binary"`, `"stl-ascii"`, or `"obj"` -- exactly the vertex/face subset `importModel` reads back, so `exportModel` then `importModel` is a closed round trip. Nothing this function writes is ever a construct this package's own importer would refuse.
@@ -62,6 +94,6 @@ Import enforces caller-provided limits plus fixed safety ceilings of 32 MiB inpu
 
 Export enforces the same fixed ceilings (`EXPORTER_SAFETY_LIMITS`, 500,000 triangles and 1,500,000 vertices), checked against the FLATTENED (post-instancing) geometry by cheap arithmetic over each mesh's existing buffer lengths -- before any output buffer is allocated -- and throws `ExportResourceLimitError` if exceeded: a file this package's own importer would refuse on the way in is not a file this package will produce on the way out. `exportModel` also validates the input model against `normalizedModelSchema` and throws `ExportUnsupportedTargetError` for an unrecognized `targetFormat` or `ExportInputError` for an invalid `targetUnit`/`targetAxis` or geometry that flattens to zero triangles.
 
-OBJ polygon fan triangulation is deterministic but may not represent arbitrary concave or non-planar polygons as their author intended; every occurrence produces a warning. OBJ materials, smoothing, normals, and texture coordinates do not affect geometry output and are reported when encountered. Assemblies, materials, colors, curves, free-form surfaces, external resources, 3MF, glTF/GLB, and STEP are not supported by this package version, for either import or export.
+OBJ polygon fan triangulation is deterministic but may not represent arbitrary concave or non-planar polygons as their author intended; every occurrence produces a warning. OBJ materials, smoothing, normals, and texture coordinates do not affect geometry output and are reported when encountered. glTF/GLB static mesh geometry and node-hierarchy assemblies are supported for import as described above; glTF/GLB export, animations, skins, morph targets, materials/colors/textures, curves, free-form surfaces, 3MF, and STEP remain unsupported by this package version.
 
 All parsing, serializing, and hashing use browser platform APIs. Normal import and export do not fetch or transmit model data.
