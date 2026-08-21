@@ -74,6 +74,10 @@ export interface WorkbenchProps {
   label?: string;
   headerAction?: ReactNode;
   variant?: "default" | "sample";
+  /** The workbench owns the page heading by default. On a page that already
+   *  has one -- the home page, where it illustrates a toolkit rather than
+   *  being the whole page -- pass 2 so its title sits beneath that. */
+  headingLevel?: 1 | 2;
   enableKeyboardShortcuts?: boolean;
   sessionPanel?: WorkbenchSessionPanelProps;
   reportPanel?: WorkbenchReportPanelProps;
@@ -1106,6 +1110,7 @@ export function Workbench({
   label,
   headerAction,
   variant = "default",
+  headingLevel = 1,
   enableKeyboardShortcuts = true,
   sessionPanel,
   reportPanel,
@@ -1312,7 +1317,11 @@ export function Workbench({
           <span className="eyebrow">
             {label ?? `Local analysis · ${semantics}`}
           </span>
-          <h1 id="workbench-title">{title}</h1>
+          {headingLevel === 1 ? (
+            <h1 id="workbench-title">{title}</h1>
+          ) : (
+            <h2 id="workbench-title">{title}</h2>
+          )}
         </div>
         <div className="workbench-actions">
           <button

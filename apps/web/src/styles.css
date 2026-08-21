@@ -750,7 +750,7 @@ main {
 }
 .sample-error h1 {
   max-width: 14ch;
-  font-size: clamp(2.8rem, 6vw, 5rem);
+  font-size: clamp(2.6rem, 5vw, 4rem);
   line-height: 0.95;
   letter-spacing: -0.06em;
 }
@@ -1345,6 +1345,28 @@ kbd {
 .tool-shell-body {
   margin-top: 1rem;
 }
+/* Homepage hero: the page's own heading, above the sample it introduces. */
+.home-hero {
+  padding-block: clamp(1.25rem, 2.5vw, 1.75rem) clamp(1rem, 2vw, 1.35rem);
+}
+.home-hero h1 {
+  max-width: 14ch;
+  margin: 0.75rem 0 1rem;
+  font-size: clamp(2.8rem, 6vw, 5rem);
+  line-height: 0.95;
+  letter-spacing: -0.055em;
+  text-wrap: balance;
+}
+.home-hero > p {
+  max-width: 54rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: clamp(0.95rem, 1.6vw, 1.05rem);
+}
+.home-hero .actions {
+  margin-top: 0.9rem;
+}
+
 /* Homepage toolbox section: a denser list than the catalog's cards, since
    its job is to reveal that more tools exist and route onward, not to
    explain each one. */

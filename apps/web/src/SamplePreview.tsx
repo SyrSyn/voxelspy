@@ -1,4 +1,12 @@
-export function SamplePreview({ status }: { status?: string }) {
+export function SamplePreview({
+  status,
+  headingLevel = 1,
+}: {
+  status?: string;
+  /** Mirrors `Workbench`'s prop so the prerendered shell and the hydrated
+   *  demo agree on which heading level the sample owns. */
+  headingLevel?: 1 | 2;
+}) {
   return (
     <section
       className="workbench workbench-sample sample-preview"
@@ -9,15 +17,16 @@ export function SamplePreview({ status }: { status?: string }) {
           <span className="eyebrow">
             Built-in sample · approximate surface analysis
           </span>
-          <h1 id="sample-preview-title">A 3D Toolkit, Free Forever.</h1>
+          {headingLevel === 1 ? (
+            <h1 id="sample-preview-title">A live comparison, already loaded</h1>
+          ) : (
+            <h2 id="sample-preview-title">A live comparison, already loaded</h2>
+          )}
         </div>
         <div className="workbench-actions">
           <button className="button button-secondary" type="button" disabled>
             Reset camera
           </button>
-          <a className="button button-secondary" href="#home-tools-title">
-            All tools
-          </a>
           <a className="button button-primary" href="/compare/">
             Import Models
           </a>

@@ -89,26 +89,23 @@ export function HomeDemoClient() {
       </section>
     );
 
-  if (!result) return <SamplePreview status={progress.message} />;
+  if (!result)
+    return <SamplePreview status={progress.message} headingLevel={2} />;
 
   return (
     <Workbench
       baseline={result.baseline}
       candidate={result.candidate}
       analysis={result.analysis}
-      title="A 3D Toolkit, Free Forever."
+      title="A live comparison, already loaded"
+      headingLevel={2}
       label="Built-in sample · approximate surface analysis"
       variant="sample"
       enableKeyboardShortcuts={false}
       headerAction={
-        <>
-          <a className="button button-secondary" href="#home-tools-title">
-            All tools
-          </a>
-          <Link className="button button-primary" to="/compare/">
-            Import Models
-          </Link>
-        </>
+        <Link className="button button-primary" to="/compare/">
+          Import Models
+        </Link>
       }
     />
   );

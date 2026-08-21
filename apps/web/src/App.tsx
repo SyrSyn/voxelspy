@@ -273,9 +273,37 @@ function HomeToolsOverview() {
   );
 }
 
+/**
+ * The page's own heading. Previously the comparison sample owned it, which
+ * meant the first heading a visitor read described the whole product while
+ * everything beneath it was a single tool.
+ */
+function HomeHero() {
+  return (
+    <section className="home-hero shell" aria-labelledby="home-hero-title">
+      <span className="eyebrow">Instant · Local · Open source</span>
+      <h1 id="home-hero-title">A 3D Toolkit, Free Forever.</h1>
+      <p>
+        Understand, validate, measure, and compare 3D geometry in your own
+        browser. Nothing is uploaded, nothing is installed, and every result
+        says how it was measured and what it could have missed.
+      </p>
+      <div className="actions">
+        <Link className="button button-primary" to="/compare/">
+          Compare two models
+        </Link>
+        <Link className="button button-secondary" to="/tools/">
+          Browse all tools
+        </Link>
+      </div>
+    </section>
+  );
+}
+
 function HomePage() {
   return (
     <>
+      <HomeHero />
       <HomeDemo />
       <HomeToolsOverview />
     </>

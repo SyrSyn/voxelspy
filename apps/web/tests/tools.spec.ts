@@ -112,13 +112,22 @@ test("the home page reveals the toolbox rather than only the comparison demo", a
 }) => {
   await page.goto("/");
 
-  // Reachable without scrolling: the demo header offers a way into the
-  // catalog, not only into comparison.
-  const sample = page.locator(".workbench-sample");
-  await expect(sample.getByRole("link", { name: "All tools" })).toBeVisible();
+  // The page's own heading introduces the toolkit, and the sample below it
+  // is one tool illustrating the idea rather than the whole product.
+  const hero = page.locator(".home-hero");
   await expect(
-    sample.getByRole("link", { name: "Import Models" }),
+    hero.getByRole("heading", {
+      level: 1,
+      name: "A 3D Toolkit, Free Forever.",
+    }),
   ).toBeVisible();
+  await expect(
+    hero.getByRole("link", { name: "Browse all tools" }),
+  ).toBeVisible();
+  await expect(
+    hero.getByRole("link", { name: "Compare two models" }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
 
   // The overview names every available tool and links each one. It must be
   // in the served document, so assert before any hydration-dependent state.
