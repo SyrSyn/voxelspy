@@ -131,6 +131,31 @@ importers:
         specifier: 3.2.7
         version: 3.2.7(@types/node@26.1.2)(lightningcss@1.33.0)
 
+  packages/react:
+    dependencies:
+      '@voxelspy/analysis':
+        specifier: workspace:^
+        version: link:../analysis
+      '@voxelspy/contracts':
+        specifier: workspace:^
+        version: link:../contracts
+    devDependencies:
+      '@types/react':
+        specifier: 19.2.18
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: 19.2.4
+        version: 19.2.4(@types/react@19.2.18)
+      react:
+        specifier: 19.2.8
+        version: 19.2.8
+      react-dom:
+        specifier: 19.2.8
+        version: 19.2.8(react@19.2.8)
+      vitest:
+        specifier: 3.2.7
+        version: 3.2.7(@types/node@26.1.2)(lightningcss@1.33.0)
+
   packages/session-archive:
     dependencies:
       '@voxelspy/contracts':
