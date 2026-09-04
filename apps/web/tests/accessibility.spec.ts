@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { isWebGLAvailable } from "./webgl";
 
 // ---------------------------------------------------------------------------
 // A small, self-contained WCAG contrast helper (no axe-core, per constraints).
@@ -552,30 +553,55 @@ test("full keyboard path reaches compare, findings, region selection, shortcuts,
     timeout: 20_000,
   });
 
-  // --- Canvas accessible names ---------------------------------------------
-  const diffCanvas = page.locator(".viewport-difference").getByRole("img");
-  const baselineCanvas = page.locator(".viewport-baseline").getByRole("img");
-  const candidateCanvas = page.locator(".viewport-candidate").getByRole("img");
-  await expect(diffCanvas).toHaveCount(1);
-  await expect(baselineCanvas).toHaveCount(1);
-  await expect(candidateCanvas).toHaveCount(1);
+  // --- Canvas accessible names -----------------------------------------------
+  // Headless Firefox in CI has no WebGL context at all, so these three
+  // viewports correctly render the accessible `.render-fallback` markup
+  // (`role="status"`) instead of canvases there -- see `tests/webgl.ts`.
+  // Chromium and WebKit are still held strictly to real canvases with the
+  // per-model accessible names below; only the fallback branch relaxes to
+  // the fallback's own generic, always-present status text, which is itself
+  // an accessibility guarantee (not silently skipped).
+  if (await isWebGLAvailable(page)) {
+    const diffCanvas = page.locator(".viewport-difference").getByRole("img");
+    const baselineCanvas = page.locator(".viewport-baseline").getByRole("img");
+    const candidateCanvas = page
+      .locator(".viewport-candidate")
+      .getByRole("img");
+    await expect(diffCanvas).toHaveCount(1);
+    await expect(baselineCanvas).toHaveCount(1);
+    await expect(candidateCanvas).toHaveCount(1);
 
-  const diffLabel = await diffCanvas.getAttribute("aria-label");
-  expect(diffLabel).toContain("baseline.stl");
-  expect(diffLabel).toContain("candidate.stl");
-  await expect(diffCanvas).toHaveAttribute(
-    "aria-describedby",
-    "findings-equivalent-note",
-  );
-  await expect(page.locator("#findings-equivalent-note")).toHaveCount(1);
-  await expect(page.locator("#findings-equivalent-note")).toHaveText(
-    /accessible, text equivalent/u,
-  );
+    const diffLabel = await diffCanvas.getAttribute("aria-label");
+    expect(diffLabel).toContain("baseline.stl");
+    expect(diffLabel).toContain("candidate.stl");
+    await expect(diffCanvas).toHaveAttribute(
+      "aria-describedby",
+      "findings-equivalent-note",
+    );
+    await expect(page.locator("#findings-equivalent-note")).toHaveCount(1);
+    await expect(page.locator("#findings-equivalent-note")).toHaveText(
+      /accessible, text equivalent/u,
+    );
 
-  const baselineLabel = await baselineCanvas.getAttribute("aria-label");
-  expect(baselineLabel).toContain("baseline.stl");
-  const candidateLabel = await candidateCanvas.getAttribute("aria-label");
-  expect(candidateLabel).toContain("candidate.stl");
+    const baselineLabel = await baselineCanvas.getAttribute("aria-label");
+    expect(baselineLabel).toContain("baseline.stl");
+    const candidateLabel = await candidateCanvas.getAttribute("aria-label");
+    expect(candidateLabel).toContain("candidate.stl");
+  } else {
+    for (const kind of ["difference", "baseline", "candidate"]) {
+      const fallback = page
+        .locator(`.viewport-${kind}`)
+        .locator(".render-fallback");
+      await expect(fallback).toHaveCount(1);
+      await expect(fallback).toHaveAttribute("role", "status");
+    }
+    // The text-equivalent note is static markup, not conditioned on WebGL,
+    // so it remains present and correct either way.
+    await expect(page.locator("#findings-equivalent-note")).toHaveCount(1);
+    await expect(page.locator("#findings-equivalent-note")).toHaveText(
+      /accessible, text equivalent/u,
+    );
+  }
 
   // --- Non-color semantics --------------------------------------------------
   const legend = page.locator(".change-legend");

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { isWebGLAvailable } from "./webgl";
 
 /**
  * Recovery and resilience in the real browser: a worker that fails to load,
@@ -99,12 +100,17 @@ function buildGridStl(
   return bytes;
 }
 
-// 2 * 90 * 90 = 16,200 triangles per model -- the exact size this bead's
-// reproduction measured at ~1.8s to reach the workbench (including the
-// asynchronous geometry summary), comfortably enough real worker time for a
-// cancellation click to land mid-flight without resorting to a huge
-// fixture.
-const GRID_SIZE = 91;
+// 2 * 180 * 180 = 64,800 triangles per model. An earlier reproduction found
+// 16,200 triangles (~1.8s to reach the workbench on Chromium) enough for a
+// cancellation click to land mid-flight there, but cross-engine CI evidence
+// showed that margin was Chromium-specific: on WebKit the same fixture's
+// pipeline can finish before the click lands, so nothing is left in flight
+// to cancel (see the test below, which now also synchronizes on the
+// "analysis" stage starting rather than on the Cancel button merely being
+// visible). This size trades a still-modest fixture for a wider safety
+// margin against engines that run this workload faster than Chromium did in
+// that reproduction.
+const GRID_SIZE = 181;
 const GRID_EXTENT_MM = 1000;
 
 async function attachFixture(
@@ -186,13 +192,26 @@ test("cancelling a comparison under real load stops the worker and leaves the pa
   });
   await page.getByRole("button", { name: "Validate and compare" }).click();
 
-  // The 16,200-triangle grid keeps the worker doing real import/analysis
-  // work for roughly a second or more (see the timing this bead's
-  // reproduction measured), so "Cancel comparison" -- which becomes visible
-  // the instant the run starts -- is clicked while genuine work is in
-  // flight, not merely during the pre-work "starting" stage.
+  // "Cancel comparison" becomes visible the instant the run starts -- during
+  // the pre-work "starting" stage, before either model has even begun
+  // importing -- so waiting only for that button (as an earlier version of
+  // this test did) does not actually prove genuine in-flight work gets
+  // interrupted; it can pass by cancelling before any real work began. This
+  // test wants the stronger claim, so it instead waits for the worker's own
+  // "analysis" stage progress message -- meaning both imports already
+  // finished and the heaviest step (tessellated surface distance over the
+  // grid) has just started -- before clicking Cancel. That checkpoint is an
+  // application-level signal rather than a wall-clock guess, so it holds
+  // regardless of how much faster or slower a given engine's import step
+  // runs; the grid is still sized (see `GRID_SIZE` above) to keep the
+  // analysis step itself running long enough afterward for the click to
+  // land before it finishes.
   const cancelButton = page.getByRole("button", { name: "Cancel comparison" });
   await expect(cancelButton).toBeVisible();
+  await expect(page.locator(".comparison-status")).toContainText(
+    "Analyzing tessellated surface distance",
+    { timeout: 10_000 },
+  );
   await cancelButton.click();
 
   await expect(page.locator(".comparison-status")).toContainText(
@@ -205,8 +224,7 @@ test("cancelling a comparison under real load stops the worker and leaves the pa
 
   // The worker genuinely stopped, not merely "the UI moved on": if the
   // terminated run's result still arrived late, the workbench would appear
-  // on its own within the time the full 16,200-triangle run would have
-  // taken. It must not.
+  // on its own within the time the full run would have taken. It must not.
   await page.waitForTimeout(2_000);
   await expect(
     page.getByRole("heading", { name: "Comparison workbench" }),
@@ -224,6 +242,15 @@ test("three back-to-back comparisons leave no detached canvases and no exhausted
   page,
 }) => {
   await page.goto("/compare/");
+  // A fixed property of this browser install, not of any particular run, so
+  // it is read once. Headless Firefox in CI has no WebGL context at all; the
+  // app correctly falls back to `.render-fallback` markup there (see
+  // `tests/webgl.ts`), so this test's leak evidence shifts from "canvases
+  // and WebGL contexts don't accumulate" to "fallback elements don't
+  // accumulate" -- still the same DOM-leak property, just observed through
+  // whichever element the environment actually renders. Chromium and WebKit
+  // are still held strictly to real canvases and healthy contexts.
+  const webglAvailable = await isWebGLAvailable(page);
   for (let run = 0; run < 3; run += 1) {
     await attachFixture(page, { baseline, candidate });
     await page.getByRole("button", { name: "Validate and compare" }).click();
@@ -231,43 +258,58 @@ test("three back-to-back comparisons leave no detached canvases and no exhausted
       page.getByRole("heading", { name: "Comparison workbench" }),
     ).toBeVisible({ timeout: 20_000 });
 
-    // Exactly three live canvases (difference/baseline/candidate viewports),
-    // never more -- `performance.memory`-style heap sampling is not
-    // reliable evidence, but a stable DOM canvas count and healthy,
-    // non-lost WebGL contexts on every one of them are directly observable
-    // and would fail if a prior run's canvases or contexts leaked.
-    await expect(page.locator("canvas")).toHaveCount(3);
-    const contextsHealthy = await page.evaluate(() =>
-      Array.from(document.querySelectorAll("canvas")).every((canvas) => {
-        const gl = (canvas.getContext("webgl2") ??
-          canvas.getContext("webgl")) as
-          WebGLRenderingContext | WebGL2RenderingContext | null;
-        return gl !== null && !gl.isContextLost();
-      }),
-    );
-    expect(contextsHealthy).toBe(true);
+    if (webglAvailable) {
+      // Exactly three live canvases (difference/baseline/candidate
+      // viewports), never more -- `performance.memory`-style heap sampling
+      // is not reliable evidence, but a stable DOM canvas count and
+      // healthy, non-lost WebGL contexts on every one of them are directly
+      // observable and would fail if a prior run's canvases or contexts
+      // leaked.
+      await expect(page.locator("canvas")).toHaveCount(3);
+      const contextsHealthy = await page.evaluate(() =>
+        Array.from(document.querySelectorAll("canvas")).every((canvas) => {
+          const gl = (canvas.getContext("webgl2") ??
+            canvas.getContext("webgl")) as
+            WebGLRenderingContext | WebGL2RenderingContext | null;
+          return gl !== null && !gl.isContextLost();
+        }),
+      );
+      expect(contextsHealthy).toBe(true);
+    } else {
+      await expect(page.locator(".render-fallback")).toHaveCount(3);
+    }
 
     if (run < 2) {
       await page.getByRole("button", { name: "New comparison" }).click();
       await expect(
         page.getByRole("heading", { name: "Start with two models" }),
       ).toBeVisible();
-      // The previous run's canvases are actually removed from the DOM, not
-      // just hidden, before the next run creates its own three.
-      await expect(page.locator("canvas")).toHaveCount(0);
+      // The previous run's canvases (or fallback elements) are actually
+      // removed from the DOM, not just hidden, before the next run creates
+      // its own three.
+      if (webglAvailable) {
+        await expect(page.locator("canvas")).toHaveCount(0);
+      } else {
+        await expect(page.locator(".render-fallback")).toHaveCount(0);
+      }
     }
   }
 
-  // A browser hard-limits the number of live WebGL contexts per page
-  // (historically as low as 16 in some engines); a fresh context can still
-  // be created after three full run/reset cycles, so the ceiling was not
-  // eaten by leaked, undisposed contexts from the prior runs.
-  const freshContextAvailable = await page.evaluate(() => {
-    const canvas = document.createElement("canvas");
-    const gl = canvas.getContext("webgl2") ?? canvas.getContext("webgl");
-    return gl !== null;
-  });
-  expect(freshContextAvailable).toBe(true);
+  if (webglAvailable) {
+    // A browser hard-limits the number of live WebGL contexts per page
+    // (historically as low as 16 in some engines); a fresh context can
+    // still be created after three full run/reset cycles, so the ceiling
+    // was not eaten by leaked, undisposed contexts from the prior runs.
+    // Meaningless where WebGL is unavailable at all (it would read `false`
+    // whether or not anything leaked), so this final check only applies
+    // when the environment actually has WebGL to exhaust.
+    const freshContextAvailable = await page.evaluate(() => {
+      const canvas = document.createElement("canvas");
+      const gl = canvas.getContext("webgl2") ?? canvas.getContext("webgl");
+      return gl !== null;
+    });
+    expect(freshContextAvailable).toBe(true);
+  }
 });
 
 test("reloading mid-comparison returns to a clean, ready state", async ({

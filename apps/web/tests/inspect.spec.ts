@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { isWebGLAvailable } from "./webgl";
 
 /**
  * Browser coverage for the Inspect tool (`/tools/inspect/`): the second real
@@ -468,12 +469,23 @@ test("opening the full diagnostic evidence loads and renders boundary-loop, edge
     page.getByRole("heading", { level: 4, name: "Degenerate triangles (0)" }),
   ).toBeVisible();
 
-  // The 3D view renders (WebGL is available in this test environment) with
-  // an accessible name distinct from the evidence lists it complements.
-  const canvas = page.locator(".mesh-health-viewport").getByRole("img");
-  await expect(canvas).toHaveCount(1);
-  const label = await canvas.getAttribute("aria-label");
-  expect(label).toContain("open-triangle.stl");
+  // The 3D view renders with an accessible name distinct from the evidence
+  // lists it complements -- except in headless Firefox in CI, which has no
+  // WebGL context at all and correctly falls back to the accessible
+  // `.render-fallback` markup instead (see `tests/webgl.ts`; the always-off
+  // case is covered separately below). Chromium and WebKit are still held
+  // strictly to a real canvas here.
+  if (await isWebGLAvailable(page)) {
+    const canvas = page.locator(".mesh-health-viewport").getByRole("img");
+    await expect(canvas).toHaveCount(1);
+    const label = await canvas.getAttribute("aria-label");
+    expect(label).toContain("open-triangle.stl");
+  } else {
+    await expect(page.locator(".mesh-health-viewport canvas")).toHaveCount(0);
+    await expect(
+      page.locator(".mesh-health-viewport .render-fallback"),
+    ).toBeVisible();
+  }
 
   // Selecting the loop from the text list marks it selected (aria-pressed),
   // which is also what highlights it in the 3D overlay.

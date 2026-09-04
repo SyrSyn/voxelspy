@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { expectViewportsRendered } from "./webgl";
 
 const baseline = `solid baseline
 facet normal 0 0 1
@@ -48,7 +49,11 @@ test("opens with a working sample difference above its source models", async ({
   await expect(
     page.getByRole("link", { name: "VoxelSpy on GitHub" }),
   ).toHaveAttribute("href", "https://github.com/SyrSyn/voxelspy");
-  await expect(sample.locator("canvas")).toHaveCount(3);
+  // Headless Firefox in CI has no WebGL context at all, so the sample
+  // correctly renders the accessible `.render-fallback` markup instead of
+  // canvases there -- see `tests/webgl.ts`. Chromium and WebKit are still
+  // held strictly to real canvases.
+  await expectViewportsRendered(page, sample, 3);
 
   const views = sample.locator(".viewport");
   await expect(views).toHaveCount(3);
@@ -91,11 +96,15 @@ test("opens with a working sample difference above its source models", async ({
 
 test("keeps the full comparison legible at desktop splash sizes", async ({
   page,
-}) => {
+}, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   const sample = page.locator(".workbench-sample");
-  await expect(sample.locator("canvas")).toHaveCount(3, { timeout: 20_000 });
+  // Headless Firefox in CI has no WebGL context at all, so the sample
+  // correctly renders the accessible `.render-fallback` markup instead of
+  // canvases there -- see `tests/webgl.ts`. Chromium and WebKit are still
+  // held strictly to real canvases.
+  await expectViewportsRendered(page, sample, 3, { timeout: 20_000 });
 
   const difference = await sample.locator(".viewport-difference").boundingBox();
   const rail = await sample.locator(".evidence-rail").boundingBox();
@@ -158,10 +167,18 @@ test("keeps the full comparison legible at desktop splash sizes", async ({
 
   await page.evaluate(() => window.scrollTo(0, 0));
   await sample.locator(".viewport-difference .canvas-scroll-pad").hover();
-  await page.mouse.wheel(0, 500);
-  await expect
-    .poll(() => page.evaluate(() => window.scrollY))
-    .toBeGreaterThan(0);
+  // Mobile WebKit's Playwright driver cannot synthesize a mouse wheel event
+  // at all ("mouse.wheel: Mouse wheel is not supported in mobile WebKit") --
+  // a limitation of that automation target, not a product behavior gap, so
+  // only this one interaction (and the scroll assertion it drives) is
+  // skipped there. Every other assertion in this test still runs on that
+  // project.
+  if (testInfo.project.name !== "mobile-webkit") {
+    await page.mouse.wheel(0, 500);
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY))
+      .toBeGreaterThan(0);
+  }
 
   await page.setViewportSize({ width: 1440, height: 1440 });
   await page.evaluate(() => window.scrollTo(0, 0));
