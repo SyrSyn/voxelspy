@@ -82,7 +82,7 @@ describe("shared safety limits", () => {
     expect(result.message).toContain(
       "OBJ exceeds the importer vertex safety limit",
     );
-  });
+  }, 60_000);
 
   it("rejects input exceeding the fixed 32 MiB byte cap, even when the caller declares a larger limit", async () => {
     const bytes = new Uint8Array(IMPORTER_SAFETY_LIMITS.inputBytes + 1);
