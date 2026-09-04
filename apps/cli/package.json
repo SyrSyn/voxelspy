@@ -22,9 +22,9 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "deps:build": "pnpm --filter @voxelspy/contracts build && pnpm --filter @voxelspy/importers build && pnpm --filter @voxelspy/analysis build",
-    "lint": "pnpm deps:build && tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "typecheck": "pnpm deps:build && tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@voxelspy/analysis": "workspace:^",

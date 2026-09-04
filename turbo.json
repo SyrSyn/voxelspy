@@ -10,15 +10,15 @@
       "persistent": true
     },
     "lint": {
-      "dependsOn": ["^build", "^lint"],
+      "dependsOn": ["build", "^build", "^lint"],
       "outputs": []
     },
     "test": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["build", "^build"],
       "outputs": ["coverage/**"]
     },
     "typecheck": {
-      "dependsOn": ["^build", "^typecheck"],
+      "dependsOn": ["build", "^build", "^typecheck"],
       "outputs": []
     }
   }

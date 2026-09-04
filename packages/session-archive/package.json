@@ -21,7 +21,7 @@
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm browser:check",
     "lint": "node scripts/check-boundaries.mjs",
     "test": "vitest run",
-    "typecheck": "pnpm --filter @voxelspy/contracts build && tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@voxelspy/contracts": "workspace:*"

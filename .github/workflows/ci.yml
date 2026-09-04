@@ -57,8 +57,11 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Install Playwright browsers
         run: pnpm --filter @voxelspy/web exec playwright install --with-deps chromium firefox webkit
+      # Through turbo, so the packages the application imports are built
+      # first. Filtering pnpm directly skips that graph and fails on a clean
+      # checkout, which is what a developer machine's warm build outputs hide.
       - name: Build the web application
-        run: pnpm --filter @voxelspy/web build
+        run: pnpm exec turbo run build --filter=@voxelspy/web
       - name: Run browser tests on every engine
         run: pnpm --filter @voxelspy/web exec playwright test --config=playwright.cross-browser.config.ts
       - name: Run browser tests under the shipped security headers

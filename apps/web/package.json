@@ -7,11 +7,11 @@
     "build": "vite build && vite build --ssr src/entry-server.tsx --outDir .ssr && node scripts/prerender.mjs && node scripts/verify-static.mjs",
     "deps:build": "pnpm --filter @voxelspy/contracts build && pnpm --filter @voxelspy/importers build && pnpm --filter @voxelspy/analysis build && pnpm --filter @voxelspy/session-archive build",
     "dev": "vite --host 127.0.0.1",
-    "lint": "pnpm deps:build && tsc --noEmit",
+    "lint": "tsc --noEmit",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run src --testTimeout=30000 --hookTimeout=30000",
     "test:e2e": "playwright test",
-    "typecheck": "pnpm deps:build && tsc --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@react-three/drei": "10.7.6",

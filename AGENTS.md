@@ -42,6 +42,16 @@ Run the narrowest relevant checks during development and the repository-wide che
 pnpm check
 ```
 
+Task ordering across packages belongs to the task runner, which builds a package before anything that reads its build output. Scripts must not build other packages, or themselves, from inside a task: several tasks run at once, and two processes writing one output directory corrupt each other. That failure is invisible on a machine whose outputs are already built and appears only on a clean checkout.
+
+To check one package, go through the runner so its dependencies are built:
+
+```sh
+pnpm exec turbo run lint typecheck test build --filter=@voxelspy/web
+```
+
+Filtering the package manager directly instead skips that ordering and fails from a clean checkout.
+
 When applicable, also verify fixture provenance, deterministic outputs, hostile-input limits, cancellation and recovery, accessibility, browser fallbacks, and that normal comparison does not transmit model data.
 
 Report what changed, commands run, evidence observed, and any remaining risk. Do not describe work as complete when required checks were skipped or the user-visible workflow was not exercised.
