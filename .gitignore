@@ -32,3 +32,5 @@ tmp/
 temp/
 
 test-results-complete/
+dist-embed/
+test-results-embed/
