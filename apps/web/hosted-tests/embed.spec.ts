@@ -2,7 +2,26 @@ import { expect, test, type Page } from "@playwright/test";
 import { importModel } from "@voxelspy/importers";
 import type { HostedLoad, HostedTool } from "@voxelspy/contracts/hosted";
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { createNodeStepRuntime } from "@voxelspy/importers/step-runtime-node";
 import { cuboidStep } from "../../../packages/importers/test/fixtures/step.fixture";
+const browserAudits = new WeakMap<
+  Page,
+  { errors: string[]; offOrigin: string[] }
+>();
+test.beforeEach(async ({ page, baseURL }) => {
+  const audit = { errors: [] as string[], offOrigin: [] as string[] };
+  browserAudits.set(page, audit);
+  page.on("pageerror", (error) => audit.errors.push(error.message));
+  page.on("request", (request) => {
+    if (new URL(request.url()).origin !== new URL(baseURL!).origin)
+      audit.offOrigin.push(request.url());
+  });
+});
+test.afterEach(async ({ page }) => {
+  expect(browserAudits.get(page)).toEqual({ errors: [], offOrigin: [] });
+});
 const obj = (offset = 0) =>
   `v ${offset} 0 0\nv ${offset + 10} 0 0\nv ${offset} 10 0\nf 1 2 3\n`;
 async function source(index = 0) {
@@ -58,7 +77,7 @@ async function host(
       const frame = document.createElement("iframe");
       w.frame = frame;
       frame.title = "Revision workbench";
-      frame.width = "1440";
+      frame.style.width = "100%";
       frame.height = "1800";
       frame.src = "/workbench/embed.html?tool=" + tool;
       document.body.append(frame);
@@ -136,12 +155,14 @@ for (const tool of [
       ).toBeVisible();
     }
     if (tool === "convert") {
-      await frame.getByLabel("Format", { exact: true }).selectOption("obj");
       await frame
-        .getByLabel("Output unit", { exact: true })
+        .getByRole("combobox", { name: "Format", exact: true })
+        .selectOption("obj");
+      await frame
+        .getByRole("combobox", { name: "Output unit", exact: true })
         .selectOption("millimetre");
       await frame
-        .getByLabel("Output up-axis", { exact: true })
+        .getByRole("combobox", { name: "Output up-axis", exact: true })
         .selectOption("right-handed-z-up");
       await expect(
         frame.getByRole("button", { name: "Export and download", exact: true }),
@@ -185,6 +206,11 @@ for (const tool of [
         axis: "declared",
       });
       expect(evidence.evidence).toEqual(JSON.parse(local.toString()));
+      if (tool === "inspect")
+        expect(
+          evidence.evidence.evidence.inspection.summary.bounds
+            .dimensionsMillimetres,
+        ).toEqual([254, 0, 254]);
     }
   });
 }
@@ -272,6 +298,24 @@ test("refuses invalid bridge input without accepting forged source windows or di
   page,
 }) => {
   const frame = await host(page, "inspect", [await source()]);
+  await frame.locator("body").evaluate(() => {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        source: window,
+        origin: location.origin,
+        data: { type: "voxelspy:load", version: 2 },
+      }),
+    );
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        source: window.parent,
+        origin: "https://other.invalid",
+        data: { type: "voxelspy:load", version: 2 },
+      }),
+    );
+  });
+  await expect(frame.getByText(/Loaded exact revision/)).toBeVisible();
+  await expect(frame.getByRole("alert")).toHaveCount(0);
   await page.evaluate(() => {
     const w = window as any;
     w.frame.contentWindow.postMessage(
@@ -291,4 +335,74 @@ test("refuses invalid bridge input without accepting forged source windows or di
   await expect(
     page.getByRole("button", { name: "Validate and inspect", exact: true }),
   ).toBeDisabled();
+});
+
+test("STEP runtime resolves beneath the embedded prefix and preserves kernel provenance", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  const require = createRequire(
+    new URL("../../../packages/importers/package.json", import.meta.url),
+  );
+  const wasmBinary = await readFile(
+    path.join(
+      path.dirname(require.resolve("occt-import-js")),
+      "occt-import-js.wasm",
+    ),
+  );
+  const runtime = await createNodeStepRuntime({ wasmBinary });
+  const bytes = new TextEncoder().encode(cuboidStep());
+  const imported = await importModel(
+    {
+      contractVersion: 1,
+      targetModelId: "model.step",
+      format: "step",
+      sourceName: "offset.step",
+      bytes,
+      options: {
+        declaredAxis: "right-handed-z-up",
+        limits: { inputBytes: 100000, triangleCount: 1000 },
+      },
+    },
+    { stepRuntime: runtime },
+  );
+  if (!imported.ok) throw Error(imported.message);
+  const sources = [
+    {
+      revisionId: "revision.step",
+      name: "offset.step",
+      digest: imported.model.provenance.sourceDigest!.value,
+      provenance: imported.model.provenance,
+      bytes: bytes.buffer,
+    },
+  ];
+  const requests: string[] = [];
+  page.on("request", (request) =>
+    requests.push(new URL(request.url()).pathname),
+  );
+  const frame = await host(page, "inspect", sources);
+  await frame
+    .getByRole("button", { name: "Validate and inspect", exact: true })
+    .click();
+  await expect(
+    frame.getByRole("button", { name: "Download evidence JSON", exact: true }),
+  ).toBeEnabled({ timeout: 60000 });
+  const pending = page.waitForEvent("download");
+  await frame
+    .getByRole("button", { name: "Download evidence JSON", exact: true })
+    .click();
+  const evidence = JSON.parse(
+    await readFile((await (await pending).path())!, "utf8"),
+  );
+  expect(
+    evidence.evidence.inspection.summary.bounds.dimensionsMillimetres,
+  ).toEqual([10, 20, 30]);
+  expect(evidence.provenance.tessellation.parameters.occtVersion).toBe("7.6.1");
+  await expect
+    .poll(() => page.evaluate(() => (window as any).artifacts.length))
+    .toBe(1);
+  expect((await page.request.get("/step/occt.worker.js")).status()).toBe(404);
+  expect(
+    (await page.request.get("/workbench/step/occt.worker.js")).status(),
+  ).toBe(200);
 });

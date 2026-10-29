@@ -22,6 +22,12 @@ createServer(async (req, res) => {
     const url = new URL(req.url, "http://localhost"),
       embedded = url.pathname.startsWith("/workbench/"),
       base = path.join(root, embedded ? "dist-embed" : "dist");
+    // The embed test fixture deliberately has no root STEP runtime route.
+    // A successful STEP import therefore proves worker/WASM prefix resolution.
+    if (url.pathname.startsWith("/step/")) {
+      res.writeHead(404).end();
+      return;
+    }
     const relative = decodeURIComponent(
       embedded
         ? url.pathname.slice("/workbench/".length)
