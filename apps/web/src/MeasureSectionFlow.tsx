@@ -1,3 +1,4 @@
+import { useHostedSource } from "./hosted";
 import { EvidenceReportDownload } from "./EvidenceReportDownload";
 import {
   DEFAULT_SNAP_TOLERANCE_MILLIMETRES,
@@ -84,7 +85,7 @@ interface ModelSourceSelection {
   file: File | null;
   unit: ResolvedSourceUnit | "";
   axis: ResolvedSourceAxis | "";
-  frameSource: "default" | "expert";
+  frameSource: "default" | "expert" | "recorded";
 }
 
 /** Same shape and preconditions as `InspectFlow`'s/`ClearanceFlow`'s own
@@ -794,7 +795,10 @@ const INITIAL_CAPABILITY: CapabilityPreflight = {
 };
 
 export function MeasureSectionFlow() {
-  const [selection, setSelection] = useState(modelSourceSelectionForFile(null));
+  const hostedSource = useHostedSource();
+  const [selection, setSelection] = useState(
+    () => hostedSource ?? modelSourceSelectionForFile(null),
+  );
   const [progress, setProgress] = useState<string>();
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();

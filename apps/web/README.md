@@ -72,3 +72,48 @@ Run all browser engines under shipped headers with
 `playwright.complete.config.ts`. Headless Firefox environments without WebGL
 exercise accessible renderer fallbacks; the other configured engines exercise
 real canvases. Physical-device acceptance remains separate.
+
+## Optional same-origin hosted workbench
+
+The free site has no API or authentication dependency. An opt-in iframe build
+reuses the same eight tools with a mount-local source provider; it never sends
+model data to a server. Build its dependencies with Turbo first, then produce
+only the separate relative-asset bundle:
+
+```sh
+pnpm exec turbo run build --filter=@voxelspy/web
+VOXELSPY_EMBED_BUILD=1 pnpm --filter @voxelspy/web exec vite build
+```
+
+Serve `dist-embed/` beneath `/workbench/` and open
+`/workbench/embed.html?tool=inspect`. Supported tool identifiers are `compare`,
+`inspect`, `mesh-health`, `measure-section`, `clearance-fit`, `printability`,
+`file-forensics` and `convert`. The host must replace the free site's
+`frame-ancestors 'none'` response policy with `frame-ancestors 'self'` only for
+this authenticated route, and retain the dedicated STEP kernel worker policy.
+Do not change the free site's headers to enable embedding.
+
+The public `@voxelspy/contracts/hosted` version 1 protocol carries no credentials
+or authorization claims. The iframe accepts loads only from its exact parent
+window and origin, verifies bounded original source bytes against SHA-256 and
+recorded normalization provenance, then supplies `File` objects directly to
+React source selections. Compare and Clearance require two ordered revisions;
+the other tools require one. Recorded unit/axis resolution origins are replayed
+independently. An optional comparison session must match those exact source
+names, digests and provenance. A new load remounts tools and cancels their
+workers; stale callbacks cannot emit artifacts for a newer request.
+
+An explicit evidence, report, session or conversion download also stages an
+artifact with the current request and revision identities for deliberate saving
+by the parent. Local downloads keep their existing native format. Hosted
+`evidence-json` uses `hostedEvidenceSchema` to wrap that native evidence with its
+ordered source metadata. Converted attachments include the actual output format,
+unit and axis; they are never automatically registered as a new revision.
+Changing a source or its frame makes a result ineligible for host staging.
+HTML reports remain untrusted client-submitted attachments: the host should
+force download and sandbox them, not inject their markup into its application.
+
+The separate `playwright.embed.config.ts` suite exercises this optional build
+under a same-origin frame policy, including actual preload, worker output,
+artifact bytes and comparison session restoration. The default free-site build
+and browser suite do not require or serve the hosted entry.

@@ -1,3 +1,4 @@
+import { useHostedArtifact } from "./hosted";
 import type { SelfIntersectionResult } from "@voxelspy/analysis";
 import type { GeometryProvenance } from "@voxelspy/contracts";
 import { useEffect, useRef, useState } from "react";
@@ -15,6 +16,7 @@ export function SelfIntersectionPanel({
   source: InspectSource;
   provenance: GeometryProvenance;
 }) {
+  const stageArtifact = useHostedArtifact();
   const [result, setResult] = useState<SelfIntersectionResult>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -53,6 +55,13 @@ export function SelfIntersectionPanel({
       provenance,
       evidence: result,
     };
+    stageArtifact({
+      kind: "evidence-json",
+      name: "voxelspy.mesh-health.json",
+      mime: "application/json",
+      bytes: new TextEncoder().encode(JSON.stringify(report)),
+      provenances: [provenance],
+    });
     const url = URL.createObjectURL(
       new Blob([JSON.stringify(report, null, 2) + "\n"], {
         type: "application/json",

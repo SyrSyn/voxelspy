@@ -12,7 +12,12 @@ const stepRuntime: StepRuntime = {
   readStepFile(bytes, parameters) {
     return new Promise((resolve, reject) => {
       const worker = new Worker(
-        new URL("/step/occt.worker.js", globalThis.location.origin),
+        new URL(
+          import.meta.env.BASE_URL === "./"
+            ? "../step/occt.worker.js"
+            : "/step/occt.worker.js",
+          import.meta.url,
+        ),
         { name: "voxelspy-step-kernel" },
       );
       const timer = setTimeout(

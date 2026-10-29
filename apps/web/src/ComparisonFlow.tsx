@@ -1,3 +1,4 @@
+import { useHostedSource, useHostedSession, useHostedArtifact } from "./hosted";
 import { reviewFromReport, validateReview, type ReviewContent } from "./review";
 import {
   estimateAlignment,
@@ -85,7 +86,7 @@ type SourceSelection = {
   file: File | null;
   unit: ResolvedSourceUnit | "";
   axis: ResolvedSourceAxis | "";
-  frameSource: "default" | "expert";
+  frameSource: "default" | "expert" | "recorded";
 };
 
 export function sourceSelectionForFile(file: File | null): SourceSelection {
@@ -534,8 +535,16 @@ function AlignmentEvidencePanel({ estimate }: { estimate: AlignmentEstimate }) {
 }
 
 export function ComparisonFlow() {
-  const [baseline, setBaseline] = useState(emptySource);
-  const [candidate, setCandidate] = useState(emptySource);
+  const hostedBaseline = useHostedSource(0),
+    hostedCandidate = useHostedSource(1);
+  const hostedSession = useHostedSession();
+  const stageArtifact = useHostedArtifact();
+  const [baseline, setBaseline] = useState(
+    () => hostedBaseline ?? emptySource(),
+  );
+  const [candidate, setCandidate] = useState(
+    () => hostedCandidate ?? emptySource(),
+  );
   const [progress, setProgress] = useState<ComparisonProgress>();
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
@@ -911,6 +920,15 @@ export function ComparisonFlow() {
     }
   };
 
+  useEffect(() => {
+    if (hostedSession)
+      void openSessionFile(
+        new File([hostedSession], "review.voxelspy", {
+          type: "application/zip",
+        }),
+      );
+  }, [hostedSession]);
+
   const handleSaveSession = (
     summary: ModelComparisonPresentationSummary,
     reviewContent?: ReviewContent,
@@ -928,6 +946,16 @@ export function ComparisonFlow() {
           summary,
           sourceModels,
           ...(reviewContent === undefined ? {} : { reviewContent }),
+        });
+        stageArtifact({
+          kind: "comparison-session",
+          name: saved.fileName,
+          mime: "application/zip",
+          bytes: saved.bytes,
+          provenances: [
+            result.baseline.provenance,
+            result.candidate.provenance,
+          ],
         });
         downloadSessionArchive(saved);
         setSaveStatus("idle");
@@ -973,7 +1001,15 @@ export function ComparisonFlow() {
         summary,
         ...(reviewContent === undefined ? {} : { reviewContent }),
       });
-      downloadReportHtml(report, renderReportHtml(report));
+      const html = renderReportHtml(report);
+      stageArtifact({
+        kind: "report-html",
+        name: reportFileName(report),
+        mime: "text/html",
+        bytes: new TextEncoder().encode(html),
+        provenances: [result.baseline.provenance, result.candidate.provenance],
+      });
+      downloadReportHtml(report, html);
       setExportStatus("idle");
     } catch (reason) {
       setExportStatus("error");

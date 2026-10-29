@@ -1,3 +1,4 @@
+import { hostedProvenance, recordedFrameOptions } from "./hosted-source";
 import type { SourceAxis, SourceUnit } from "@voxelspy/contracts";
 import {
   importerDescriptor,
@@ -10,7 +11,7 @@ export { inferFormat };
 
 export type ResolvedSourceUnit = Exclude<SourceUnit, "unknown">;
 export type ResolvedSourceAxis = Exclude<SourceAxis, "unknown">;
-export type FrameSource = "default" | "expert";
+export type FrameSource = "default" | "expert" | "recorded";
 
 /**
  * Single source of truth for "which model file formats does this build of
@@ -156,12 +157,18 @@ export function resolveFrameOptions(
   frameSource: FrameSource,
   unit: ResolvedSourceUnit | "",
   axis: ResolvedSourceAxis | "",
+  file?: File,
 ): {
   declaredUnit?: ResolvedSourceUnit;
   declaredAxis?: ResolvedSourceAxis;
   userUnit?: ResolvedSourceUnit;
   userAxis?: ResolvedSourceAxis;
 } {
+  if (frameSource === "recorded") {
+    const provenance = hostedProvenance(file);
+    if (!provenance) throw new Error("Recorded source frame is unavailable.");
+    return recordedFrameOptions(provenance);
+  }
   if (format === "step")
     return {
       ...(unit ? { userUnit: unit } : {}),

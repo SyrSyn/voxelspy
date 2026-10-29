@@ -184,6 +184,7 @@ export async function checkClearanceAsync(
         part.frameSource ?? "default",
         part.unit,
         part.axis,
+        part.file,
       ),
       modelToComparison: part.modelToComparison,
     });

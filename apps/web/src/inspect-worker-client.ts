@@ -360,6 +360,7 @@ async function runInspectWorker<K extends InspectWorkerRequest["kind"]>(
         source.frameSource ?? "default",
         source.unit,
         source.axis,
+        source.file,
       ),
     };
     worker.postMessage(request, [request.bytes.buffer]);
@@ -488,6 +489,7 @@ async function runPrintabilityWorker(
         source.frameSource ?? "default",
         source.unit,
         source.axis,
+        source.file,
       ),
       assessmentOptions,
     };

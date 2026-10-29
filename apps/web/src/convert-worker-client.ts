@@ -282,6 +282,7 @@ export async function openConvertSession(
           source.frameSource ?? "default",
           source.unit,
           source.axis,
+          source.file,
         ),
       }),
       [bytes.buffer],

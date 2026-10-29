@@ -377,6 +377,7 @@ async function specFromSource(
       source.frameSource ?? "default",
       source.unit,
       source.axis,
+      source.file,
     ),
   };
 }

@@ -1,3 +1,5 @@
+import { downloadClearanceEvidence } from "./clearance-evidence";
+import { useHostedSource, useHostedArtifact } from "./hosted";
 import type { ClearanceState, ClearanceTightRegion } from "@voxelspy/analysis";
 import type { Mat4, Vec3 } from "@voxelspy/contracts";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
@@ -65,7 +67,7 @@ interface PartSelection {
   file: File | null;
   unit: ResolvedSourceUnit | "";
   axis: ResolvedSourceAxis | "";
-  frameSource: "default" | "expert";
+  frameSource: "default" | "expert" | "recorded";
   placement: PartPlacement;
 }
 
@@ -514,6 +516,20 @@ function ClearanceReport({
   desiredClearanceMillimetres: number;
   onReset: () => void;
 }) {
+  const stageArtifact = useHostedArtifact();
+  const downloadEvidence = () =>
+    downloadClearanceEvidence(
+      outcome,
+      firstMeta,
+      secondMeta,
+      desiredClearanceMillimetres,
+      stageArtifact,
+    );
+  const evidenceButton = (
+    <button className="button button-secondary" onClick={downloadEvidence}>
+      Download evidence JSON
+    </button>
+  );
   const { result } = outcome;
   const title = `${firstMeta.name} vs ${secondMeta.name}`;
 
@@ -521,6 +537,7 @@ function ClearanceReport({
     const indeterminate = result;
     return (
       <div className="inspect-report">
+        {evidenceButton}
         <header className="inspect-report-header">
           <div>
             <h2>{title}</h2>
@@ -577,6 +594,7 @@ function ClearanceReport({
 
   return (
     <div className="inspect-report">
+      {evidenceButton}
       <header className="inspect-report-header">
         <div>
           <h2>{title}</h2>
@@ -791,12 +809,16 @@ const INITIAL_CAPABILITY: CapabilityPreflight = {
 };
 
 export function ClearanceFlow() {
-  const [firstSelection, setFirstSelection] = useState(
-    partSelectionForFile(null),
-  );
-  const [secondSelection, setSecondSelection] = useState(
-    partSelectionForFile(null),
-  );
+  const hostedFirst = useHostedSource(0),
+    hostedSecond = useHostedSource(1);
+  const [firstSelection, setFirstSelection] = useState(() => ({
+    ...partSelectionForFile(null),
+    ...hostedFirst,
+  }));
+  const [secondSelection, setSecondSelection] = useState(() => ({
+    ...partSelectionForFile(null),
+    ...hostedSecond,
+  }));
   const [desiredClearance, setDesiredClearance] = useState(1);
   const [progress, setProgress] = useState<string>();
   const [error, setError] = useState<string>();

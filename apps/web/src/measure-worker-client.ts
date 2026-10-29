@@ -267,6 +267,7 @@ export async function openMeasureSession(
           source.frameSource ?? "default",
           source.unit,
           source.axis,
+          source.file,
         ),
       }),
       [bytes.buffer],

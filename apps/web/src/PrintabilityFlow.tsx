@@ -1,3 +1,4 @@
+import { useHostedSource } from "./hosted";
 import { EvidenceReportDownload } from "./EvidenceReportDownload";
 import {
   DEFAULT_OVERHANG_THRESHOLD_DEGREES_FROM_VERTICAL,
@@ -99,7 +100,7 @@ interface ModelSourceSelection {
   file: File | null;
   unit: ResolvedSourceUnit | "";
   axis: ResolvedSourceAxis | "";
-  frameSource: "default" | "expert";
+  frameSource: "default" | "expert" | "recorded";
 }
 
 /** Same shape and preconditions as `InspectFlow`'s/`ClearanceFlow`'s/
@@ -1343,7 +1344,10 @@ const DEFAULT_VISIBLE_LAYERS: PrintabilityVisibleLayers = {
 };
 
 export function PrintabilityFlow() {
-  const [selection, setSelection] = useState(modelSourceSelectionForFile(null));
+  const hostedSource = useHostedSource();
+  const [selection, setSelection] = useState(
+    () => hostedSource ?? modelSourceSelectionForFile(null),
+  );
   const [parameters, setParameters] = useState(DEFAULT_ASSESSMENT_PARAMETERS);
   const [progress, setProgress] = useState<string>();
   const [error, setError] = useState<string>();

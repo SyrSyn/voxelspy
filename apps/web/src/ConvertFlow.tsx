@@ -1,3 +1,4 @@
+import { useHostedSource, useHostedArtifact } from "./hosted";
 import { MAX_SIMPLIFY_INPUT_TRIANGLES } from "@voxelspy/analysis";
 import type {
   DirectionalDeviation,
@@ -101,7 +102,7 @@ type ModelSourceSelection = {
   file: File | null;
   unit: ResolvedSourceUnit | "";
   axis: ResolvedSourceAxis | "";
-  frameSource: "default" | "expert";
+  frameSource: "default" | "expert" | "recorded";
 };
 
 export function modelSourceSelectionForFile(
@@ -749,9 +750,11 @@ function downloadBytes(bytes: Uint8Array, fileName: string): void {
 function ExportReport({
   outcome,
   sourceName,
+  onStage,
 }: {
   outcome: ConvertExportOutcome;
   sourceName: string;
+  onStage: () => void;
 }) {
   const unitWarning = outcome.warnings.find(
     (warning) => warning.code === "export.unit-not-declared",
@@ -858,12 +861,13 @@ function ExportReport({
         <button
           className="button button-primary"
           type="button"
-          onClick={() =>
+          onClick={() => {
+            onStage();
             downloadBytes(
               outcome.bytes,
               exportFileName(sourceName, outcome.format, outcome.source),
-            )
-          }
+            );
+          }}
         >
           Download {exportFileName(sourceName, outcome.format, outcome.source)}
         </button>
@@ -891,7 +895,11 @@ const INITIAL_CAPABILITY: CapabilityPreflight = {
 };
 
 export function ConvertFlow() {
-  const [selection, setSelection] = useState(modelSourceSelectionForFile(null));
+  const hostedSource = useHostedSource();
+  const stageArtifact = useHostedArtifact();
+  const [selection, setSelection] = useState(
+    () => hostedSource ?? modelSourceSelectionForFile(null),
+  );
   const [loadProgress, setLoadProgress] = useState<string>();
   const [loadError, setLoadError] = useState<string>();
   const [loadNotice, setLoadNotice] = useState<string>();
@@ -980,6 +988,33 @@ export function ConvertFlow() {
     setExportError(undefined);
   };
 
+  const stageExport = (outcome: ConvertExportOutcome) => {
+    if (!session || !sourceMeta) return;
+    const mime =
+      outcome.format === "obj"
+        ? "model/obj"
+        : outcome.format === "gltf"
+          ? "model/gltf+json"
+          : outcome.format === "glb"
+            ? "model/gltf-binary"
+            : outcome.format === "3mf"
+              ? "model/3mf"
+              : "model/stl";
+    stageArtifact({
+      kind: "converted-model",
+      name: exportFileName(sourceMeta.name, outcome.format, outcome.source),
+      mime,
+      bytes: outcome.bytes,
+      provenances: [session.load.provenance],
+      metadata: {
+        export: {
+          format: outcome.format,
+          targetUnit: outcome.targetUnit,
+          targetAxis: outcome.targetAxis,
+        },
+      },
+    });
+  };
   const runSimplify = async () => {
     if (!session || !sourceMeta) return;
     const resolved = resolveSimplifyTarget(
@@ -1030,6 +1065,7 @@ export function ConvertFlow() {
         targetAxis: exportForm.axis as ResolvedSourceAxis,
       });
       setExportOutcome(outcome);
+      stageExport(outcome);
       downloadBytes(
         outcome.bytes,
         exportFileName(sourceMeta.name, outcome.format, outcome.source),
@@ -1463,6 +1499,7 @@ export function ConvertFlow() {
             <ExportReport
               outcome={exportOutcome}
               sourceName={sourceMeta.name}
+              onStage={() => stageExport(exportOutcome)}
             />
           )}
         </section>

@@ -1,3 +1,4 @@
+import { useHostedArtifact } from "./hosted";
 import { useState } from "react";
 import {
   evidenceReportFileName,
@@ -12,6 +13,7 @@ export function EvidenceReportDownload({
   report: () => EvidenceReportInput;
   disabledReason?: string | undefined;
 }) {
+  const stageArtifact = useHostedArtifact();
   const [error, setError] = useState<string>();
   return (
     <section aria-label="Download local evidence report">
@@ -24,6 +26,13 @@ export function EvidenceReportDownload({
           try {
             const input = report();
             const bytes = serializeEvidenceReport(input);
+            stageArtifact({
+              kind: "evidence-json",
+              name: evidenceReportFileName(input.source.name, input.kind),
+              mime: "application/json",
+              bytes,
+              provenances: [input.provenance],
+            });
             const blob = new Blob([new Uint8Array(bytes)], {
               type: "application/json",
             });

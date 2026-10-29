@@ -1,3 +1,4 @@
+import { useHostedSource } from "./hosted";
 import { EvidenceReportDownload } from "./EvidenceReportDownload";
 import type { ContractWarning } from "@voxelspy/contracts";
 import {
@@ -65,7 +66,7 @@ type ModelSourceSelection = {
   file: File | null;
   unit: ResolvedSourceUnit | "";
   axis: ResolvedSourceAxis | "";
-  frameSource: "default" | "expert";
+  frameSource: "default" | "expert" | "recorded";
 };
 
 export function modelSourceSelectionForFile(
@@ -614,7 +615,10 @@ const INITIAL_CAPABILITY: CapabilityPreflight = {
 };
 
 export function ForensicsFlow() {
-  const [selection, setSelection] = useState(modelSourceSelectionForFile(null));
+  const hostedSource = useHostedSource();
+  const [selection, setSelection] = useState(
+    () => hostedSource ?? modelSourceSelectionForFile(null),
+  );
   const [progress, setProgress] = useState<string>();
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();

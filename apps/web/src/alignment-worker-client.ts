@@ -169,6 +169,7 @@ export async function estimateIcpAlignmentAsync(
         part.frameSource ?? "default",
         part.unit,
         part.axis,
+        part.file,
       ),
     });
 
