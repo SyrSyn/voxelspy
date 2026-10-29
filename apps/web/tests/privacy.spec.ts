@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
+import { expectViewportsRendered } from "./webgl";
 
 /**
  * Comprehensive network audit for VoxelSpy's core promise: comparing two
@@ -265,6 +266,13 @@ test("the full import-compare-interact-export-save-reopen workflow never leaves 
   expect(await page.locator(".findings li").count()).toBeGreaterThan(0);
 
   // --- idle after a completed comparison: nothing should happen on its own ---
+  // The heading precedes asynchronous viewport and geometry-summary setup.
+  // Wait for their visible readiness before auditing an idle workbench;
+  // the request/attempt audit still includes every startup request above.
+  await expectViewportsRendered(page, page.locator(".workbench"), 3);
+  await expect(
+    page.getByRole("button", { name: "Save session", exact: true }),
+  ).toBeEnabled({ timeout: 20_000 });
   const requestsBeforeIdle = origins.length;
   // No app signal exists for "nothing will ever happen"; a bounded wait is
   // the only way to give a background poller, telemetry timer, or retry
