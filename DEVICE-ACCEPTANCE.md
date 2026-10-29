@@ -52,10 +52,14 @@ meaningfully different browser, GPU or memory budget.
 11. Navigate primary controls using the keyboard on laptops. On phones, verify
     every action can be reached without horizontal page overflow; intentional
     table scrollers may scroll within their own bounds.
-12. For the separate local PDM installation, sign in through the captured inbox,
-    create a workspace, upload two synthetic revisions, compare the exact pair,
-    retain a review and reopen it. Verify a second private workspace cannot read
-    the first workspace's models or review.
+12. For the integrated local PDM installation, sign in through the captured
+    inbox, create a workspace and upload synthetic revisions, including STEP.
+    Open all eight project tools and explicitly save their outputs. Author a
+    callout, distance and named camera view; save, reload and reopen that exact
+    session. Confirm source bindings, comments and converted export frames.
+    Verify a Viewer can use local tools but cannot save or comment, and that
+    revoked access clears the workbench. Confirm another private workspace
+    cannot read the first workspace's sources or artifacts.
 
 Record failures with the smallest fixture and reproduction steps. Record elapsed
 interaction times where useful, but do not infer a universal performance promise

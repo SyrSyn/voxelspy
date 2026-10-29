@@ -12,7 +12,7 @@ VoxelSpy is being designed around three layers:
 
 - A zero-install web inspector for STL, 3MF, OBJ, glTF/GLB, and STEP files.
 - Reusable TypeScript packages and headless tooling for application and CI integrations.
-- A separate self-hosted product-data-management application for private teams, under local review.
+- A self-hosted private project workspace that integrates the same eight tools, with local qualification.
 
 The browser tool will normalize input into an explicit engineering coordinate system, keep source and user transforms auditable, run heavy analysis outside the UI thread, and distinguish exact, approximate, and indeterminate results. The initial workflow centers on synchronized old, new, and diff views with ranked change regions, compact measurements, saved views, markups, reports, and portable sessions.
 
@@ -24,7 +24,7 @@ The static browser application currently imports bounded ASCII or binary STL, a 
 
 Formats that declare nothing about their frame start in millimetres and right-handed Z-up with alternate interpretations available as expert settings, while formats that declare their own unit or axis resolve it from the file and still allow an override. Comparison normalizes into the canonical frame, runs approximate sampled surface-distance analysis in a dedicated browser worker, and opens synchronized difference, baseline, and candidate views. Added and removed findings highlight the actual analyzed surface triangles. A running comparison can be cancelled, and the analysis allowance starts from a recommendation derived from reported device capability that the operator can always override within its bounds. Import provenance, warnings, method semantics, and uncertainty remain visible in the result, including the numeric sample-spacing bound that states what the sampling density could have missed.
 
-A completed comparison can be exported as one self-contained report document, or saved as a portable session archive that embeds both sources and reopens without re-running analysis. Both are explicit local downloads; a saved session carries model geometry, so sharing one transfers model data. Callouts, distance markups and named review views are retained with source-bound references. Other tools offer versioned evidence JSON downloads. The separate team/PDM application has its own identity and persistence boundary; it is not required by this browser toolkit.
+A completed comparison can be exported as one self-contained report document, or saved as a portable session archive that embeds both sources and reopens without re-running analysis. Both are explicit local downloads; a saved session carries model geometry, so sharing one transfers model data. Callouts, distance markups and named review views are retained with source-bound references. Other tools offer versioned evidence JSON downloads. The self-hosted team/PDM suite reuses these tools with exact project revisions, immutable saved artifacts and session reopening. Its identity and persistence boundary remains separate; it is not required by this browser toolkit. See [the local suite scope](PDM-PLAN.md).
 
 Implementation ceilings are fail-closed safety bounds, not general model-size or production-readiness claims. See the web, importer, and analysis package READMEs for the exact supported subsets and method limits.
 

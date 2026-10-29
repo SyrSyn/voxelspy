@@ -1,12 +1,10 @@
 # Local team service implementation proposal
 
-Status: approved and implemented as a separate local prototype. Authorization,
-immutable history, desktop/emulated-phone workflows and same-version local
-backup/restore have been qualified. See [the inventory](INVENTORY.md) for observed
-checks and remaining acceptance boundaries. The prototype uses a historical
-five-format engine snapshot; STEP and the toolkit's newer review authoring are
-not integrated into that snapshot. Physical devices, public hosting and off-host
-recovery remain unqualified.
+Status: approved and implemented as a local integrated self-hosted suite.
+The eight shared tools, exact revision loading, immutable tool artifacts,
+authored-session reopening, current authorization and local upgrade/restore
+workflows are qualified. See [the inventory](INVENTORY.md) for observed checks.
+Physical devices, public hosting and off-host recovery remain unqualified.
 
 ## Foundation and scope
 
@@ -15,8 +13,9 @@ for a separate `voxelspy-pdm` application. Its React foundation fits VoxelSpy's
 existing React and framework-independent packages. The Nuxt alternative is
 viable but would require a second UI framework for this integration.
 
-This is a local, private review installation. It does not publish a repository,
-add a domain, or change the browser toolkit's local-only comparison behavior.
+This is a local, private review installation. Source pushes use separate
+maintainer authorization. It does not add a domain or change the browser
+toolkit's independent local-only behavior.
 Source and running configuration remain separate under the server's project
 and stack conventions. No existing service or real-data database is reused.
 
@@ -32,9 +31,14 @@ and stack conventions. No existing service or real-data database is reused.
   source name, size and digest before creating its immutable revision record.
   Upload limits match the toolkit; server-generated storage keys never trust
   file names, client digests or client-supplied ownership.
-- List revision ancestry and select two exact revisions for local comparison.
-  Download their bytes deliberately into the browser and use the existing
-  engines; never run arbitrary model code on the server.
+- List revision ancestry and select exact revisions for any of the eight shared
+  tools: Compare, Inspect, Mesh Health, Measure & Section, Clearance & Fit,
+  Printability, File Forensics and Convert. Download their bytes deliberately
+  into the browser and use the same toolkit UI, workers and pinned engines.
+- Explicitly retain source-bound tool evidence, HTML, converted attachments and
+  source-embedding comparison sessions. Reopen sessions with their exact source
+  pair, callouts, distance markups and named camera views. Artifact comments
+  append to immutable history; HTML is downloaded rather than rendered inline.
 - Attach versioned review reports and comments to exact revision pairs. Record
   authorship and append-only audit events. Revisions and evidence are immutable;
   a correction produces a new revision or review event.
@@ -62,8 +66,8 @@ Use a clean generated consumer with explicitly selected capabilities; do not
 ship the starter's full reference demo as the PDM application.
 
 Use the selected starter's existing schema/profile and capability tools to
-record this plan. New migrations are additive against this new installation;
-there is no migration or reset of any existing application.
+record this plan. Migrations are additive and preserve the original PDM
+installation. Other applications and databases are not reused or reset.
 
 ## Appearance and guidance
 
@@ -86,7 +90,8 @@ one-shot migration jobs before app/worker start. Do not migrate during startup.
 
 Acceptance requires real passwordless sign-in, two-user/workspace authorization
 denials, immutable revision and digest checks, safe upload/download limits,
-revision-pair comparison and report attachment, archive/history retention,
+all eight shared tools, exact-source artifact/session reopening, STEP frame
+provenance, archive/history retention,
 keyboard/phone workflows, no unintended external traffic, and a verified local
 backup/restore rehearsal. Run the starter's profile, theme, capability and normal
 checks and appropriate database/browser tests. Record unresolved requirements

@@ -7,22 +7,22 @@ code does not establish physical-device performance or production readiness.
 
 ## Current capabilities
 
-| Area                   | Available                                                                                                                     | Boundary                                                                                                                           |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Import                 | ASCII/binary STL, OBJ subset, static glTF/GLB, 3MF Core, optional STEP kernel                                                 | Bounded subsets; explicit units, transforms, warnings and provenance; STEP tessellation is not analytic CAD preservation           |
-| Compare                | Worker-based sampled surface distance, synchronized views, ranked changes, deliberate alignment                               | Sampling can miss sub-spacing features; unsigned distances do not prove solid equivalence                                          |
-| Inspect                | Dimensions, area, conditional volume, topology, visual diagnostics and evidence download                                      | Volume remains conditional; normal inspection does not implicitly perform self-intersection detection                              |
-| Mesh Health            | Separate bounded self-intersection analysis with source triangle locations and evidence download                              | Exact predicates on represented transformed coordinates; budget, degenerate and numerical refusals remain indeterminate; no repair |
-| Measure & Section      | Surface/coordinate measurements, plane sections, loops, perimeter and conditional area; evidence download                     | Coincident faces and open sections retain limitations                                                                              |
-| Clearance & Fit        | Explicit rigid placement, sampled separation, tight regions and triangle intersections                                        | No interference volume or guaranteed minimum separation                                                                            |
-| Printability           | Thickness probes, overhangs, islands, build-volume fit and evidence download                                                  | Operator evidence, not printer/material approval                                                                                   |
-| File Forensics         | Structure, digest, frame resolution, importer warnings/refusals and evidence download                                         | Shows supported interpretation rather than arbitrary file contents                                                                 |
-| Convert                | Simplification with measured sampled deviation, optional geometry preview; STL/OBJ/glTF/GLB/3MF exports                       | Bounded preview; explicit export frames and precision/flattening warnings; sampled deviation is not a universal bound              |
-| Review                 | Callouts, distance markups, named camera views, HTML report and portable source-embedding session                             | Source-bound references and stale-state checks; sharing a session shares model geometry                                            |
-| CLI                    | Compare, inspect, clearance with rigid placements, measurements, sections and printability                                    | Existing engine limits and policy exit semantics remain; no stronger automated manufacturing verdict                               |
-| React                  | Comparison/inspection plus clearance, measurement, sections, printability, simplification and alignment hooks                 | Transferable ownership is explicit; heavy simplified geometry is held outside UI state                                             |
-| Release infrastructure | Versioned contracts, bounded archives, static prerendering, privacy checks and cross-engine CSP test configuration            | External CI, physical hardware and deployed headers need their own observed acceptance                                             |
-| Team/PDM               | Separate approved TanStack consumer with local identity, private workspaces, immutable revisions, reviews, comments and audit | Separate repository/storage boundary; qualified local prototype uses a historical five-format engine snapshot; no production claim |
+| Area                   | Available                                                                                                                                 | Boundary                                                                                                                              |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Import                 | ASCII/binary STL, OBJ subset, static glTF/GLB, 3MF Core, optional STEP kernel                                                             | Bounded subsets; explicit units, transforms, warnings and provenance; STEP tessellation is not analytic CAD preservation              |
+| Compare                | Worker-based sampled surface distance, synchronized views, ranked changes, deliberate alignment                                           | Sampling can miss sub-spacing features; unsigned distances do not prove solid equivalence                                             |
+| Inspect                | Dimensions, area, conditional volume, topology, visual diagnostics and evidence download                                                  | Volume remains conditional; normal inspection does not implicitly perform self-intersection detection                                 |
+| Mesh Health            | Separate bounded self-intersection analysis with source triangle locations and evidence download                                          | Exact predicates on represented transformed coordinates; budget, degenerate and numerical refusals remain indeterminate; no repair    |
+| Measure & Section      | Surface/coordinate measurements, plane sections, loops, perimeter and conditional area; evidence download                                 | Coincident faces and open sections retain limitations                                                                                 |
+| Clearance & Fit        | Explicit rigid placement, sampled separation, tight regions and triangle intersections                                                    | No interference volume or guaranteed minimum separation                                                                               |
+| Printability           | Thickness probes, overhangs, islands, build-volume fit and evidence download                                                              | Operator evidence, not printer/material approval                                                                                      |
+| File Forensics         | Structure, digest, frame resolution, importer warnings/refusals and evidence download                                                     | Shows supported interpretation rather than arbitrary file contents                                                                    |
+| Convert                | Simplification with measured sampled deviation, optional geometry preview; STL/OBJ/glTF/GLB/3MF exports                                   | Bounded preview; explicit export frames and precision/flattening warnings; sampled deviation is not a universal bound                 |
+| Review                 | Callouts, distance markups, named camera views, HTML report and portable source-embedding session                                         | Source-bound references and stale-state checks; sharing a session shares model geometry                                               |
+| CLI                    | Compare, inspect, clearance with rigid placements, measurements, sections and printability                                                | Existing engine limits and policy exit semantics remain; no stronger automated manufacturing verdict                                  |
+| React                  | Comparison/inspection plus clearance, measurement, sections, printability, simplification and alignment hooks                             | Transferable ownership is explicit; heavy simplified geometry is held outside UI state                                                |
+| Release infrastructure | Versioned contracts, bounded archives, static prerendering, privacy checks and cross-engine CSP test configuration                        | External CI, physical hardware and deployed headers need their own observed acceptance                                                |
+| Team/PDM               | Self-hosted shared eight-tool workspace, private projects, immutable revisions/artifacts, annotations, saved sessions, comments and audit | Separate identity/storage boundary; local qualification only, with physical devices, public hosting and off-host recovery unqualified |
 
 The catalog now exposes eight tools. Scale, Volume and Watertightness remain
 focused Inspect entry points. See [analysis](packages/analysis/README.md),
@@ -83,7 +83,7 @@ This includes STEP integrity refusal/recovery, conversion downloads, review
 authoring and portable-session resaving. All 67 shipped build files matched
 their recorded sizes and SHA-256 digests after qualification.
 
-The separate PDM consumer passed its profile/theme/capability checks, lint,
+The initial PDM prototype passed its profile/theme/capability checks, lint,
 typecheck, production build, 24 unit tests, clean dependency audit, additional
 email/storage/file UI/jobs checks and six desktop/emulated-phone journeys.
 Independent review verified same-version restore fingerprints for 13 complete
@@ -110,58 +110,68 @@ offline rebuilds. See [STEP distribution notices](third-party/step/README.md).
 
 Physical checks remain pending. [DEVICE-ACCEPTANCE.md](DEVICE-ACCEPTANCE.md)
 covers phones and Windows/Linux laptops; emulation is not physical-device
-acceptance. Publication, public deployment and external CI are not established
-by local tests. No package publication or public hosting change is part of this
-local implementation.
+acceptance. Package publication and public deployment are not established by local tests.
+Observed repository CI is recorded below. No package publication or public
+hosting change is part of this local implementation.
 
-## Stopping checkpoint
+## Integrated self-hosted suite
 
-### Integrated self-hosted suite: in progress
+The integrated workflows are built and qualified for the approved local scope.
+The separate PDM consumer embeds the same eight toolkit components and workers
+from pinned toolkit revision `8f79ca4`; it does not fork their UI or engines.
+The free static toolkit continues to work without identity, PDM APIs, uploads
+or persistence.
 
-The earlier checkpoint below describes the standalone toolkit and bounded PDM
-prototype. It does **not** establish completion of the integrated self-hosted
-product. The authorized integration now requires:
+- Opening a project tool deliberately downloads currently authorized exact
+  revisions and verifies their sizes, source digests and recorded frames.
+- Native downloads remain local. A separate save action retains source-bound
+  evidence, portable sessions, HTML reports or converted outputs as immutable
+  project artifacts with append-only comments. HTML is attachment-only;
+  converted outputs do not silently become source revisions.
+- Reopening a session reauthorizes its exact source pair and restores authored
+  callouts, distance markups and named views. Changing project, source, tool or
+  authority clears the active frame and staged bytes.
+- All eight tools support the shared workspace, including STEP. Explicit axis
+  declarations and user corrections retain distinct provenance. Metadata key
+  order may change in storage without changing any bound value or array order.
+- Current permissions, replay identity, quotas, archive/history retention,
+  corrupt-storage refusal and stale-message rejection are exercised through
+  actual browser/API workflows.
 
-- One pinned toolkit source revision and engine build for all eight tools in
-  the self-hosted workspace, including STEP; no independently forked tool UI.
-- Deliberate, currently authorized project-revision loading with verified source
-  digests and recorded frame interpretation.
-- Explicit saving of source-bound tool evidence, comparison sessions with
-  annotations/views, reports and derived conversion outputs as immutable
-  project artifacts, with retained comments and reopening.
-- Current permission checks, resource bounds, tamper/stale-message refusal,
-  archive/history retention, migration/restore checks and integrated browser
-  acceptance.
-- Independent free-site behavior: no required identity, PDM API, persistence or
-  model uploads.
+### Observed qualification
 
-Implementation and final integrated acceptance remain in progress until these
-workflows have been exercised together. The shared workbench and source-bound
-artifact APIs are built and committed. The free toolkit passed `pnpm check`
-(all 28 tasks; 862 unit tests), then its complete browser run passed 617 cases
-with three intentional desktop touch-only skips. All 67 shipped files retained
-their recorded hashes. The optional embedded workbench passed 50 browser cases
-across all five browser configurations. Toolkit CI passed both jobs at
-`5a82ffe`.
+The toolkit passes `pnpm check`: 28 tasks and 863 unit tests. Both GitHub CI jobs
+passed at `8f79ca4`, including 617 browser cases and three intentional desktop
+skips for the touch-only check. The optional embedded workbench passed 50 cases
+across desktop/mobile Chromium, Firefox and desktop/mobile WebKit. These include
+actual STEP staging and byte-identical saved-session reopening after metadata
+key reordering; no page errors or off-origin requests were observed.
 
-The PDM integration and pinned-source packaging are pushed in `c612b99`; its
-GitHub check passes, including a fresh shared-workbench build, 47 unit tests,
-type checking, lint, clean dependency audit and production build. Final
-integrated desktop/phone journeys and retained-data upgrade/restore checks
-remain active. These checkpoints do not establish integrated acceptance yet.
+The PDM consumer passes its full check, clean dependency audit, 51 unit tests
+and production build. Ten actual desktop/emulated-phone journeys pass without
+skips or retries: all eight native tools, source/frame geometry oracles,
+conversion downloads, annotations/views, retained comments, saved-session
+reopening, STEP and Viewer revocation. A separate direct API matrix passes
+source/provenance tampering, private authority, replay conflicts, quotas,
+corrupt objects, archived history and STEP declaration/refusal checks.
 
-### Earlier standalone checkpoint
+The upgrade rehearsal retains all 13 original public-table fingerprints and
+24 original source objects across the additive artifact migration. A fresh
+same-version integrated restore retains all 15 tables / 3,259 rows and every
+one of 1,005 stored objects, with exact sizes, SHA-256 digests and revision or
+artifact bindings. Authenticated legacy/report downloads, anonymous/outsider
+refusals and an actual annotated-session/named-view reopening pass; all table
+and object fingerprints remain identical afterward. A tampered bundle refuses
+before creating target resources. Restore workers remain absent and qualified
+restore services are stopped with their data retained.
 
-All original inventory implementation slices and the approved local PDM scope
-are present. The qualified toolkit implementation is committed in `8198640` and
-pushed to the existing repository with maintainer authorization. GitHub CI is
-separate from the local evidence above; no public application deployment or
-package release is claimed. The local PDM source services remain running for
-review, while its restore rehearsal is stopped with retained data. Subagents
-have finished and their temporary check servers are stopped.
+The original local PDM app and worker are upgraded to the qualified runtime.
+All 13 original table fingerprints matched before the deliberate sign-in
+check, all 24 original source objects remain byte-identical, and both new
+artifact tables started empty. Health, jobs, authenticated legacy downloads,
+all eight protected tool routes and actual inspection of an existing revision
+pass. No other application installation was upgraded.
 
-The next acceptance work is the physical-device checklist, followed by any
-separately authorized release or hosting qualification. Off-host recovery
-needs an actual destination and rehearsal. The local PDM deliberately retains
-its qualified historical engine snapshot rather than claiming the toolkit's
-newer STEP and authored-review features.
+Physical devices, external hosting/identity/mail, off-host recovery and
+production acceptance remain unqualified. Local restore requires the retained
+exact application image; it does not establish recovery after host loss.
