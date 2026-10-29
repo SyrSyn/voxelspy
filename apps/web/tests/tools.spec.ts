@@ -44,10 +44,12 @@ test("planned tools render as non-link cards with a text status, not just color"
 
   const plannedCards = page.locator(".tool-card-planned");
   const plannedCount = await plannedCards.count();
+  // A completed catalog may have no planned items. Every real tool must be
+  // an available link, and any remaining planned item must be inert.
+  await expect(page.locator("a.tool-card-available")).toHaveCount(8);
   expect(
-    plannedCount,
-    "the seeded catalog must list at least one honestly planned tool",
-  ).toBeGreaterThan(0);
+    plannedCount + (await page.locator("a.tool-card-available").count()),
+  ).toBe(8);
 
   for (let index = 0; index < plannedCount; index += 1) {
     const card = plannedCards.nth(index);

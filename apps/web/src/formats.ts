@@ -38,7 +38,7 @@ export const ACCEPTED_UPLOAD_ACCEPT = ACCEPTED_UPLOAD_EXTENSIONS.map(
  *  `ACCEPTED_UPLOAD_EXTENSIONS` into a sentence) so the wording reads
  *  naturally; update this alongside the importer's own supported-format list
  *  if it ever changes. */
-export const ACCEPTED_FORMATS_LABEL = "STL, OBJ, glTF, GLB, or 3MF";
+export const ACCEPTED_FORMATS_LABEL = "STL, OBJ, glTF, GLB, 3MF, or STEP";
 
 /** True when a file name's extension is one this importer accepts. Delegates
  *  to `inferFormat` -- the importer's own extension parser -- rather than a
@@ -88,7 +88,12 @@ export function requireSupportedFormat(fileName: string): SupportedFormat {
 export function formatDeclaresOwnFrame(
   format: SupportedFormat | undefined,
 ): boolean {
-  return format === "gltf" || format === "glb" || format === "3mf";
+  return (
+    format === "gltf" ||
+    format === "glb" ||
+    format === "3mf" ||
+    format === "step"
+  );
 }
 
 /** The unit/axis a fresh selection of this format should start from: empty
@@ -101,6 +106,7 @@ export function defaultFrameForFormat(format: SupportedFormat | undefined): {
   unit: ResolvedSourceUnit | "";
   axis: ResolvedSourceAxis | "";
 } {
+  if (format === "step") return { unit: "", axis: "right-handed-z-up" };
   if (formatDeclaresOwnFrame(format)) return { unit: "", axis: "" };
   return { unit: "millimetre", axis: "right-handed-z-up" };
 }
@@ -116,6 +122,8 @@ export function formatFrameDeclarationSummary(
 ): string | undefined {
   if (format === "gltf" || format === "glb")
     return "glTF/GLB declares metres and right-handed Y-up by specification. Leave the fields below on “Use the file's declared value” unless this particular file's frame should be reinterpreted anyway.";
+  if (format === "step")
+    return "STEP declares its length unit. This importer accepts one homogeneous supported unit and preserves it in provenance. STEP does not declare an up-axis: right-handed Z-up is an explicit import default; change it when the source requires another interpretation. Tessellation is approximate and may omit unsupported entities; inspect its warnings.";
   if (format === "3mf")
     return "3MF declares its own unit (read from the file; millimetre if the file does not specify one) and right-handed Z-up by specification. Leave the fields below on “Use the file's declared value” unless this particular file's frame should be reinterpreted anyway.";
   return undefined;
@@ -154,6 +162,15 @@ export function resolveFrameOptions(
   userUnit?: ResolvedSourceUnit;
   userAxis?: ResolvedSourceAxis;
 } {
+  if (format === "step")
+    return {
+      ...(unit ? { userUnit: unit } : {}),
+      ...(axis
+        ? frameSource === "expert"
+          ? { userAxis: axis }
+          : { declaredAxis: axis }
+        : {}),
+    };
   if (formatDeclaresOwnFrame(format)) {
     return {
       ...(unit ? { userUnit: unit } : {}),

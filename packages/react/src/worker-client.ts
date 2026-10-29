@@ -1,3 +1,10 @@
+import {
+  operationModelBuffers,
+  type EngineOperationInputs,
+  type EngineOperationResults,
+  type EngineOperationKind,
+  type OperationWorkerRequest,
+} from "./operations.js";
 import type { AnalysisRequest, NormalizedModel } from "@voxelspy/contracts";
 import type { InspectOptions } from "@voxelspy/analysis";
 
@@ -59,7 +66,15 @@ function runOneShot<TRequest extends EngineWorkerRequest>(
       reject(new EngineCancelledError());
       return;
     }
-    const worker = createWorker();
+    let worker: Worker;
+    try {
+      worker = createWorker();
+    } catch {
+      reject(
+        new EngineProtocolError("The analysis worker could not be created."),
+      );
+      return;
+    }
     let settled = false;
 
     const finish = (action: () => void) => {
@@ -68,14 +83,58 @@ function runOneShot<TRequest extends EngineWorkerRequest>(
       signal?.removeEventListener("abort", onAbort);
       worker.removeEventListener("message", onMessage);
       worker.removeEventListener("error", onError);
+      worker.removeEventListener("messageerror", onError);
       worker.terminate();
       action();
     };
     const onAbort = () => finish(() => reject(new EngineCancelledError()));
     const onMessage = (event: MessageEvent<EngineWorkerResponse>) => {
       const data = event.data;
-      if (data.requestId !== request.requestId || data.kind !== request.kind)
+      if (!data || typeof data !== "object") {
+        finish(() =>
+          reject(
+            new EngineProtocolError(
+              "The analysis worker returned a malformed response.",
+            ),
+          ),
+        );
         return;
+      }
+      if (data.requestId !== request.requestId || data.kind !== request.kind) {
+        if ("version" in request)
+          finish(() =>
+            reject(
+              new EngineProtocolError(
+                "The analysis worker returned an uncorrelated response.",
+              ),
+            ),
+          );
+        return;
+      }
+      if (
+        "version" in request &&
+        (!("version" in data) || data.version !== 1)
+      ) {
+        finish(() =>
+          reject(
+            new EngineProtocolError(
+              "Unsupported analysis worker response version.",
+            ),
+          ),
+        );
+        return;
+      }
+      if (
+        typeof data.ok !== "boolean" ||
+        (data.ok ? !("result" in data) : typeof data.message !== "string")
+      ) {
+        finish(() =>
+          reject(
+            new EngineProtocolError("Malformed analysis worker response."),
+          ),
+        );
+        return;
+      }
       finish(() =>
         resolve(
           data as Extract<EngineWorkerResponse, { kind: TRequest["kind"] }>,
@@ -92,7 +151,22 @@ function runOneShot<TRequest extends EngineWorkerRequest>(
     signal?.addEventListener("abort", onAbort);
     worker.addEventListener("message", onMessage);
     worker.addEventListener("error", onError);
-    worker.postMessage(request, transfer as ArrayBuffer[]);
+    worker.addEventListener("messageerror", onError);
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    try {
+      worker.postMessage(request, transfer as ArrayBuffer[]);
+    } catch {
+      finish(() =>
+        reject(
+          new EngineProtocolError(
+            "The analysis worker request could not be sent.",
+          ),
+        ),
+      );
+    }
   });
 }
 
@@ -154,4 +228,28 @@ export async function runModelComparison(
   if (!response.ok)
     throw describeEngineFailure(response.message, response.errorName);
   return (response as CompareWorkerSuccess).result;
+}
+
+/** Runs one explicitly selected engine operation; never applies alignment or edits caller geometry. */
+export async function runEngineOperation<K extends EngineOperationKind>(
+  createWorker: EngineWorkerFactory,
+  kind: K,
+  input: EngineOperationInputs[K],
+  callOptions: EngineCallOptions = {},
+): Promise<EngineOperationResults[K]> {
+  const request = {
+    version: 1,
+    kind,
+    requestId: REQUEST_ID,
+    input,
+  } as OperationWorkerRequest;
+  const response = await runOneShot(
+    createWorker,
+    request,
+    callOptions.transferModel ? operationModelBuffers(request) : [],
+    callOptions.signal,
+  );
+  if (!response.ok)
+    throw describeEngineFailure(response.message, response.errorName);
+  return response.result as EngineOperationResults[K];
 }

@@ -14,7 +14,7 @@ import {
   type WorkerExecuteMessage,
   type WorkerOutboundMessage,
 } from "@voxelspy/contracts";
-import { importModel } from "@voxelspy/importers";
+import { importLocalModel as importModel } from "./import-local-model";
 
 const scope = self as DedicatedWorkerGlobalScope;
 const models = new Map<string, NormalizedModel>();

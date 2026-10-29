@@ -381,7 +381,7 @@ test("an unsupported file extension is refused with an honest message naming wha
   await chooseFile(
     page,
     "#model-file",
-    "part.step",
+    "part.fbx",
     Buffer.from("not a supported format"),
   );
 
@@ -390,10 +390,10 @@ test("an unsupported file extension is refused with an honest message naming wha
   });
   await expect(inspectButton).toBeDisabled();
   await expect(page.locator(".capability")).toContainText(
-    "This release supports STL, OBJ, glTF, GLB, or 3MF mesh files",
+    "This release supports STL, OBJ, glTF, GLB, 3MF, or STEP mesh files",
   );
   await expect(page.locator(".capability")).toContainText(
-    "(.stl, .obj, .gltf, .glb, .3mf)",
+    "(.stl, .obj, .gltf, .glb, .3mf, .step, .stp)",
   );
 
   // The tool stays usable: a supported file right after still works.

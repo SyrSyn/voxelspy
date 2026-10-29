@@ -364,7 +364,7 @@ function PartCard({
         <small>
           {selection.file
             ? `${(selection.file.size / 1024).toFixed(1)} KiB · local file`
-            : "STL, OBJ, glTF, GLB, or 3MF, up to 32 MiB"}
+            : "STL, OBJ, glTF, GLB, 3MF, or STEP, up to 32 MiB"}
         </small>
         <input
           id={`${idBase}-file`}
@@ -420,7 +420,7 @@ function PartCard({
                 })
               }
             >
-              {declaresOwnFrame && (
+              {declaresOwnFrame && format !== "step" && (
                 <option value="">Use the file&rsquo;s declared value</option>
               )}
               {axes.map((axis) => (

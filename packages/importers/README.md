@@ -92,7 +92,7 @@ Beyond the archive layer, `IMPORTER_SAFETY_LIMITS.threeMfXml` bounds the hand-ro
 
 ## Exporting models
 
-`exportModel` serializes a `NormalizedModel` to bytes for one of three targets: `"stl-binary"`, `"stl-ascii"`, or `"obj"` -- exactly the vertex/face subset `importModel` reads back, so `exportModel` then `importModel` is a closed round trip. Nothing this function writes is ever a construct this package's own importer would refuse.
+`exportModel` serializes a `NormalizedModel` to bytes for one of six targets: `"stl-binary"`, `"stl-ascii"`, `"obj"`, `"gltf"`, `"glb"`, or `"3mf"` -- exactly the static triangle geometry subset `importModel` reads back, so `exportModel` then `importModel` is a closed round trip. Nothing this function writes is ever a construct this package's own importer would refuse.
 
 ```ts
 import { exportModel } from "@voxelspy/importers";
@@ -113,7 +113,7 @@ const result = await exportModel(model, {
 
 **Determinism.** Every coordinate is formatted with the same rule (below); triangles are visited in a fixed order (instance array order, then each mesh's own index order); the binary STL header is a fixed 84-byte constant, never a timestamp. Two calls with a deeply-equal model and options produce byte-identical output and an identical digest.
 
-**Number formatting and round-trip exactness.** Every coordinate is written with `value.toString()` -- ECMA-262's `Number::toString`, the shortest decimal (or exponential, for extreme magnitudes) string that reads back, via `Number(...)`, to the exact same `Float64` value. This is locale-independent (unlike `toLocaleString`) and never truncates or pads precision (unlike `toFixed`). Because of this, `exportModel` then `importModel` is **bit-exact** for ASCII STL and OBJ whenever `targetUnit` is `"millimetre"` (any `targetAxis`: the Z-up/Y-up conversion is a sign flip and a coordinate permutation, never a multiply). For any other `targetUnit`, expect equality only to ordinary IEEE-754 double-precision tolerance (a few ULPs): dividing a millimetre value by a non-power-of-two unit scale factor (e.g. 25.4 for inch) and multiplying it back on re-import is not guaranteed to be an exact inverse -- that residual comes from the unit-conversion arithmetic itself, not from text formatting. **Binary STL is lossier still**: it stores each coordinate as an IEEE-754 `float32`, so its round trip is bounded by float32's relative precision (`2^-23`, about `1.2e-7`) regardless of unit -- documented and tested in `test/export.test.ts`.
+**Number formatting and round-trip exactness.** Every coordinate is written with `value.toString()` -- ECMA-262's `Number::toString`, the shortest decimal (or exponential, for extreme magnitudes) string that reads back, via `Number(...)`, to the exact same `Float64` value. This is locale-independent (unlike `toLocaleString`) and never truncates or pads precision (unlike `toFixed`). Because of this, `exportModel` then `importModel` is **bit-exact** for ASCII STL and OBJ whenever `targetUnit` is `"millimetre"` (any `targetAxis`: the Z-up/Y-up conversion is a sign flip and a coordinate permutation, never a multiply). For any other `targetUnit`, expect equality only to ordinary IEEE-754 double-precision tolerance (a few ULPs): dividing a millimetre value by a non-power-of-two unit scale factor (e.g. 25.4 for inch) and multiplying it back on re-import is not guaranteed to be an exact inverse -- that residual comes from the unit-conversion arithmetic itself, not from text formatting. **Binary STL is lossier still**: it stores each coordinate as an IEEE-754 `float32`, so its round trip is bounded by float32's relative precision (`2^-23`, about `1.2e-7`) regardless of unit -- documented and tested in `test/export.test.ts`. Finite coordinates that overflow float32 are refused with `ExportInputError` before an export result is returned, preserving the importer's finite-coordinate boundary.
 
 **Provenance and honesty.** Alongside `bytes`, every export reports the target format, `appliedModelToTarget`, the resolved `targetUnit`/`targetAxis`, `geometry.{triangleCount,vertexCount}` for what was actually written, and a SHA-256 `digest`. `warnings` always includes the unit/axis-not-declared entry above, plus (when applicable) `export.instances-flattened` and `export.degenerate-facet-normals` (a zero vector was written for a triangle with zero area after the output transform, since no normal could be computed). `notes` records informational context: STL facet normals are always computed geometrically from vertex winding order (the normalized model retains no original per-facet normal data to write instead), and OBJ output never references a material library.
 
@@ -121,8 +121,120 @@ const result = await exportModel(model, {
 
 Import enforces caller-provided limits plus fixed safety ceilings of 32 MiB input, 500,000 output triangles, and 1,500,000 OBJ vertices. Exceeded limits return `resource-limit`. Invalid syntax, non-finite coordinates, out-of-range references, truncated or trailing binary STL data, external OBJ material libraries, and unsupported OBJ statements fail closed. Degenerate triangles are preserved and reported rather than silently repaired.
 
-Export enforces the same fixed ceilings (`EXPORTER_SAFETY_LIMITS`, 500,000 triangles and 1,500,000 vertices), checked against the FLATTENED (post-instancing) geometry by cheap arithmetic over each mesh's existing buffer lengths -- before any output buffer is allocated -- and throws `ExportResourceLimitError` if exceeded: a file this package's own importer would refuse on the way in is not a file this package will produce on the way out. `exportModel` also validates the input model against `normalizedModelSchema` and throws `ExportUnsupportedTargetError` for an unrecognized `targetFormat` or `ExportInputError` for an invalid `targetUnit`/`targetAxis` or geometry that flattens to zero triangles.
+Export enforces the same fixed ceilings (`EXPORTER_SAFETY_LIMITS`, 500,000 triangles and 1,500,000 vertices), checked against the FLATTENED (post-instancing) geometry by cheap arithmetic over each mesh's existing buffer lengths -- before any output buffer is allocated -- and throws `ExportResourceLimitError` if exceeded. Encoded output is additionally bounded to the importer's 32 MiB input ceiling: binary output length is checked before allocation, and text output counts each ASCII line and newline before retaining it, joining the complete string, or encoding its bytes. A model below the geometry ceilings can therefore still be refused when a text representation would exceed the byte ceiling: a file this package's own importer would refuse on the way in is not a file this package will produce on the way out. `exportModel` also validates the input model against `normalizedModelSchema` and throws `ExportUnsupportedTargetError` for an unrecognized `targetFormat` or `ExportInputError` for an invalid `targetUnit`/`targetAxis` or geometry that flattens to zero triangles.
 
-OBJ polygon fan triangulation is deterministic but may not represent arbitrary concave or non-planar polygons as their author intended; every occurrence produces a warning. OBJ materials, smoothing, normals, and texture coordinates do not affect geometry output and are reported when encountered. glTF/GLB and 3MF Core static mesh geometry and node-hierarchy assemblies are supported for import as described above; glTF/GLB and 3MF export, animations, skins, morph targets, materials/colors/textures, curves, free-form surfaces, 3MF extensions (Beam Lattice, Slice, Production, Materials/Colours), and STEP remain unsupported by this package version.
+OBJ polygon fan triangulation is deterministic but may not represent arbitrary concave or non-planar polygons as their author intended; every occurrence produces a warning. OBJ materials, smoothing, normals, and texture coordinates do not affect geometry output and are reported when encountered. glTF/GLB and 3MF Core static mesh geometry and node-hierarchy assemblies are supported for import as described above; animations, skins, morph targets, materials/colors/textures, curves, free-form surfaces, 3MF extensions (Beam Lattice, Slice, Production, Materials/Colours) remain unsupported by this package version. STEP is available only through the optional native-WASM adapter described below.
 
 All parsing, serializing, and hashing use browser platform APIs. Normal import and export do not fetch or transmit model data.
+
+## Optional STEP native-WASM adapter
+
+STEP is an explicit opt-in: `importModel(request, { stepRuntime })` accepts
+`format: "step"` (and `inferFormat` recognizes `.step` / `.stp`). Without that
+runtime it returns `unsupported-input`. The default importer entry does not
+import a Node module, load a WASM asset, or fetch any source model. Runtime types
+and metadata are available from `@voxelspy/importers/step`; the separate
+`@voxelspy/importers/step-runtime-node` subpath exports
+`createNodeStepRuntime({ wasmBinary })`. The Node factory verifies the exact
+qualified WASM SHA-256 before loading `occt-import-js@0.0.23`.
+
+The adapter is pinned to wrapper source commit
+`c2148e54b456b571238d35cac037d304053d64b2`, whose OCCT submodule is
+`d2abb6d844231cb8f29be6894440874a4700e4a5` (OCCT 7.6.1). Tessellation provenance
+records those pins, the original source digest, native output unit, exact
+source-coordinate recovery scale and fixed settings: absolute linear deflection
+0.1 mm and angular deflection 0.5 radians. Deflection settings are mesher inputs,
+not independently certified global surface-deviation bounds. Output positions
+are Float64 and indices Uint32. Tessellation is approximate relative to source
+CAD; no native geometry is advertised as exact CAD data.
+
+Units come from the entities actually referenced by representation
+`GLOBAL_UNIT_ASSIGNED_CONTEXT` records. This bounded subset supports homogeneous
+SI micrometre, millimetre, centimetre or metre units, and inch/foot conversion
+units with exact decimal length-measure factors. Base units referenced by a
+conversion are resolved separately, not mistaken for mixed source contexts.
+Unknown, missing, cyclic, unsupported or mixed length units are refused.
+STEP carries no assumed up-axis here: supply `declaredAxis` or `userAxis`.
+Native output is requested in its detected source length unit; micrometre
+coordinates are recovered from millimetre output explicitly. Existing user
+unit/axis overrides reinterpret those source numbers through the ordinary
+recorded normalization transform.
+
+The wrapper returns a hierarchy with placements already baked into mesh
+coordinates. That hierarchy is retained with identity local transforms and an
+explicit source-to-canonical frame parent. Original placement matrices,
+instancing identities, names, face identifiers, colors, PMI and engineering
+metadata are not reconstructed from it. Missing, repeated or unreferenced
+returned mesh references, malformed geometry and observable empty leaves fail
+closed. Upstream OCCT transfer may heal geometry or omit unsupported entities
+without exposing a complete audit; every successful import warns about that
+uncertainty. No additional repair, alignment, recentering or silent rescaling
+is performed by this adapter. External reference entities and edition-3
+reference/anchor sections are refused before invoking the runtime.
+
+The lexical preflight caps input at 32 MiB, entity count at 200,000, nesting at
+64 and a statement at 1,000,000 characters. Returned geometry obeys the shared
+triangle/vertex ceilings and caller triangle limit; returned hierarchy is
+bounded to 50,000 nodes. These **post-meshing** checks cannot bound allocation
+inside synchronous OCCT. The distributed WASM has a 2 GiB linear-memory upper
+limit, which is neither a process nor total-memory limit, and exposes no
+internal work budget or cancellation callback. Callers must initialize and run
+the low-level adapter in a dedicated, terminable worker with an external wall
+clock deadline; do not run untrusted CAD conversion on the main UI or CLI
+thread. A timeout wrapper can throw `StepRuntimeResourceLimitError`, which
+`importModel` maps to `resource-limit`. Worker termination and fresh-worker
+recovery are caller responsibilities.
+
+The wrapper is LGPL-2.1; OCCT uses LGPL-2.1 with Open CASCADE exception 1.0.
+Redistribution must retain the notices/license texts and provide corresponding
+wrapper and OCCT source, their pinned submodule and build scripts, with a
+replaceable runtime boundary. The wrapper's build setup pins Emscripten 3.1.69.
+See the exact upstream
+[wrapper source](https://github.com/kovacsv/occt-import-js/tree/c2148e54b456b571238d35cac037d304053d64b2)
+and [OCCT source](https://github.com/Open-Cascade-SAS/OCCT/tree/d2abb6d844231cb8f29be6894440874a4700e4a5).
+The distributed glue uses dynamic Function construction; browser integrators
+must isolate its required script/WASM policy explicitly instead of weakening
+the ordinary application policy. No model data needs to leave the origin.
+
+### glTF, GLB and 3MF output frames and containers
+
+For `targetFormat: "gltf"` or `"glb"`, explicitly choose `targetUnit: "metre"`
+and `targetAxis: "right-handed-y-up"`; any other combination raises
+`ExportInputError` before output allocation. These values match the format's
+coordinate convention and are returned truthfully in `ExportResult`. glTF2.0
+uses one static triangle primitive, float32 POSITION values and uint32 indices.
+Positions are rounded deliberately to float32, with an explicit warning about
+precision loss and feature collapse; overflow to a non-finite float32 is
+refused. POSITION bounds describe the actual rounded values in the buffer.
+JSON glTF embeds one base64 data URI; GLB uses correctly aligned JSON/BIN
+chunks. Neither references external resources.
+
+For `targetFormat: "3mf"`, choose any supported `targetUnit` and explicitly
+select `targetAxis: "right-handed-z-up"`. The requested unit is declared in the
+model XML (`micrometre` maps to the Core `micron` token). Y-up is refused rather
+than written under an incorrect convention. Decimal coordinate formatting
+retains Float64 precision; ordinary unit-conversion rounding still applies.
+The archive has exactly three fixed OPC paths: `[Content_Types].xml`,
+`_rels/.rels` and `3D/3dmodel.model`. It is a deterministic stored ZIP with UTF-8
+names, CRC-32 integrity and fixed 1980 timestamps; no compression, ZIP64,
+external relationships or optional 3MF extensions are emitted.
+
+Every output follows the existing placed-instance traversal and frame
+conversion. These three writers deliberately flatten source meshes and
+hierarchies into one placed triangle mesh, even though the formats themselves
+support assemblies. The warning states that limitation; source mesh identities,
+instancing, engineering provenance, materials and non-geometric data are not
+claimed to survive. No recentering, alignment, welding or repair is performed.
+The embedded format frames remove the need to supply units/axes when reopening
+these exports. Existing STL/OBJ outputs remain byte-identical for previously
+accepted inputs.
+
+All writers enforce the same 500,000 expanded triangles / 1,500,000 expanded
+vertices and 32 MiB encoded-output ceiling. glTF/GLB preflight binary/base64
+sizes before their buffers are allocated and check final metadata/chunk sizes.
+3MF counts each ASCII XML line plus fixed ZIP/OPC overhead before retaining it,
+joining the complete model string or encoding the archive. Bounds apply to
+expanded geometry, not just one reused source mesh. Tests use independent
+binary, XML, ZIP and CRC checks plus this package's importer roundtrips,
+including all declared 3MF units, deterministic digests, orientation and refusal
+at encoded byte boundaries.

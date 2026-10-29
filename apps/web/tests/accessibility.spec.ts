@@ -913,8 +913,8 @@ test("primary controls meet the 44x44 CSS px touch target minimum", async ({
   page,
 }, testInfo) => {
   test.skip(
-    testInfo.project.name !== "mobile-chromium",
-    "touch targets are only asserted on the mobile project",
+    !testInfo.project.name.startsWith("mobile-"),
+    "touch targets are asserted on both mobile browser projects",
   );
   await page.goto("/compare/");
 

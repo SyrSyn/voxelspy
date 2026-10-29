@@ -29,6 +29,11 @@ import {
 import { parseObj } from "./obj.js";
 import type { ParsedMesh } from "./parse.js";
 import { parseStl } from "./stl.js";
+import {
+  detectStepSourceUnit,
+  importStepModel,
+  type StepRuntime,
+} from "./step.js";
 import { parseThreeMf, type ParsedThreeMf } from "./threemf.js";
 import type { ArchiveSafetyLimits } from "./zip.js";
 
@@ -79,7 +84,7 @@ export const IMPORTER_SAFETY_LIMITS = Object.freeze({
 export const importerDescriptor = importerDescriptorSchema.parse({
   id: "voxelspy.mesh",
   version: "0.1.0",
-  formats: ["stl", "obj", "gltf", "glb", "3mf"],
+  formats: ["stl", "obj", "gltf", "glb", "3mf", "step"],
   mediaTypes: [
     "model/stl",
     "application/sla",
@@ -88,14 +93,15 @@ export const importerDescriptor = importerDescriptorSchema.parse({
     "model/gltf+json",
     "model/gltf-binary",
     "model/3mf",
+    "model/step",
   ],
-  extensions: ["stl", "obj", "gltf", "glb", "3mf"],
+  extensions: ["stl", "obj", "gltf", "glb", "3mf", "step", "stp"],
   capabilities: {
     // glTF/GLB node hierarchies and 3MF build-item/component hierarchies
     // are both imported as `placement: { kind: "hierarchy" }`; STL/OBJ
     // always produce a single flat instance.
     assemblies: true,
-    tessellationProvenance: false,
+    tessellationProvenance: true,
     // Every resource this importer reads (glTF/GLB buffers and, defensively,
     // images; every 3MF ZIP entry) must be embedded in the input bytes
     // themselves; anything external -- a glTF external URI, a 3MF
@@ -123,7 +129,10 @@ type ImportFailureCode =
   | "resource-limit"
   | "needs-input";
 
-export async function importModel(input: unknown): Promise<ImportResult> {
+export async function importModel(
+  input: unknown,
+  runtime: { readonly stepRuntime?: StepRuntime } = {},
+): Promise<ImportResult> {
   const parsed = importRequestSchema.safeParse(input);
   if (!parsed.success) {
     return failure(
@@ -143,12 +152,38 @@ export async function importModel(input: unknown): Promise<ImportResult> {
     request.format !== "obj" &&
     request.format !== "gltf" &&
     request.format !== "glb" &&
-    request.format !== "3mf"
+    request.format !== "3mf" &&
+    request.format !== "step"
   ) {
     return failure(
       "unsupported-input",
       `Format ${request.format} is not supported.`,
     );
+  }
+
+  if (request.format === "step") {
+    if (!runtime.stepRuntime)
+      return failure(
+        "unsupported-input",
+        "STEP requires an explicitly configured, isolated native-WASM runtime.",
+      );
+    try {
+      const detectedUnit = detectStepSourceUnit(request.bytes);
+      const frame = resolveFrame(request, detectedUnit, "unknown");
+      if ("result" in frame) return frame.result;
+      const model = await importStepModel(request, frame, runtime.stepRuntime, {
+        triangleCount: IMPORTER_SAFETY_LIMITS.triangleCount,
+        vertexCount: IMPORTER_SAFETY_LIMITS.vertexCount,
+      });
+      const result = importResultSchema.parse({
+        contractVersion: 1,
+        ok: true,
+        model,
+      });
+      return importExchangeSchema.parse({ request, result }).result;
+    } catch (error) {
+      return mapImportError(error);
+    }
   }
 
   // 3MF Core always declares (or, absent a `unit` attribute, spec-defaults)
@@ -287,10 +322,11 @@ function mapImportError(error: unknown): ImportResult {
  * than restating the list, so adding a format widens them automatically
  * instead of leaving a stale literal union behind.
  */
-export type SupportedFormat = "stl" | "obj" | "gltf" | "glb" | "3mf";
+export type SupportedFormat = "stl" | "obj" | "gltf" | "glb" | "3mf" | "step";
 
 export function inferFormat(sourceName: string): SupportedFormat | undefined {
   const extension = /\.([^.]+)$/u.exec(sourceName)?.[1]?.toLowerCase();
+  if (extension === "step" || extension === "stp") return "step";
   return extension === "stl" ||
     extension === "obj" ||
     extension === "gltf" ||

@@ -174,3 +174,29 @@ assert.match(
 console.log(
   `Verified ${routes.length} static routes, metadata, local boundary, documentation content, and hosting headers.`,
 );
+
+// STEP's dynamic code policy is confined to its replaceable isolated worker.
+assert.ok(
+  !cspLine.includes("'unsafe-eval'"),
+  "page CSP must prohibit dynamic evaluation",
+);
+assert.match(
+  headers,
+  /\/step\/occt\.worker\.js\n\s+! Content-Security-Policy\n\s+Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval';/u,
+);
+for (const name of [
+  "occt.worker.js",
+  "occt-import-js.js",
+  "occt-import-js.wasm",
+  "README.md",
+  "manifest.json",
+  "license.occt-import-js.txt",
+  "license.occt.txt",
+  "OCCT_LGPL_EXCEPTION.txt",
+  "sources/occt-import-js-c2148e54.tar.gz",
+  "sources/occt-7.6.1-d2abb6d8.tar.gz",
+])
+  assert.ok(
+    (await readFile(path.join(root, "dist/step", name))).byteLength > 0,
+    `STEP distribution lacks ${name}`,
+  );

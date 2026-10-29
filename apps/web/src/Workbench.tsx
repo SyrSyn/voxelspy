@@ -1,4 +1,19 @@
-import { OrbitControls } from "@react-three/drei";
+import { ReviewPanel } from "./ReviewPanel";
+import {
+  cameraToComparison,
+  cameraFromComparison,
+  emptyReview,
+  validateReview,
+  nextReviewId,
+  REVIEW_TIMESTAMP,
+  type ReviewContent,
+} from "./review";
+import {
+  savedViewSchema,
+  type SavedView,
+  type Markup,
+} from "@voxelspy/contracts";
+import { Line, OrbitControls } from "@react-three/drei";
 import { Canvas, useThree } from "@react-three/fiber";
 import type {
   AnalysisResult,
@@ -22,6 +37,8 @@ import {
   BufferGeometry,
   DoubleSide,
   Matrix4,
+  OrthographicCamera,
+  PerspectiveCamera,
   Plane,
   Vector3,
 } from "three";
@@ -33,11 +50,13 @@ import type {
 import { summarizeModelComparisonAsync } from "./summary-worker-client";
 import { probeWebGLAvailability } from "./capability";
 
-type ViewKind = "baseline" | "difference" | "candidate";
+type ViewKind = "baseline" | "difference" | "candidate" | "overlay";
 type CameraState = {
   position: [number, number, number];
   target: [number, number, number];
   revision: number;
+  up?: [number, number, number];
+  projection?: SavedView["camera"]["projection"];
 };
 type CompleteOutcome = Extract<
   AnalysisResult["outcome"],
@@ -54,13 +73,19 @@ type AnalysisMetric = CompleteOutcome["metrics"][number];
  * making every caller re-derive or re-check readiness itself.
  */
 export interface WorkbenchSessionPanelProps {
-  onSave: (summary: ModelComparisonPresentationSummary) => void;
+  onSave: (
+    summary: ModelComparisonPresentationSummary,
+    reviewContent?: ReviewContent,
+  ) => void;
   status: "idle" | "saving" | "error";
   error?: string | undefined;
 }
 
 export interface WorkbenchReportPanelProps {
-  onExport: (summary: ModelComparisonPresentationSummary) => void;
+  onExport: (
+    summary: ModelComparisonPresentationSummary,
+    reviewContent?: ReviewContent,
+  ) => void;
   status: "idle" | "exporting" | "error";
   error?: string | undefined;
 }
@@ -79,6 +104,7 @@ export interface WorkbenchProps {
    *  being the whole page -- pass 2 so its title sits beneath that. */
   headingLevel?: 1 | 2;
   enableKeyboardShortcuts?: boolean;
+  initialReview?: ReviewContent | undefined;
   sessionPanel?: WorkbenchSessionPanelProps;
   reportPanel?: WorkbenchReportPanelProps;
 }
@@ -286,20 +312,49 @@ function CameraBridge({
 }) {
   const controls = useRef<OrbitControlsImpl>(null);
   const interacting = useRef(false);
-  const { camera, invalidate } = useThree();
+  const { camera, invalidate, size } = useThree();
   useEffect(() => {
     if (!controls.current || interacting.current) return;
     camera.position.set(...state.position);
+    camera.up.set(...(state.up ?? [0, 1, 0]));
+    if (camera instanceof PerspectiveCamera)
+      camera.fov =
+        state.projection?.kind === "perspective"
+          ? state.projection.verticalFieldOfViewDegrees
+          : 38;
+    if (
+      camera instanceof OrthographicCamera &&
+      state.projection?.kind === "orthographic"
+    ) {
+      const half = state.projection.verticalSpanMillimetres / 2;
+      camera.top = half;
+      camera.bottom = -half;
+      camera.left = (-half * size.width) / size.height;
+      camera.right = (half * size.width) / size.height;
+      camera.zoom = 1;
+    }
     controls.current.target.set(...state.target);
     camera.updateProjectionMatrix();
     controls.current.update();
     invalidate();
-  }, [camera, invalidate, state]);
+  }, [camera, invalidate, state, size]);
   const send = () => {
     if (!controls.current) return;
     publish({
       position: camera.position.toArray() as [number, number, number],
       target: controls.current.target.toArray() as [number, number, number],
+      up: camera.up.toArray() as [number, number, number],
+      projection:
+        camera instanceof OrthographicCamera
+          ? {
+              kind: "orthographic",
+              verticalSpanMillimetres:
+                (camera.top - camera.bottom) / camera.zoom,
+            }
+          : {
+              kind: "perspective",
+              verticalFieldOfViewDegrees: (camera as PerspectiveCamera).fov,
+            },
     });
   };
   return (
@@ -412,6 +467,7 @@ export function regionSurfaceGeometry(
 }
 
 function RegionSurfaces({
+  visibleModels = [true, true],
   analysis,
   baseline,
   candidate,
@@ -422,6 +478,7 @@ function RegionSurfaces({
   origin,
   sceneSize,
 }: {
+  visibleModels?: readonly [boolean, boolean];
   analysis: AnalysisResult;
   baseline: NormalizedModel;
   candidate: NormalizedModel;
@@ -466,6 +523,10 @@ function RegionSurfaces({
   return (
     <>
       {surfaces.map(({ region, geometry }) => {
+        const role =
+          region.geometry?.model ??
+          (region.category === "removed" ? "baseline" : "candidate");
+        if (!visibleModels[role === "baseline" ? 0 : 1]) return null;
         const color = semanticColors[region.category];
         const isSelected = selected === region.id;
         if (
@@ -524,6 +585,10 @@ function RegionSurfaces({
 }
 
 function Scene({
+  visibleModels,
+  reviewMarkups,
+  selectedMarkupId,
+  reviewPlanes,
   kind,
   baseline,
   candidate,
@@ -543,6 +608,10 @@ function Scene({
   describedBy,
 }: WorkbenchProps & {
   kind: ViewKind;
+  visibleModels: readonly [boolean, boolean];
+  reviewMarkups: readonly Markup[];
+  selectedMarkupId: Markup["id"] | undefined;
+  reviewPlanes: SavedView["sectionPlanes"] | undefined;
   camera: CameraState;
   clip: number;
   selected: RegionId | undefined;
@@ -574,11 +643,20 @@ function Scene({
     origin,
   ]);
   const clipPlane = useMemo(() => {
+    if (reviewPlanes)
+      return reviewPlanes.map(
+        (plane) =>
+          new Plane(
+            new Vector3(...plane.normal),
+            plane.constantMillimetres +
+              new Vector3(...plane.normal).dot(origin),
+          ),
+      );
     if (clip >= 100) return [];
     const min = bounds.min.x;
     const max = bounds.max.x;
     return [new Plane(new Vector3(-1, 0, 0), min + (clip / 100) * (max - min))];
-  }, [bounds, clip]);
+  }, [bounds, clip, reviewPlanes, origin]);
   const fallback = (
     <div className="render-fallback" role="status">
       3D preview unavailable. Imported details and ranked findings remain
@@ -596,6 +674,8 @@ function Scene({
   return (
     <RenderBoundary fallback={fallback}>
       <Canvas
+        key={camera.projection?.kind ?? "perspective"}
+        orthographic={camera.projection?.kind === "orthographic"}
         role="img"
         aria-label={accessibleLabel}
         aria-describedby={describedBy}
@@ -626,7 +706,7 @@ function Scene({
         <color attach="background" args={["#111815"]} />
         <ambientLight intensity={1.35} />
         <directionalLight position={[4, 8, 6]} intensity={2.2} />
-        {kind === "baseline" && (
+        {kind === "baseline" && visibleModels[0] && (
           <ModelMeshes
             model={baseline}
             color={palette.baseline}
@@ -635,7 +715,7 @@ function Scene({
             modelToComparison={baselineToComparison}
           />
         )}
-        {kind === "candidate" && (
+        {kind === "candidate" && visibleModels[1] && (
           <ModelMeshes
             model={candidate}
             color={palette.candidate}
@@ -644,38 +724,96 @@ function Scene({
             modelToComparison={candidateToComparison}
           />
         )}
-        {kind === "difference" && (
+        {(kind === "difference" || kind === "overlay") && (
           <>
-            <ModelMeshes
-              model={baseline}
-              color={palette.differenceBaseline}
-              opacity={0.24}
-              wireframe
-              clippingPlanes={clipPlane}
-              origin={origin}
-              modelToComparison={baselineToComparison}
-            />
-            <ModelMeshes
-              model={candidate}
-              color={palette.differenceCandidate}
-              opacity={0.58}
-              clippingPlanes={clipPlane}
-              origin={origin}
-              modelToComparison={candidateToComparison}
-            />
-            <RegionSurfaces
-              analysis={analysis}
-              baseline={baseline}
-              candidate={candidate}
-              baselineToComparison={baselineToComparison}
-              candidateToComparison={candidateToComparison}
-              selected={selected}
-              select={select}
-              origin={origin}
-              sceneSize={sceneSize}
-            />
+            {visibleModels[0] && (
+              <ModelMeshes
+                model={baseline}
+                color={palette.differenceBaseline}
+                opacity={kind === "overlay" ? 0.5 : 0.24}
+                wireframe
+                clippingPlanes={clipPlane}
+                origin={origin}
+                modelToComparison={baselineToComparison}
+              />
+            )}
+            {visibleModels[1] && (
+              <ModelMeshes
+                model={candidate}
+                color={palette.differenceCandidate}
+                opacity={0.58}
+                clippingPlanes={clipPlane}
+                origin={origin}
+                modelToComparison={candidateToComparison}
+              />
+            )}
+            {kind === "difference" && (
+              <RegionSurfaces
+                visibleModels={visibleModels}
+                analysis={analysis}
+                baseline={baseline}
+                candidate={candidate}
+                baselineToComparison={baselineToComparison}
+                candidateToComparison={candidateToComparison}
+                selected={selected}
+                select={select}
+                origin={origin}
+                sceneSize={sceneSize}
+              />
+            )}
           </>
         )}
+        {reviewMarkups
+          .filter((markup) => markup.visible)
+          .map((markup) => {
+            const convert = (point: {
+              frame:
+                { kind: "comparison" } | { kind: "model"; modelId: string };
+              pointMillimetres: readonly [number, number, number];
+            }) => {
+              const value = new Vector3(...point.pointMillimetres);
+              if (point.frame.kind === "model")
+                value.applyMatrix4(
+                  point.frame.modelId === baseline.id
+                    ? baselineToComparison
+                    : candidateToComparison,
+                );
+              return value.sub(origin);
+            };
+            const first = convert(
+              markup.kind === "callout" ? markup.anchor : markup.start,
+            );
+            const last =
+              markup.kind === "distance" ? convert(markup.end) : undefined;
+            if (
+              [...first.toArray(), ...(last?.toArray() ?? [])].some(
+                (value) =>
+                  !Number.isFinite(value) ||
+                  Math.abs(value) > MAX_PRECISION_SAFE_RENDER_SPAN_MILLIMETRES,
+              )
+            )
+              return null;
+            const color =
+              selectedMarkupId === markup.id ? "#ffe08a" : "#ffffff";
+            return (
+              <group key={markup.id}>
+                <mesh position={first}>
+                  <sphereGeometry
+                    args={[Math.max(sceneSize * 0.009, 0.01), 8, 6]}
+                  />
+                  <meshBasicMaterial color={color} depthTest={false} />
+                </mesh>
+                {last && (
+                  <Line
+                    points={[first, last]}
+                    color={color}
+                    lineWidth={2}
+                    depthTest={false}
+                  />
+                )}
+              </group>
+            );
+          })}
         <CameraBridge state={camera} publish={publish} />
       </Canvas>
     </RenderBoundary>
@@ -1114,6 +1252,7 @@ export function Workbench({
   enableKeyboardShortcuts = true,
   sessionPanel,
   reportPanel,
+  initialReview,
 }: WorkbenchProps) {
   const baselineToComparison = useMemo(
     () => new Matrix4().fromArray(analysis.baseline.modelToComparison),
@@ -1140,6 +1279,19 @@ export function Workbench({
   );
   const [camera, setCamera] = useState(initial);
   const [clip, setClip] = useState(100);
+  const [review, setReview] = useState<ReviewContent>(() =>
+    emptyReview(analysis, [baseline, candidate]),
+  );
+  const [visibleModels, setVisibleModels] = useState<[boolean, boolean]>([
+    true,
+    true,
+  ]);
+  const [selectedMarkupId, setSelectedMarkupId] = useState<Markup["id"]>();
+  const [reviewPlanes, setReviewPlanes] =
+    useState<SavedView["sectionPlanes"]>();
+  const [mainView, setMainView] = useState<ViewKind>("difference");
+  const [reviewError, setReviewError] = useState<string>();
+
   const [paletteId, setPaletteId] = useState<ModelPaletteId>("neutral");
   const [summaryState, setSummaryState] = useState<GeometrySummaryState>({
     status: "loading",
@@ -1254,6 +1406,104 @@ export function Workbench({
     return () => window.removeEventListener("keydown", listener);
   }, [enableKeyboardShortcuts, initial, ordered, select, selected]);
 
+  const restoreView = (view: SavedView) => {
+    const restored = cameraFromComparison(
+      view.camera,
+      origin.toArray() as [number, number, number],
+    );
+    setCamera((current) => ({ ...restored, revision: current.revision + 1 }));
+    setVisibleModels([
+      view.visibility.find((item) => item.modelId === baseline.id)?.visible ??
+        false,
+      view.visibility.find((item) => item.modelId === candidate.id)?.visible ??
+        false,
+    ]);
+    setSelected(view.selectedRegionIds[0]);
+    setSelectedMarkupId(view.selectedMarkupIds[0]);
+    setReviewPlanes(view.sectionPlanes);
+    setClip(100);
+    setMainView(view.displayMode);
+    setReview((current) => ({ ...current, activeSavedViewId: view.id }));
+  };
+  useEffect(() => {
+    try {
+      const content = validateReview(
+        initialReview ?? emptyReview(analysis, [baseline, candidate]),
+        analysis,
+        [baseline, candidate],
+      );
+      setReview(content);
+      setSelectedMarkupId(undefined);
+      setVisibleModels([true, true]);
+      setReviewPlanes(undefined);
+      setMainView("difference");
+      setClip(100);
+      setCamera(initial);
+      setSelected(ordered[0]);
+      setReviewError(undefined);
+      const active = content.savedViews.find(
+        (view) => view.id === content.activeSavedViewId,
+      );
+      if (active) restoreView(active);
+    } catch (reason) {
+      setReviewError(
+        reason instanceof Error
+          ? reason.message
+          : "Review could not be restored.",
+      );
+    }
+  }, [analysis, baseline, candidate, initialReview, initial]);
+  const cameraInComparison = cameraToComparison(
+    camera,
+    origin.toArray() as [number, number, number],
+  );
+  const captureView = (name: string) => {
+    const view = savedViewSchema.parse({
+      contractVersion: 1,
+      id: nextReviewId("view.user", [
+        ...review.savedViews.map((item) => item.id),
+        ...review.markups.map((item) => item.id),
+      ]),
+      name,
+      createdAt: REVIEW_TIMESTAMP,
+      frame: "comparison",
+      camera: cameraInComparison,
+      visibility: [
+        { modelId: baseline.id, visible: visibleModels[0] },
+        { modelId: candidate.id, visible: visibleModels[1] },
+      ],
+      selectedFindingIds: [],
+      selectedMarkupIds: selectedMarkupId ? [selectedMarkupId] : [],
+      selectedRegionIds: selected ? [selected] : [],
+      displayMode: mainView,
+      sectionPlanes:
+        reviewPlanes ??
+        (clip >= 100
+          ? []
+          : [
+              {
+                frame: "comparison",
+                normal: [-1, 0, 0],
+                constantMillimetres:
+                  renderFrame.bounds.min.x +
+                  (clip / 100) *
+                    (renderFrame.bounds.max.x - renderFrame.bounds.min.x),
+              },
+            ]),
+    });
+    const next = validateReview(
+      {
+        ...review,
+        savedViews: [...review.savedViews, view],
+        activeSavedViewId: view.id,
+      },
+      analysis,
+      [baseline, candidate],
+    );
+    setReview(next);
+  };
+  const reviewSnapshot =
+    review.markups.length || review.savedViews.length ? review : undefined;
   const semantics =
     analysis.outcome.state === "complete"
       ? analysis.outcome.semantics.replaceAll("-", " ")
@@ -1286,6 +1536,10 @@ export function Workbench({
           candidate={candidate}
           analysis={analysis}
           camera={camera}
+          visibleModels={visibleModels}
+          reviewMarkups={review.markups}
+          selectedMarkupId={selectedMarkupId}
+          reviewPlanes={reviewPlanes}
           clip={clip}
           selected={selected}
           publish={publish}
@@ -1356,7 +1610,7 @@ export function Workbench({
               className="button button-secondary"
               onClick={() => {
                 if (summaryState.status !== "ready") return;
-                sessionPanel.onSave(summaryState.summary);
+                sessionPanel.onSave(summaryState.summary, reviewSnapshot);
               }}
               disabled={
                 sessionPanel.status === "saving" ||
@@ -1380,7 +1634,7 @@ export function Workbench({
               className="button button-secondary"
               onClick={() => {
                 if (summaryState.status !== "ready") return;
-                reportPanel.onExport(summaryState.summary);
+                reportPanel.onExport(summaryState.summary, reviewSnapshot);
               }}
               disabled={
                 reportPanel.status === "exporting" ||
@@ -1431,15 +1685,68 @@ export function Workbench({
       <div className="workbench-toolbar">
         <div className="toolbar-controls">
           <label>
+            <input
+              type="checkbox"
+              autoComplete="off"
+              checked={visibleModels[0]}
+              onChange={(event) =>
+                setVisibleModels([
+                  event.currentTarget.checked,
+                  visibleModels[1],
+                ])
+              }
+            />
+            Show baseline model
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              autoComplete="off"
+              checked={visibleModels[1]}
+              onChange={(event) =>
+                setVisibleModels([
+                  visibleModels[0],
+                  event.currentTarget.checked,
+                ])
+              }
+            />
+            Show candidate model
+          </label>
+          <label>
+            Primary view{" "}
+            <select
+              aria-label="Primary view"
+              value={mainView}
+              onChange={(event) =>
+                setMainView(event.currentTarget.value as ViewKind)
+              }
+            >
+              <option value="difference">Difference</option>
+              <option value="overlay">Overlay</option>
+              <option value="baseline">Baseline</option>
+              <option value="candidate">Candidate</option>
+            </select>
+          </label>
+
+          <label>
             Cross section{" "}
             <input
               type="range"
               min="0"
               max="100"
               value={clip}
-              onChange={(event) => setClip(Number(event.currentTarget.value))}
+              onChange={(event) => {
+                setReviewPlanes(undefined);
+                setClip(Number(event.currentTarget.value));
+              }}
             />
-            <output>{clip === 100 ? "Off" : `${clip}%`}</output>
+            <output>
+              {reviewPlanes?.length
+                ? `${reviewPlanes.length} saved plane(s)`
+                : clip === 100
+                  ? "Off"
+                  : `${clip}%`}
+            </output>
           </label>
           <label>
             Model colors
@@ -1460,7 +1767,7 @@ export function Workbench({
         <span>Orbit, pan, and zoom are synchronized across all views.</span>
       </div>
       <div className="workbench-stage">
-        {renderViewport("difference")}
+        {renderViewport(mainView)}
         <aside className="evidence-rail" aria-labelledby="findings-title">
           <header className="evidence-summary">
             <span className="eyebrow">Comparison summary</span>
@@ -1588,6 +1895,24 @@ export function Workbench({
           {renderViewport("candidate")}
         </div>
       </div>
+      <ReviewPanel
+        review={review}
+        onChange={(content) => {
+          setReview(validateReview(content, analysis, [baseline, candidate]));
+          if (
+            selectedMarkupId &&
+            !content.markups.some((markup) => markup.id === selectedMarkupId)
+          )
+            setSelectedMarkupId(undefined);
+        }}
+        onCapture={captureView}
+        onRestore={restoreView}
+        onSelect={setSelectedMarkupId}
+        selectedMarkupId={selectedMarkupId}
+        selectedAnchor={selectedRegion?.anchor}
+        cameraDescription={JSON.stringify(cameraInComparison)}
+      />
+      {reviewError && <p role="alert">{reviewError}</p>}
       <a className="details-jump" href="#analysis-details">
         View analysis details ↓
       </a>

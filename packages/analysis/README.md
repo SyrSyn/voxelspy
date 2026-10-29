@@ -525,3 +525,67 @@ for (const warning of report.warnings) {
   console.log(warning.severity, warning.code, warning.message);
 }
 ```
+
+## Bounded self-intersection evidence
+
+`checkSelfIntersections(model, options?)` is an opt-in diagnostic over the
+**transformed Float64 triangle surface**, not an exact CAD or ideal-transform
+claim. It returns serializable `contractVersion: 1` data, including the method
+version, comparison transform, active pair limits, source model ID and bounded
+pair evidence. Each triangle locator preserves its flattened index, source
+mesh/instance IDs, mesh-local triangle index and placed vertex positions.
+Neither the input buffers nor their coordinate system are modified.
+
+The predicate domain is explicit: referenced transformed coordinates must be
+finite, have absolute magnitude at most `1e12` mm, and be exact multiples of
+`2^-128` mm. Float64 values are decoded exactly into integers of at most 168
+bits. Plane-side, segment/triangle, projected segment/segment and rational
+intersection-vertex predicates then use bounded BigInt arithmetic, without an
+epsilon or rounded intersection points. Exactness applies only to this
+validated, already-rounded surface. Out-of-domain coordinates and degenerate
+triangles return `state: "indeterminate"`; no triangles are repaired or skipped
+to obtain a clear outcome.
+
+Contact semantics are deliberately explicit:
+
+- `duplicate`: the same three coordinates, irrespective of winding or source
+  vertex indices, including coincident instances.
+- `coplanar-overlap`: an intersection with positive area.
+- `coplanar-contact`: a coplanar segment contact without positive area.
+- `point-contact`: a single intersection point.
+- `noncoplanar-intersection`: a noncoplanar intersection segment. This includes
+  boundary contact and does **not** assert strict interior penetration or
+  volumetric interference.
+
+Ordinary adjacency is excluded only when every vertex of the intersection is
+confined to the shared coordinate vertex or edge. A larger overlap or crossing
+between adjacent triangles is still reported. Adjacency is based on bit-exact
+placed coordinate equality, including across mesh and instance boundaries;
+indices are never silently welded or changed. A complete result with zero
+reported pairs is only a statement about these contact rules and predicate
+domain, never a watertightness, printable-solid or physical-validity verdict.
+
+The existing spatial index supplies broad-phase candidates. They are examined
+in ascending flattened triangle-pair order. `pairCount` on complete results is
+the full detected total even when `maxReportedPairs` truncates the prefix.
+Incomplete results instead have a reason and an `observedPairCount` lower
+bound, retain only verified evidence, and never expose a total or a clear
+verdict. Reporting zero pairs (`maxReportedPairs: 0`) still computes the count.
+
+The diagnostic caps expanded input at 50,000 triangles / 150,000 vertices,
+broad-phase candidates at 1,000,000 and reported pairs at 2,000. Defaults are
+100,000 candidate pairs and 100 reported pairs. Model expansion, spatial-index
+work, sorting and predicate work share the existing charge-before-work budget;
+each exact candidate predicate is charged 4,096 structural work units before
+any BigInt computation. These charges and the inherited memory estimate are
+safety accounting, not calibrated runtime or byte-exact heap predictions.
+Exhaustion returns an indeterminate result, including when a dense model cannot
+finish within its pair allowance. Invalid options throw `RangeError`; invalid
+model/transform contracts retain schema validation errors. Unexpected internal
+errors propagate rather than being relabeled as geometric uncertainty.
+
+An optional `isCancelled()` callback is checked throughout charged work and
+returns an indeterminate cancellation result. Input contract validation occurs
+synchronously before cooperative cancellation. A Web Worker can be terminated
+for cancellation even when no callback can be shared; no shared memory is
+required. The callback is never part of the serialized result.

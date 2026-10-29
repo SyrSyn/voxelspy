@@ -1,4 +1,5 @@
 import { analyzeModelPair, inspectModel } from "@voxelspy/analysis";
+import { handleOperation } from "./operations-handler.js";
 
 import type {
   EngineWorkerRequest,
@@ -60,6 +61,10 @@ export function createEngineWorkerHandler(
 ): (event: MessageEvent<EngineWorkerRequest>) => void {
   return (event) => {
     const data = event.data;
+    if (data.kind !== "inspect" && data.kind !== "compare") {
+      handleOperation(scope, data);
+      return;
+    }
     let response: EngineWorkerResponse;
     try {
       if (data.kind === "inspect") {

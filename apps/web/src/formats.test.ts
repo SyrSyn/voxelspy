@@ -25,13 +25,13 @@ import {
 describe("ACCEPTED_UPLOAD_EXTENSIONS / ACCEPTED_UPLOAD_ACCEPT", () => {
   it("includes every format the importer supports, and only those", () => {
     expect([...ACCEPTED_UPLOAD_EXTENSIONS].sort()).toEqual(
-      ["3mf", "glb", "gltf", "obj", "stl"].sort(),
+      ["3mf", "glb", "gltf", "obj", "stl", "step", "stp"].sort(),
     );
   });
 
   it("derives the file input accept attribute from the same list", () => {
     expect(ACCEPTED_UPLOAD_ACCEPT.split(",").sort()).toEqual(
-      [".stl", ".obj", ".gltf", ".glb", ".3mf"].sort(),
+      [".stl", ".obj", ".gltf", ".glb", ".3mf", ".step", ".stp"].sort(),
     );
   });
 });
@@ -47,7 +47,7 @@ describe("hasAcceptedExtension", () => {
   });
 
   it("rejects an unsupported extension", () => {
-    expect(hasAcceptedExtension("model.step")).toBe(false);
+    expect(hasAcceptedExtension("model.fbx")).toBe(false);
     expect(hasAcceptedExtension("model.fbx")).toBe(false);
     expect(hasAcceptedExtension("model")).toBe(false);
   });
@@ -71,14 +71,14 @@ describe("requireSupportedFormat", () => {
   });
 
   it("throws an honest error naming the supported subset for an unsupported extension", () => {
-    expect(() => requireSupportedFormat("part.step")).toThrow(
+    expect(() => requireSupportedFormat("part.fbx")).toThrow(
       /not a supported file/u,
     );
     try {
-      requireSupportedFormat("part.step");
+      requireSupportedFormat("part.fbx");
       expect.unreachable();
     } catch (error) {
-      expect((error as Error).message).toContain("part.step");
+      expect((error as Error).message).toContain("part.fbx");
       expect((error as Error).message).toContain(ACCEPTED_FORMATS_LABEL);
     }
   });
@@ -182,5 +182,25 @@ describe("resolveFrameOptions", () => {
     expect(
       resolveFrameOptions("gltf", "expert", "", "right-handed-z-up"),
     ).toEqual({ userAxis: "right-handed-z-up" });
+  });
+});
+
+describe("STEP source frame", () => {
+  it("recognizes both extensions without inventing an embedded up-axis", () => {
+    expect(requireSupportedFormat("part.STEP")).toBe("step");
+    expect(requireSupportedFormat("part.stp")).toBe("step");
+    expect(defaultFrameForFormat("step")).toEqual({
+      unit: "",
+      axis: "right-handed-z-up",
+    });
+    expect(
+      resolveFrameOptions("step", "default", "", "right-handed-z-up"),
+    ).toEqual({ declaredAxis: "right-handed-z-up" });
+    expect(
+      resolveFrameOptions("step", "expert", "inch", "right-handed-y-up"),
+    ).toEqual({ userUnit: "inch", userAxis: "right-handed-y-up" });
+    expect(formatFrameDeclarationSummary("step")).toContain(
+      "does not declare an up-axis",
+    );
   });
 });

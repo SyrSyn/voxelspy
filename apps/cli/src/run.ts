@@ -1,3 +1,8 @@
+import {
+  measureCommand,
+  sectionCommand,
+  printabilityCommand,
+} from "./commands/tools.js";
 import { clearanceCommand, CLEARANCE_HELP } from "./commands/clearance.js";
 import { compareCommand, COMPARE_HELP } from "./commands/compare.js";
 import { inspectCommand, INSPECT_HELP } from "./commands/inspect.js";
@@ -13,6 +18,9 @@ Commands:
   compare <baseline> <candidate>   sampled surface-distance comparison
   inspect <model>                  single-model topology and watertightness
   clearance <first> <second>       fit/clearance check between two parts
+  measure <model>                  extent, point/surface or snap measurements
+  section <model>                  plane/mesh intersection polylines
+  printability <model>             bounded manufacturing evidence
 
 Run "voxelspy <command> --help" for command-specific options.
 
@@ -39,6 +47,12 @@ export async function run(
         return await inspectCommand(rest, io);
       case "clearance":
         return await clearanceCommand(rest, io);
+      case "measure":
+        return await measureCommand(rest, io);
+      case "section":
+        return await sectionCommand(rest, io);
+      case "printability":
+        return await printabilityCommand(rest, io);
       case "--help":
       case "-h":
         io.stdout(TOP_HELP);

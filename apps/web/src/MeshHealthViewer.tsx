@@ -442,7 +442,7 @@ function MeshHealthScene({
   accessibleLabel,
 }: {
   model: NormalizedModel;
-  diagnosis: MeshHealthDiagnosis;
+  diagnosis: MeshHealthDiagnosis | undefined;
   selection: MeshHealthSelection | undefined;
   onSelect: (selection: MeshHealthSelection | undefined) => void;
   origin: Vector3;
@@ -454,8 +454,10 @@ function MeshHealthScene({
   useEffect(() => setAvailable(probeWebGLAvailability()), []);
   const fallback = (
     <div className="render-fallback" role="status">
-      3D diagnostic preview unavailable. The evidence lists below remain fully
-      accessible and are not a degraded substitute for it.
+      {diagnosis
+        ? "3D diagnostic preview unavailable."
+        : "3D conversion preview unavailable."}{" "}
+      The numerical evidence and downloads remain available.
     </div>
   );
   if (!renderable)
@@ -500,36 +502,40 @@ function MeshHealthScene({
         <ambientLight intensity={1.35} />
         <directionalLight position={[4, 8, 6]} intensity={2.2} />
         <BaseMesh model={model} origin={origin} />
-        <BoundaryLoopsOverlay
-          diagnosis={diagnosis}
-          origin={origin}
-          selection={selection}
-          onSelect={onSelect}
-        />
-        <EdgeSegmentsOverlay
-          kind="non-manifold"
-          segments={diagnosis.nonManifoldEdges.segments}
-          color={NON_MANIFOLD_COLOR}
-          colorSelected={NON_MANIFOLD_COLOR_SELECTED}
-          origin={origin}
-          selection={selection}
-          onSelect={onSelect}
-        />
-        <EdgeSegmentsOverlay
-          kind="inconsistent-orientation"
-          segments={diagnosis.inconsistentOrientationEdges.segments}
-          color={INCONSISTENT_COLOR}
-          colorSelected={INCONSISTENT_COLOR_SELECTED}
-          origin={origin}
-          selection={selection}
-          onSelect={onSelect}
-        />
-        <DegenerateTrianglesOverlay
-          triangles={diagnosis.degenerateTriangles.triangles}
-          origin={origin}
-          selection={selection}
-          onSelect={onSelect}
-        />
+        {diagnosis && (
+          <>
+            <BoundaryLoopsOverlay
+              diagnosis={diagnosis}
+              origin={origin}
+              selection={selection}
+              onSelect={onSelect}
+            />
+            <EdgeSegmentsOverlay
+              kind="non-manifold"
+              segments={diagnosis.nonManifoldEdges.segments}
+              color={NON_MANIFOLD_COLOR}
+              colorSelected={NON_MANIFOLD_COLOR_SELECTED}
+              origin={origin}
+              selection={selection}
+              onSelect={onSelect}
+            />
+            <EdgeSegmentsOverlay
+              kind="inconsistent-orientation"
+              segments={diagnosis.inconsistentOrientationEdges.segments}
+              color={INCONSISTENT_COLOR}
+              colorSelected={INCONSISTENT_COLOR_SELECTED}
+              origin={origin}
+              selection={selection}
+              onSelect={onSelect}
+            />
+            <DegenerateTrianglesOverlay
+              triangles={diagnosis.degenerateTriangles.triangles}
+              origin={origin}
+              selection={selection}
+              onSelect={onSelect}
+            />
+          </>
+        )}
         <OrbitControls
           makeDefault
           enableDamping={false}
@@ -570,6 +576,37 @@ export function MeshHealthViewer({
         origin={renderFrame.origin}
         renderable={renderFrame.renderable}
         sceneSize={renderFrame.size}
+        accessibleLabel={accessibleLabel}
+      />
+    </div>
+  );
+}
+
+/** Geometry-only preview using the same bounded, origin-rebased renderer as Inspect.
+ * Frame selection affects rendering only, never model geometry or export. */
+export function ModelGeometryPreview({
+  model,
+  frameModel,
+  accessibleLabel,
+}: {
+  model: NormalizedModel;
+  frameModel?: NormalizedModel;
+  accessibleLabel: string;
+}) {
+  const frame = useMemo(
+    () => renderFrameFor(frameModel ?? model),
+    [model, frameModel],
+  );
+  return (
+    <div className="mesh-health-viewport viewport-canvas">
+      <MeshHealthScene
+        model={model}
+        diagnosis={undefined}
+        selection={undefined}
+        onSelect={() => {}}
+        origin={frame.origin}
+        renderable={frame.renderable}
+        sceneSize={frame.size}
         accessibleLabel={accessibleLabel}
       />
     </div>

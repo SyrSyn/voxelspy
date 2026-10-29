@@ -1,3 +1,4 @@
+import { EvidenceReportDownload } from "./EvidenceReportDownload";
 import type { ContractWarning } from "@voxelspy/contracts";
 import {
   IMPORTER_SAFETY_LIMITS,
@@ -133,7 +134,7 @@ function ModelSourceCard({
         <small>
           {selection.file
             ? `${(selection.file.size / 1024).toFixed(1)} KiB · local file`
-            : "STL, OBJ, glTF, GLB, or 3MF, up to 32 MiB"}
+            : "STL, OBJ, glTF, GLB, 3MF, or STEP, up to 32 MiB"}
         </small>
         <input
           id="forensics-model-file"
@@ -195,7 +196,7 @@ function ModelSourceCard({
                 })
               }
             >
-              {declaresOwnFrame && (
+              {declaresOwnFrame && format !== "step" && (
                 <option value="">Use the file&rsquo;s declared value</option>
               )}
               {axes.map((axis) => (
@@ -385,6 +386,20 @@ function ForensicsReport({
 
   return (
     <div className="inspect-report">
+      <EvidenceReportDownload
+        report={() => ({
+          kind: "file-forensics",
+          source: { name: sourceMeta.name, sizeBytes: sourceMeta.size },
+          provenance,
+          evidence: {
+            warnings,
+            placementKind: outcome.placementKind,
+            meshes: outcome.meshes,
+            instances: outcome.instances,
+            importLimits: IMPORTER_SAFETY_LIMITS,
+          },
+        })}
+      />
       <header className="inspect-report-header">
         <div>
           <h2>{sourceMeta.name}</h2>
@@ -665,7 +680,7 @@ export function ForensicsFlow() {
     <ToolShell
       eyebrow="File Forensics"
       title="What is actually inside this file?"
-      description="Load one local model file (STL, OBJ, glTF, GLB, or 3MF) and see its structural and provenance truth: the format this importer detected, the structure it built, and everything it warned about, refused, or could not represent. This is not a repeat of Inspect's dimensions and volume, and not a general file-format validator -- a file this tool accepts may still be rejected elsewhere, and a file it refuses may be valid input for another tool."
+      description="Load one local model file (STL, OBJ, glTF, GLB, 3MF, or STEP) and see its structural and provenance truth: the format this importer detected, the structure it built, and everything it warned about, refused, or could not represent. This is not a repeat of Inspect's dimensions and volume, and not a general file-format validator -- a file this tool accepts may still be rejected elsewhere, and a file it refuses may be valid input for another tool."
     >
       <ImporterSupportPanel />
       {outcome && sourceMeta ? (

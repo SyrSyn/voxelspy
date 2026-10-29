@@ -11,6 +11,7 @@ describe("documentation content", () => {
     expect(searchDocs("local browser").map((doc) => doc.title)).toEqual([
       "Getting started",
       "Privacy by default",
+      "Limits and control",
     ]);
     expect(searchDocs("   ")).toEqual([]);
   });
@@ -37,9 +38,11 @@ describe("tools catalog", () => {
     }
   });
 
-  it("lists at least one available tool and at least one honestly planned tool", () => {
+  it("lists available tools with explicit supported implementation statuses", () => {
     expect(tools.some((tool) => tool.status === "available")).toBe(true);
-    expect(tools.some((tool) => tool.status === "planned")).toBe(true);
+    expect(
+      tools.every((tool) => ["available", "planned"].includes(tool.status)),
+    ).toBe(true);
   });
 
   it("states plainly, in a planned tool's own copy, that it is not built yet", () => {

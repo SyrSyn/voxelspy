@@ -153,3 +153,87 @@ So `test/accessibility.test.tsx` verifies accessibility **structurally**: it ren
 ## Compatibility
 
 Not yet published (`0.1.0`, `private: true`). No compatibility guarantees beyond what `@voxelspy/analysis`/`@voxelspy/contracts` already document for the values this package passes through unmodified.
+
+## Additional engine operations (wire version 1)
+
+`runEngineOperation(createWorker, kind, input, callOptions?)` exposes the
+existing analysis engines through the same one-worker-per-call lifecycle.
+The package entry point exports its typed `EngineOperationInputs` and
+`EngineOperationResults` mappings. Inputs are structured-clone data; geometry
+uses the existing typed-array ownership contract, not portable JSON.
+
+| Kind           | Input                                                                   | Result                                    |
+| -------------- | ----------------------------------------------------------------------- | ----------------------------------------- |
+| `clearance`    | `{ input: CheckClearanceInput, options?: CheckClearanceOptions }`       | `ClearanceCheckResult`                    |
+| `measure`      | `{ model, query: MeasurementQuery, options?: MeasureOptions }`          | `MeasurementResult`                       |
+| `section`      | `{ model, plane: SectionPlane, options?: SectionOptions }`              | `SectionResult`                           |
+| `printability` | `{ model, options?: AssessPrintabilityOptions }`                        | `PrintabilityAssessment`                  |
+| `simplify`     | `{ model, options: SimplifyOptions }`                                   | `SimplificationResult` including geometry |
+| `alignment`    | `{ input: EstimateAlignmentInput, options?: EstimateAlignmentOptions }` | `AlignmentEstimate`                       |
+
+For example, with the same consumer-owned worker factory used by the original
+hooks:
+
+```ts
+import { runEngineOperation, useModelMeasurement } from "@voxelspy/react";
+
+const result = await runEngineOperation(createWorker, "section", {
+  model,
+  plane: { point: [0, 0, 5], normal: [0, 0, 1] },
+});
+// In a component:
+const measurement = useModelMeasurement(createWorker);
+measurement.run({
+  model,
+  query: { kind: "point-to-surface", point: [5, 5, 13] },
+});
+```
+
+`useModelClearance`, `useModelMeasurement`, `useModelSection`,
+`useModelPrintability` and `useModelAlignment` expose `{ status, run, cancel,
+reset }`. `run(input, { transferModel?: boolean }?)` accepts the corresponding
+input from the table. New runs cancel older ones; cancellation/unmount terminate
+the worker, and the shared generation guard discards superseded results.
+Imperative calls additionally accept an `AbortSignal` through `callOptions`.
+A fresh call after cancellation or failure always constructs a fresh worker.
+
+`useModelSimplification` additionally exposes `getSimplifiedModel()`. Its
+`status.complete.result` is `SimplificationMetadata`: the full engine evidence
+except `model`. Heavy geometry is retained in a ref, never React state; retrieve
+it with the getter after a complete status. Starting another run, cancelling,
+or resetting clears the ref. The imperative `runEngineOperation` returns the
+full unchanged `SimplificationResult`. Borrowed model references already handed
+to a consumer remain that consumer's responsibility.
+
+These adapters do not reinterpret evidence: indeterminate clearance is a
+completed result, directional thickness remains approximate evidence rather
+than a will-print verdict, simplification certification remains sampled, and
+alignment returns a proposal that is never applied automatically. Coordinates,
+units, placements, engine budgets and warnings retain their analysis-package
+semantics. The adapters do not guess units or add domain defaults.
+
+Input models are cloned by default. With `transferModel: true`, every mesh
+buffer across the operation's models is deduplicated and transferred, detaching
+the caller's buffers. Alignment correspondence-point input has no model buffers;
+ICP transfers moving and fixed models. Simplification output geometry is
+transferred back from the worker because the worker relinquishes it upon
+completion. No shared memory is required.
+
+New operation messages carry `version: 1`, `kind`, `requestId`, and `input`;
+responses carry the same correlation/version with either `ok: true, result` or
+`ok: false, message, errorName`. The existing inspect/compare wire messages and
+consumers remain compatible. Unsupported response versions, malformed envelopes,
+uncorrelated new-operation responses, worker errors, message deserialization
+errors and send failures reject with `EngineProtocolError` and clean up the
+worker. Known engine error names survive the boundary, while new-operation
+failure text is deliberately sanitized rather than exposing exception stacks or
+arbitrary exception messages. This is a separate package-local protocol, not
+an extension of the contracts package's dedicated-worker protocol.
+
+`test/operations.test.ts` exercises every operation through the real handler
+and fake worker using independent cube distances/sections and alignment oracles,
+indeterminate results, actual structured-clone transfer/detachment, output
+ownership, cancellation/recovery, version/correlation failures, send failures
+and server-rendered initial hooks. The async lifecycle uses the shared runner
+already covered by its replacement/reset tests. As with the original hooks,
+these tests do not claim screen-reader or real-browser hook interaction coverage.

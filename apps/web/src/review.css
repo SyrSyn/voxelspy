@@ -1,0 +1,86 @@
+.review-panel {
+  display: block;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.review-panel > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.review-panel form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: end;
+  margin: 1rem 0;
+}
+.review-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  max-width: 100%;
+}
+.review-panel input,
+.review-panel select,
+.review-panel textarea {
+  min-width: 0;
+  max-width: 100%;
+  padding: 0.5rem;
+  border-radius: 0.25rem;
+}
+.review-panel button {
+  padding: 0.5rem 0.75rem;
+  min-height: 2.75rem;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.review-panel ul {
+  padding-left: 1.25rem;
+}
+.review-panel li {
+  margin: 0.75rem 0;
+}
+.review-panel li label {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  margin: 0.5rem;
+}
+.review-panel output {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .review-panel form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .review-panel label,
+  .review-panel input,
+  .review-panel textarea,
+  .review-panel select {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .review-panel li label {
+    width: auto;
+  }
+  .review-panel input[type="checkbox"] {
+    width: auto;
+  }
+}
+.workbench-toolbar {
+  flex-wrap: wrap;
+}
+.workbench-toolbar .toolbar-controls {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.workbench-toolbar input[type="checkbox"] {
+  width: auto;
+}

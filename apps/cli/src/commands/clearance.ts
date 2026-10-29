@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import { checkClearance, type ClearanceCheckResult } from "@voxelspy/analysis";
-import { IDENTITY_MAT4, rigidTransformSchema } from "@voxelspy/contracts";
+import { parsePlacement } from "../placement.js";
 import { CliUsageError } from "../cli-error.js";
 import {
   EXIT_INDETERMINATE,
@@ -31,15 +31,16 @@ export const CLEARANCE_HELP = `Usage: voxelspy clearance <first> <second> --clea
 Checks fit between two independently placed parts: collision regions, the
 sampled minimum surface-to-surface distance, regions below the desired
 clearance, and EXACT intersecting-triangle-pair interference evidence.
-Both parts are placed at identity in the shared comparison frame -- this
-command does not yet expose a placement/alignment option, so the two files
-must already share one coordinate system.
+Both parts default to identity. Explicit rigid placement is available;
+no automatic alignment occurs. Translations use canonical millimetres.
 
 Source-frame options:
   --first-unit <unit>        micrometre|millimetre|centimetre|metre|inch|foot
   --first-axis <axis>        right-handed-z-up|right-handed-y-up
   --second-unit <unit>
   --second-axis <axis>
+  --first-transform <matrix>   16 comma-separated column-major rigid entries
+  --second-transform <matrix>  proper rotation + translation, no scale/shear
 
 Method options:
   --clearance <mm>           required desired minimum clearance
@@ -83,6 +84,8 @@ export async function clearanceCommand(
       "first-axis": { type: "string" },
       "second-unit": { type: "string" },
       "second-axis": { type: "string" },
+      "first-transform": { type: "string" },
+      "second-transform": { type: "string" },
       clearance: { type: "string" },
       "max-tight-regions": { type: "string" },
       "max-interfering-pairs": { type: "string" },
@@ -149,6 +152,14 @@ export async function clearanceCommand(
   const secondUnit = parseUnitOption("--second-unit", values["second-unit"]);
   const secondAxis = parseAxisOption("--second-axis", values["second-axis"]);
 
+  const firstTransform = parsePlacement(
+    "--first-transform",
+    values["first-transform"],
+  );
+  const secondTransform = parsePlacement(
+    "--second-transform",
+    values["second-transform"],
+  );
   const firstImport = await loadModel(
     firstPath,
     "model.clearance.first",
@@ -170,17 +181,19 @@ export async function clearanceCommand(
     return importFailureExitCode(secondImport.result.code);
   }
 
-  const identity = rigidTransformSchema.parse(IDENTITY_MAT4);
   const executionBudget = buildExecutionBudget(maxWorkUnits, maxMemoryBytes);
 
   let result: ClearanceCheckResult;
   try {
     result = checkClearance(
       {
-        first: { model: firstImport.result.model, modelToComparison: identity },
+        first: {
+          model: firstImport.result.model,
+          modelToComparison: firstTransform,
+        },
         second: {
           model: secondImport.result.model,
-          modelToComparison: identity,
+          modelToComparison: secondTransform,
         },
         desiredClearanceMillimetres: desiredClearance,
       },
@@ -204,13 +217,38 @@ export async function clearanceCommand(
       JSON.stringify(
         {
           command: "clearance",
-          first: { path: firstPath, sourceName: firstImport.sourceName },
-          second: { path: secondPath, sourceName: secondImport.sourceName },
+          first: {
+            path: firstPath,
+            sourceName: firstImport.sourceName,
+            modelToComparison: firstTransform,
+            provenance: firstImport.result.model.provenance,
+          },
+          second: {
+            path: secondPath,
+            sourceName: secondImport.sourceName,
+            modelToComparison: secondTransform,
+            provenance: secondImport.result.model.provenance,
+          },
           result,
         },
         null,
         2,
       ),
+    );
+  }
+
+  if (!values.json) {
+    io.stdout(
+      `First model-to-comparison (column-major, mm): ${JSON.stringify(firstTransform)}`,
+    );
+    io.stdout(
+      `Second model-to-comparison (column-major, mm): ${JSON.stringify(secondTransform)}`,
+    );
+    io.stdout(
+      `First source frame: ${JSON.stringify(firstImport.result.model.provenance)}`,
+    );
+    io.stdout(
+      `Second source frame: ${JSON.stringify(secondImport.result.model.provenance)}`,
     );
   }
 
@@ -234,7 +272,10 @@ export async function clearanceCommand(
             command: "clearance",
             artifacts: artifactUris.map((uri) => ({ uri })),
             findings: [finding],
-            runProperties: { state: "indeterminate" },
+            runProperties: {
+              state: "indeterminate",
+              placements: { first: firstTransform, second: secondTransform },
+            },
           }),
         );
       }
@@ -248,6 +289,7 @@ export async function clearanceCommand(
             metrics: [{ label: "Outcome code", value: result.code }],
             policyChecks: [],
             caveats: [
+              `Model-to-comparison placements (column-major, canonical mm): first ${JSON.stringify(firstTransform)}, second ${JSON.stringify(secondTransform)}.`,
               "The clearance check was indeterminate: nothing about the geometry was proven true or false. This is fail-closed, not a pass.",
               ...result.reasons,
             ],
@@ -321,6 +363,7 @@ export async function clearanceCommand(
           artifacts: artifactUris.map((uri) => ({ uri })),
           findings,
           runProperties: {
+            placements: { first: firstTransform, second: secondTransform },
             method: result.method,
             desiredClearanceMillimetres: result.desiredClearanceMillimetres,
             semantics: result.semantics,
@@ -331,6 +374,7 @@ export async function clearanceCommand(
     }
     if (markdownPath !== undefined) {
       const caveats = [
+        `Model-to-comparison placements (column-major, canonical mm): first ${JSON.stringify(firstTransform)}, second ${JSON.stringify(secondTransform)}.`,
         "This is an APPROXIMATE result: minimum-distance/closest-point/tight-region evidence is sampled at each part's triangle vertices and centroids, not measured continuously across the surface. Only interference.trianglePairs (exact triangle-triangle intersection) is exact.",
       ];
       if (typeof spacing === "number") {

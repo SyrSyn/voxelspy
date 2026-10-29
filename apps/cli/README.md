@@ -66,7 +66,8 @@ distance tolerance) and `--max-regions <n>` (caps ranked regions returned,
 **Resource options:** `--max-work-units`/`--max-memory-bytes` map to
 `AnalysisRequest.executionBudget`; `--max-input-bytes`/`--max-triangles`
 (applied to both files) lower -- never raise -- `@voxelspy/importers`'
-`IMPORTER_SAFETY_LIMITS`.
+`IMPORTER_SAFETY_LIMITS`. Oversized regular files are refused before reading
+their contents; reads remain bounded if a file grows while being read.
 
 **Policy options** (a completed run with none of these specified always
 exits `0` -- it is informational only):
@@ -136,9 +137,79 @@ when `state === "clear"`; `"tight"` or `"interfering"` exit `1`.
 `--fail-on-indeterminate` promotes an indeterminate outcome from exit `2` to
 exit `1` (default: `2`).
 
-Both parts are placed at identity in the shared comparison frame -- **this
-command does not yet expose a placement/alignment option**, so the two files'
-own coordinates must already share one frame (see "Known limitations").
+Both parts default to identity in the shared comparison frame.
+`--first-transform` and `--second-transform` accept 16 comma-separated
+column-major matrix entries, validated as proper rigid transforms (rotation
+and translation only; scaling, shear and reflection are refused). Translation
+is in canonical millimetres after source normalization. These placements are
+explicit caller decisions, not estimated alignment. JSON, text, SARIF and
+Markdown retain the actual placements.
+
+### Measurements, sections and printability evidence
+
+`voxelspy measure <model> --kind <kind>` supports these queries:
+
+- `bounding-extent`: exact placed vertex bounds and dimensions.
+- `point-to-point --first x,y,z --second x,y,z`: distance and delta between
+  arbitrary supplied coordinates; surface membership is not verified.
+- `point-to-surface --point x,y,z`: closest point and distance on the mesh.
+- `snap-point --point x,y,z`, or `snap-point --ray-origin x,y,z
+--ray-direction x,y,z`: closest surface point or nearest ray intersection.
+  `--snap-tolerance <mm>` controls vertex/edge/face classification (0–1000).
+  A ray miss is a completed evidence result, not a failed policy.
+
+`voxelspy section <model> --point x,y,z --normal x,y,z` intersects a plane
+with the tessellated mesh. Its nonzero normal is normalized by the engine.
+Results contain open/closed polylines, exact polyline perimeter and closed-loop
+area. Area sign does not identify holes or solid regions. `--max-loops`
+(1–2000) and `--max-loop-points` (1–200000 shared points) bound returned
+geometry while retaining detected counts and per-loop metrics.
+
+`voxelspy printability <model>` reports directional wall-thickness probes,
+overhangs, connected islands, scale observations and optional build-volume
+fit. It **never certifies that a model will print**. It always includes the
+engine disclaimer; completed evidence exits `0` even when findings are
+present or the build volume does not fit. Options are:
+
+- `--thin-threshold <mm>` (0–100000), `--max-sample-triangles <n>`
+  (1–200000), `--max-findings <n>` (1–2048).
+- `--build-direction x,y,z` (nonzero), `--overhang-angle <degrees>`
+  (0–90 from vertical), `--max-overhang-regions <n>` (1–2048).
+- `--max-components <n>` (1–2048).
+- `--build-volume x,y,z`: positive dimensions in millimetres. Only six
+  permutations of the axis-aligned dimensions are checked, not arbitrary
+  rotations.
+
+Wall thickness is a sampled inward directional probe, not the true minimum
+thickness. Unsampled triangles have no coverage; missed probes and sample
+spacing remain explicit in output.
+
+These three commands share `--unit`, `--axis`, `--max-input-bytes`,
+`--max-triangles`, `--max-work-units`, `--max-memory-bytes`, `--json` and
+`--fail-on-indeterminate`. STL/OBJ require explicit source unit and axis.
+All query coordinates are canonical millimetres in right-handed Z-up with
+identity placement, after audited source-frame normalization. Queries and
+numeric tuples reject missing, non-finite and inapplicable values; for tuples
+starting with a minus sign use `--point=-1,0,0` (similarly for transforms).
+
+Their deterministic JSON envelopes have `outputVersion: 1`, `command`,
+`model: { path, sourceName, provenance, warnings }`, `request` (query or plane
+and engine options including placement), and the engine `result` unchanged.
+Engine resource/numeric-range refusals carry `error: { code, message }` and
+exit `2`, or `1` with `--fail-on-indeterminate`; invalid input exits `3`.
+Import refusals retain the existing stderr/exit behavior. Text output includes
+source normalization, request and the complete bounded engine evidence.
+These commands currently emit text or JSON; SARIF/Markdown are available on
+compare, inspect and clearance only.
+
+```sh
+voxelspy measure part.stl --unit millimetre --axis right-handed-z-up \
+  --kind point-to-surface --point=5,5,13 --json
+voxelspy section part.stl --unit millimetre --axis right-handed-z-up \
+  --point=0,0,5 --normal=0,0,1 --json
+voxelspy printability part.stl --unit millimetre --axis right-handed-z-up \
+  --build-volume=200,200,200 --max-sample-triangles 1000 --json
+```
 
 ## Exit codes
 
@@ -167,7 +238,7 @@ section naming each specified option, its pass/fail state, and the concrete
 observed value it was checked against -- so a failing (or passing) run is
 never a bare exit code with no explanation.
 
-**`--json`.** Emits one JSON object to stdout instead of the text summary
+**`--json` (compare, inspect and clearance).** Emits one JSON object to stdout instead of the text summary
 (warnings/errors from import still go to stderr as text). The object always
 has a `command` field and carries the underlying library result verbatim
 under `result` (or, for `inspect`'s resource-limit path, an `error` field),
@@ -191,15 +262,14 @@ but both are the exact same values the library returns, including the
 `MeshAssessment` validation evidence and (for `clearance`) the sampling
 uncertainty and exact interference evidence.
 
-**Determinism.** All three commands' JSON is deterministic for identical
-inputs: model IDs, request IDs, and the comparison frame (identity) are
-fixed constants chosen by this CLI, not generated (no timestamps, no random
-IDs), and every underlying library call is itself pure and deterministic
-given the same input bytes and options.
+**Determinism.** All command JSON is deterministic for identical inputs:
+model IDs and request IDs are fixed constants, placements are explicit
+caller values (identity by default), and underlying engine calls are pure
+for the same input bytes/options. No timestamps or random IDs are generated.
 
 ## Automation output (`--sarif`, `--markdown`, `--figure`)
 
-Every command additionally accepts two output-file options, independent of
+Compare, inspect and clearance additionally accept two output-file options, independent of
 (and combinable with) `--json`; `compare` additionally accepts a third:
 
 - **`--sarif <path>`** writes a [SARIF](https://sarifweb.azurewebsites.net/)
@@ -412,26 +482,19 @@ underlying cause.
 
 ## Known limitations
 
-- Neither `compare` nor `clearance` exposes a placement/alignment option
-  yet. `compare` always places both models at identity (comparing one model
-  against a revision of itself, in its own frame); `clearance` always places
-  both parts at identity in the shared comparison frame. Two clearance parts
-  authored in unrelated coordinate systems must already share one frame
-  before this CLI can check them -- `estimateAlignment` is not wired up.
-  `analyzeModelPair`'s `axis-aligned-box-solid` exact method is not exposed
-  either; `compare` always requests `surface-distance`.
-- No `printability`/`simplify`/`measure`/`section`/`diagnoseMeshHealth`
-  commands. Those `@voxelspy/analysis` entry points are not part of this
-  slice's command surface.
+- `compare` has no placement/alignment option and always requests sampled
+  `surface-distance`; the exact `axis-aligned-box-solid` method is not exposed.
+  Clearance accepts explicit rigid placements but does not estimate alignment.
+- No `simplify` or `diagnoseMeshHealth` CLI commands yet. Those engine APIs
+  remain available through `@voxelspy/analysis`.
+- Measurement and section exactness refers to the supplied tessellated mesh,
+  not any original curved/CAD surface. Printability has no pass/fail verdict.
 
 ## Verification
 
 ```sh
 pnpm install
-pnpm --filter @voxelspy/cli lint
-pnpm --filter @voxelspy/cli typecheck
-pnpm --filter @voxelspy/cli test
-pnpm --filter @voxelspy/cli build
+pnpm exec turbo run lint typecheck test build --filter=@voxelspy/cli
 ```
 
 Tests (`vitest`) generate small STL/OBJ fixtures in a temporary directory

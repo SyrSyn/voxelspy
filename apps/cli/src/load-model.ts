@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { importStepInWorker } from "./step-import.js";
 import { basename } from "node:path";
 import type { ImportResult } from "@voxelspy/contracts";
 import {
@@ -61,23 +62,10 @@ export async function loadModel(
   filePrefix: string,
 ): Promise<LoadModelResult> {
   const sourceName = basename(path);
-  let bytes: Uint8Array;
-  try {
-    const buffer = readFileSync(path);
-    // `readFileSync` can return a view into a pooled, larger ArrayBuffer.
-    // The import contract requires the byte view to own one complete,
-    // exactly-sized transferable ArrayBuffer, so always copy.
-    bytes = Uint8Array.from(buffer);
-  } catch (error) {
-    throw new CliUsageError(
-      `${filePrefix} could not be read: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
   const format = inferFormat(sourceName);
   if (format === undefined) {
     throw new CliUsageError(
-      `${filePrefix} "${path}" has an unrecognized extension; supported formats: stl, obj.`,
+      `${filePrefix} "${path}" has an unrecognized extension; supported formats: stl, obj, gltf, glb, 3mf, step, stp.`,
     );
   }
 
@@ -85,25 +73,66 @@ export async function loadModel(
     options.maxInputBytes ?? IMPORTER_SAFETY_LIMITS.inputBytes,
     IMPORTER_SAFETY_LIMITS.inputBytes,
   );
-  if (bytes.byteLength > maxInputBytes) {
-    return {
+  const resourceLimit = (byteLength: number): LoadModelResult => ({
+    ok: false,
+    path,
+    sourceName,
+    result: {
       ok: false,
-      path,
-      sourceName,
-      result: {
-        ok: false,
-        code: "resource-limit",
-        message: `${filePrefix} "${path}" is ${bytes.byteLength} bytes, which exceeds the configured --max-input-bytes limit of ${maxInputBytes} bytes.`,
-        warnings: [],
-      },
-    };
+      code: "resource-limit",
+      message: `${filePrefix} "${path}" is at least ${byteLength} bytes, which exceeds the configured --max-input-bytes limit of ${maxInputBytes} bytes.`,
+      warnings: [],
+    },
+  });
+
+  let bytes: Uint8Array;
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(path, "r");
+    // Check the opened file rather than a path that could be replaced between
+    // stat and read. Never allocate or read an already oversized input.
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile()) {
+      throw new Error("Input must be a regular file.");
+    }
+    if (stat.size > maxInputBytes) return resourceLimit(stat.size);
+
+    const chunks: Uint8Array[] = [];
+    let byteLength = 0;
+    // A file can grow after fstat. Read at most the ceiling plus one sentinel
+    // byte, so concurrent growth cannot bypass the allocation guard.
+    while (byteLength <= maxInputBytes) {
+      const chunk = new Uint8Array(
+        Math.min(64 * 1024, maxInputBytes - byteLength + 1),
+      );
+      const count = readSync(descriptor, chunk, 0, chunk.byteLength, null);
+      if (count === 0) break;
+      byteLength += count;
+      if (byteLength > maxInputBytes) return resourceLimit(byteLength);
+      chunks.push(chunk.subarray(0, count));
+    }
+    // Own one exact-size transferable ArrayBuffer, never a pooled or partial
+    // view. Assembly is also bounded by the effective input ceiling.
+    bytes = new Uint8Array(byteLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+  } catch (error) {
+    throw new CliUsageError(
+      `${filePrefix} could not be read: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
+
   const maxTriangles = Math.min(
     options.maxTriangles ?? IMPORTER_SAFETY_LIMITS.triangleCount,
     IMPORTER_SAFETY_LIMITS.triangleCount,
   );
 
-  const result = await importModel({
+  const result = await (format === "step" ? importStepInWorker : importModel)({
     contractVersion: 1,
     targetModelId,
     format,

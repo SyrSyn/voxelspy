@@ -669,6 +669,13 @@ test("alignment is off by default and comparing without it is unchanged", async 
   });
   await expect(alignmentToggle).not.toBeChecked();
   await expect(page.getByRole("table")).toHaveCount(0);
+  // Native form restoration must not display an enabled safety opt-in
+  // after React has started a fresh comparison with alignment disabled.
+  await alignmentToggle.check();
+  await expect(page.getByRole("table")).toBeVisible();
+  await page.reload();
+  await expect(alignmentToggle).not.toBeChecked();
+  await expect(page.getByRole("table")).toHaveCount(0);
 
   const cards = page.locator(".source-card");
   await cards
@@ -802,6 +809,23 @@ test("refining a correspondence estimate with ICP runs the dedicated alignment w
     name: "Refine with ICP (optional)",
   });
   await expect(refineButton).toBeEnabled();
+  await refineButton.scrollIntoViewIfNeeded();
+  const target = await refineButton.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      left: rect.left,
+      right: rect.right,
+      height: rect.height,
+      viewportWidth: document.documentElement.clientWidth,
+      documentWidth: document.documentElement.scrollWidth,
+    };
+  });
+  // A wide coordinate table must scroll within its own wrapper, never
+  // center the action buttons outside a narrow phone viewport.
+  expect(target.left).toBeGreaterThanOrEqual(0);
+  expect(target.right).toBeLessThanOrEqual(target.viewportWidth);
+  expect(target.height).toBeGreaterThanOrEqual(44);
+  expect(target.documentWidth).toBeLessThanOrEqual(target.viewportWidth + 1);
   await refineButton.click();
   // The alignment worker imports both parts and runs a bounded ICP pass;
   // once it settles, the reviewed evidence switches to the refined method.

@@ -333,13 +333,13 @@ test("the tools catalog represents the focus pages as entry points into Inspect,
 }) => {
   await page.goto("/tools/");
 
-  // Exactly seven available, real tool cards: Compare, Inspect, File
+  // Exactly eight available, real tool cards: Compare, Inspect, File
   // Forensics (see tests/forensics.spec.ts), Clearance & Fit (see
   // tests/clearance.spec.ts), Measure & Section (see
   // tests/measure-section.spec.ts), Printability (see
   // tests/printability.spec.ts), and Convert (see tests/convert.spec.ts).
-  // The three Inspect focus pages must not inflate this count.
-  await expect(page.locator("a.tool-card-available")).toHaveCount(7);
+  // Mesh Health is also available; the three Inspect focus pages must not inflate this count.
+  await expect(page.locator("a.tool-card-available")).toHaveCount(8);
 
   const inspectCard = page
     .locator("a.tool-card-available")

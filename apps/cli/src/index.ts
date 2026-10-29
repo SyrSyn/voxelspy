@@ -12,3 +12,12 @@ export {
 export type { CommandIO } from "./io.js";
 export { processIO } from "./io.js";
 export { run, TOP_HELP } from "./run.js";
+
+export {
+  measureCommand,
+  sectionCommand,
+  printabilityCommand,
+  MEASURE_HELP,
+  SECTION_HELP,
+  PRINTABILITY_HELP,
+} from "./commands/tools.js";

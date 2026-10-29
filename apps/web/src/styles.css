@@ -2187,10 +2187,12 @@ a.tool-card-available:hover {
    new shapes get new rules here. */
 .alignment-card {
   display: flex;
+  align-items: stretch;
   flex-direction: column;
   gap: 1rem;
 }
 .alignment-card-body {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
@@ -2214,6 +2216,9 @@ a.tool-card-available:hover {
   accent-color: var(--green);
 }
 .correspondence-table-scroll {
+  contain: inline-size layout paint;
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
 }
 .correspondence-table {
@@ -2255,6 +2260,7 @@ a.tool-card-available:hover {
   gap: 0.6rem;
 }
 .alignment-evidence {
+  min-width: 0;
   padding: 0.9rem 1rem;
   border: 1px solid var(--line);
   border-radius: var(--radius);

@@ -1,3 +1,4 @@
+import { validateReview, type ReviewContent } from "../review.js";
 import { reportSchema } from "@voxelspy/contracts";
 import type {
   AnalysisOutcome,
@@ -57,6 +58,10 @@ const FORMAT_SOURCE: Readonly<
 > = {
   stl: { mediaType: "model/stl", extension: "stl" },
   obj: { mediaType: "model/obj", extension: "obj" },
+  gltf: { mediaType: "model/gltf+json", extension: "gltf" },
+  glb: { mediaType: "model/gltf-binary", extension: "glb" },
+  "3mf": { mediaType: "model/3mf", extension: "3mf" },
+  step: { mediaType: "model/step", extension: "step" },
 };
 
 export interface BuildComparisonReportInput {
@@ -74,6 +79,7 @@ export interface BuildComparisonReportInput {
   readonly candidate: NormalizedModel;
   readonly analysis: AnalysisResult;
   readonly summary: ModelComparisonPresentationSummary;
+  readonly reviewContent?: ReviewContent;
 }
 
 /**
@@ -129,6 +135,10 @@ export function buildComparisonReport(
     tolerance: analysis.outcome.requestedTolerance,
   };
 
+  const reviewContent =
+    input.reviewContent === undefined
+      ? undefined
+      : validateReview(input.reviewContent, analysis, [baseline, candidate]);
   const document: Report = {
     contractVersion: 1,
     id: input.id,
@@ -141,12 +151,12 @@ export function buildComparisonReport(
     generator: REPORT_GENERATOR,
     analysis: { request, result: analysis },
     models: [baselineModel, candidateModel],
-    markups: [],
+    markups: reviewContent ? [...reviewContent.markups] : [],
     findings,
-    savedViews: [overviewView],
+    savedViews: [overviewView, ...(reviewContent?.savedViews ?? [])],
     figures: [],
     review: {
-      activeSavedViewId: overviewView.id,
+      activeSavedViewId: reviewContent?.activeSavedViewId ?? overviewView.id,
       notes: renderGeometrySummaryNotes(summary),
       status: "draft",
     },

@@ -1,4 +1,8 @@
 import type {
+  OperationWorkerRequest,
+  OperationWorkerResponse,
+} from "./operations.js";
+import type {
   AnalysisRequest,
   AnalysisResult,
   NormalizedModel,
@@ -39,7 +43,8 @@ export interface CompareWorkerRequest {
   readonly candidate: NormalizedModel;
 }
 
-export type EngineWorkerRequest = InspectWorkerRequest | CompareWorkerRequest;
+export type EngineWorkerRequest =
+  InspectWorkerRequest | CompareWorkerRequest | OperationWorkerRequest;
 
 /**
  * `errorName` carries the thrown error's `.name` (e.g.
@@ -82,7 +87,8 @@ export type EngineWorkerResponse =
   | InspectWorkerSuccess
   | InspectWorkerFailure
   | CompareWorkerSuccess
-  | CompareWorkerFailure;
+  | CompareWorkerFailure
+  | OperationWorkerResponse;
 
 /** Narrow, structural type for what the worker-side handler needs to send a
  *  response: satisfied by a `DedicatedWorkerGlobalScope` (i.e. `self` inside
@@ -90,7 +96,7 @@ export type EngineWorkerResponse =
  *  lib, which would conflict with the `DOM` lib the rest of this package's
  *  main-thread code needs. */
 export interface EngineWorkerScope {
-  postMessage(message: EngineWorkerResponse): void;
+  postMessage(message: EngineWorkerResponse, transfer?: ArrayBuffer[]): void;
 }
 
 /**

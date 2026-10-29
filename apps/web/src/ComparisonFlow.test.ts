@@ -56,11 +56,11 @@ describe("comparison source defaults", () => {
 
   it("refuses an unsupported extension with an honest message naming what is supported", () => {
     expect(
-      sourceCapability(sourceSelectionForFile(new File(["x"], "model.step"))),
+      sourceCapability(sourceSelectionForFile(new File(["x"], "model.fbx"))),
     ).toEqual({
       ready: false,
       message:
-        "This release supports STL, OBJ, glTF, GLB, or 3MF mesh files (.stl, .obj, .gltf, .glb, .3mf).",
+        "This release supports STL, OBJ, glTF, GLB, 3MF, or STEP mesh files (.stl, .obj, .gltf, .glb, .3mf, .step, .stp).",
     });
   });
 

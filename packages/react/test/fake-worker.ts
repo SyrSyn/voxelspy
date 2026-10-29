@@ -25,15 +25,25 @@ export class FakeEngineWorker {
   >();
   private readonly errorListeners = new Set<() => void>();
   private readonly handler = createEngineWorkerHandler({
-    postMessage: (message) => this.deliver(message),
+    postMessage: (message, transfer) => {
+      this.responseTransfers.push(transfer ?? []);
+      this.deliver(
+        this.cloneMessages
+          ? structuredClone(message, { transfer: transfer ?? [] })
+          : message,
+      );
+    },
   });
   private readonly delayMs: number;
+  private readonly cloneMessages: boolean;
+  readonly responseTransfers: ArrayBuffer[][] = [];
   terminated = false;
   readonly posted: EngineWorkerRequest[] = [];
   readonly transfersPosted: Transferable[][] = [];
 
-  constructor(options: { delayMs?: number } = {}) {
+  constructor(options: { delayMs?: number; cloneMessages?: boolean } = {}) {
     this.delayMs = options.delayMs ?? 0;
+    this.cloneMessages = options.cloneMessages ?? false;
   }
 
   postMessage(
@@ -43,9 +53,12 @@ export class FakeEngineWorker {
     this.posted.push(message);
     this.transfersPosted.push(transfer);
     if (this.terminated) return;
+    const payload = this.cloneMessages
+      ? structuredClone(message, { transfer })
+      : message;
     const dispatch = () => {
       if (this.terminated) return;
-      this.handler({ data: message } as MessageEvent<EngineWorkerRequest>);
+      this.handler({ data: payload } as MessageEvent<EngineWorkerRequest>);
     };
     if (this.delayMs > 0) {
       setTimeout(dispatch, this.delayMs);
@@ -64,6 +77,13 @@ export class FakeEngineWorker {
     });
   }
 
+  simulateMessage(message: unknown): void {
+    this.deliver(message as EngineWorkerResponse);
+  }
+  get listenerCount(): number {
+    return this.messageListeners.size + this.errorListeners.size;
+  }
+
   /** Simulates the worker thread itself crashing, firing every registered `"error"` listener. */
   simulateError(): void {
     queueMicrotask(() => {
@@ -72,7 +92,7 @@ export class FakeEngineWorker {
   }
 
   addEventListener(
-    type: "message" | "error",
+    type: "message" | "error" | "messageerror",
     listener: (event: never) => void,
   ): void {
     if (type === "message") {
@@ -85,7 +105,7 @@ export class FakeEngineWorker {
   }
 
   removeEventListener(
-    type: "message" | "error",
+    type: "message" | "error" | "messageerror",
     listener: (event: never) => void,
   ): void {
     if (type === "message") {

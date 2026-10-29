@@ -45,3 +45,26 @@ export {
   ComparisonFindings,
   type ComparisonFindingsProps,
 } from "./components/ComparisonFindings.js";
+
+export { runEngineOperation } from "./worker-client.js";
+export type {
+  EngineOperationInputs,
+  EngineOperationResults,
+  EngineOperationKind,
+  OperationWorkerRequest,
+  OperationWorkerResponse,
+} from "./operations.js";
+export {
+  useModelClearance,
+  useModelMeasurement,
+  useModelSection,
+  useModelPrintability,
+  useModelAlignment,
+  useModelSimplification,
+} from "./useEngineOperations.js";
+export type {
+  RunEngineOperationOptions,
+  UseEngineOperationResult,
+  SimplificationMetadata,
+  UseModelSimplificationResult,
+} from "./useEngineOperations.js";

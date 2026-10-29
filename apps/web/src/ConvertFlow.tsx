@@ -31,6 +31,7 @@ import {
   inferFormat,
   unsupportedFormatMessage,
 } from "./formats";
+import { ConvertPreview } from "./ConvertPreview";
 import { ToolShell } from "./ToolShell";
 import { DEFAULT_ANALYSIS_MEMORY_MIB } from "./worker-client";
 
@@ -55,12 +56,9 @@ import { DEFAULT_ANALYSIS_MEMORY_MIB } from "./worker-client";
  * geometry, and surfaces flattening, degenerate-normal, and precision
  * warnings rather than only a download link.
  *
- * **No 3D view.** Unlike Inspect, Printability, or Measure & Section, this
- * tool draws no viewport: simplification and export are both reported as
- * text (counts, certification, warnings), and neither imported model's
- * typed-array geometry ever leaves `convert.worker.ts` -- see
- * `convert-worker-client.ts`'s module doc comment. The textual report is the
- * deliverable.
+ * **Optional 3D view.** Explicit preview requests clone bounded geometry
+ * from the worker; retained originals remain available for export.
+ * Numerical evidence and downloads do not require WebGL.
  *
  * **Worker choice.** A dedicated session worker (`convert.worker.ts`,
  * opened by `openConvertSession`), shaped like `measure-worker-client.ts`'s
@@ -94,6 +92,9 @@ const exportFormats: { value: ExportFormat; label: string }[] = [
   { value: "stl-binary", label: "Binary STL" },
   { value: "stl-ascii", label: "ASCII STL" },
   { value: "obj", label: "OBJ" },
+  { value: "gltf", label: "glTF (metres, Y up)" },
+  { value: "glb", label: "GLB (metres, Y up)" },
+  { value: "3mf", label: "3MF (Z up)" },
 ];
 
 type ModelSourceSelection = {
@@ -171,7 +172,7 @@ function ModelSourceCard({
         <small>
           {selection.file
             ? `${(selection.file.size / 1024).toFixed(1)} KiB · local file`
-            : "STL, OBJ, glTF, GLB, or 3MF, up to 32 MiB"}
+            : "STL, OBJ, glTF, GLB, 3MF, or STEP, up to 32 MiB"}
         </small>
         <input
           id="model-file"
@@ -233,7 +234,7 @@ function ModelSourceCard({
                 })
               }
             >
-              {declaresOwnFrame && (
+              {declaresOwnFrame && format !== "step" && (
                 <option value="">Use the file&rsquo;s declared value</option>
               )}
               {axes.map((axis) => (
@@ -649,9 +650,26 @@ const initialExportForm: ExportForm = {
   source: "original",
 };
 
-/** Every field is required with no default -- see `ExportOptions`'s own doc
- *  comment on why `exportModel` never silently picks a format, unit, or
- *  axis. */
+/** Deliberate format selection also selects its required, visibly disclosed frame. */
+export function selectExportFormat(
+  form: ExportForm,
+  format: ExportForm["format"],
+): ExportForm {
+  if (format === "gltf" || format === "glb")
+    return { ...form, format, unit: "metre", axis: "right-handed-y-up" };
+  if (format === "3mf") return { ...form, format, axis: "right-handed-z-up" };
+  return { ...form, format };
+}
+
+export function exportFrameNote(format: ExportForm["format"]): string {
+  if (format === "gltf" || format === "glb")
+    return "glTF and GLB use metres and right-handed Y-up. Choosing this format selects that required output frame.";
+  if (format === "3mf")
+    return "3MF declares the chosen length unit and uses right-handed Z-up. Choose the output unit explicitly.";
+  return "STL and OBJ cannot declare a unit or up-axis. Choose both explicitly and keep those settings when reopening the file.";
+}
+
+/** Require an explicit format and a complete frame consistent with that format. */
 export function exportFormReady(
   form: ExportForm,
 ): { ready: true } | { ready: false; message: string } {
@@ -659,6 +677,16 @@ export function exportFormReady(
     return { ready: false, message: "Choose an export format." };
   if (!form.unit) return { ready: false, message: "Choose an output unit." };
   if (!form.axis) return { ready: false, message: "Choose an output up-axis." };
+  if (
+    (form.format === "gltf" || form.format === "glb") &&
+    (form.unit !== "metre" || form.axis !== "right-handed-y-up")
+  )
+    return {
+      ready: false,
+      message: "glTF and GLB require metres and right-handed Y-up.",
+    };
+  if (form.format === "3mf" && form.axis !== "right-handed-z-up")
+    return { ready: false, message: "3MF requires right-handed Z-up." };
   return { ready: true };
 }
 
@@ -673,7 +701,8 @@ export function exportFileName(
   const dot = sourceName.lastIndexOf(".");
   const base = (dot > 0 ? sourceName.slice(0, dot) : sourceName) || "model";
   const suffix = source === "simplified" ? ".simplified" : "";
-  const extension = format === "obj" ? "obj" : "stl";
+  const extension =
+    format === "stl-binary" || format === "stl-ascii" ? "stl" : format;
   return `${base}${suffix}.${extension}`;
 }
 
@@ -684,6 +713,14 @@ export function precisionNote(
   format: ExportFormat,
   targetUnit: ResolvedSourceUnit,
 ): string {
+  if (format === "gltf" || format === "glb") {
+    return "glTF and GLB round position coordinates to float32. Precision and tiny features may be lost; coordinates that overflow to a non-finite value are refused.";
+  }
+  if (format === "3mf") {
+    return targetUnit === "millimetre"
+      ? "3MF stores decimal coordinates with Float64 round-trip precision in the canonical millimetre frame. It retains placed triangle geometry, not the original source assembly or CAD surface."
+      : "3MF stores decimal coordinates with Float64 precision. Conversion to the chosen unit and back adds ordinary floating-point rounding; source assembly and CAD surface identity are not retained.";
+  }
   if (format === "stl-binary") {
     return "Binary STL stores each coordinate as a 32-bit float, so this file's round-trip precision is bounded by float32's roughly 1.2e-7 relative precision, regardless of unit.";
   }
@@ -733,10 +770,20 @@ function ExportReport({
         {formatFileSize(outcome.bytes.byteLength)}.
       </p>
       <div className="convert-disclaimer">
-        <strong>This file cannot record its own unit or axis.</strong>
+        <strong>
+          {outcome.format === "gltf" ||
+          outcome.format === "glb" ||
+          outcome.format === "3mf"
+            ? "The format declares its output unit and axis convention."
+            : "This file cannot record its own unit or axis."}
+        </strong>
         <p>
-          {unitWarning?.message ??
-            `Neither STL nor OBJ can declare a unit or axis convention. This export was written in ${outcome.targetUnit}, ${outcome.targetAxis}; to recover equivalent geometry, re-import this file and declare it as ${outcome.targetUnit}, ${outcome.targetAxis} again.`}
+          {outcome.format === "gltf" || outcome.format === "glb"
+            ? "This self-contained file uses metres and right-handed Y-up. Reopening uses the format's own convention. Position coordinates are rounded to float32."
+            : outcome.format === "3mf"
+              ? `The model declares ${outcome.targetUnit} and uses right-handed Z-up. Reopening uses that declared frame.`
+              : (unitWarning?.message ??
+                `Neither STL nor OBJ can declare a unit or axis convention. This export was written in ${outcome.targetUnit}, ${outcome.targetAxis}; to recover equivalent geometry, re-import this file and declare it as ${outcome.targetUnit}, ${outcome.targetAxis} again.`)}
         </p>
       </div>
       <p className="inspect-semantics-note">
@@ -1000,7 +1047,7 @@ export function ConvertFlow() {
     <ToolShell
       eyebrow="Convert"
       title="Simplify and convert a model, with the deviation this introduced"
-      description="Load one local model, optionally simplify it toward a triangle-count or reduction-ratio target with a measured, disclaimed certification of how far the result deviates from the original, then export the result (or the untouched original) to binary STL, ASCII STL, or OBJ in the unit and axis you choose explicitly. Runs entirely in your browser -- no 3D view, just the textual report and the downloaded file."
+      description="Load one local model, optionally simplify it toward a triangle-count or reduction-ratio target with a measured, disclaimed certification of how far the result deviates from the original, then export the result (or the untouched original) to binary STL, ASCII STL, OBJ, glTF, GLB, or 3MF with an explicit output frame. Runs entirely in your browser, with an optional bounded geometry preview alongside the measured evidence and downloaded file."
     >
       {!capability.analysisSupported && (
         <div className="comparison-error" role="alert">
@@ -1132,11 +1179,20 @@ export function ConvertFlow() {
         {session && <WarningsList warnings={session.load.warnings} />}
         <p className="boundary-note">
           <strong>Local boundary:</strong> the source file and its geometry stay
-          inside this browser&rsquo;s dedicated conversion worker; only the
-          structured reports below, and the file you explicitly download, ever
-          leave it.
+          inside this browser. The dedicated worker retains conversion geometry;
+          an explicit preview transfers cloned geometry to the local renderer.
+          Downloads happen only when you request them.
         </p>
       </section>
+
+      {session && (
+        <ConvertPreview
+          session={session}
+          outcome={simplifyOutcome}
+          busy={Boolean(simplifyProgress || exportProgress)}
+          onCancel={reset}
+        />
+      )}
 
       {session && sourceMeta && (
         <section
@@ -1282,9 +1338,10 @@ export function ConvertFlow() {
             <span className="step">Step 03</span>
             <h2 id="convert-export-heading">Export</h2>
             <p>
-              Choose a format, output unit, and output up-axis explicitly --
-              none of them default. Export the simplified result once it exists,
-              or the untouched original at any time.
+              Choose a format deliberately. glTF and GLB select their required
+              metres/Y-up frame; 3MF uses Z-up and your chosen unit. STL and OBJ
+              require both settings explicitly. Export the simplified result or
+              the original placed geometry.
             </p>
           </div>
           <fieldset className="source-card">
@@ -1319,7 +1376,9 @@ export function ConvertFlow() {
                   onChange={(event) => {
                     const format = event.currentTarget.value as
                       ExportFormat | "";
-                    setExportForm((current) => ({ ...current, format }));
+                    setExportForm((current) =>
+                      selectExportFormat(current, format),
+                    );
                   }}
                 >
                   <option value="">Choose a format…</option>
@@ -1335,6 +1394,9 @@ export function ConvertFlow() {
                 <select
                   id="convert-export-unit"
                   value={exportForm.unit}
+                  disabled={
+                    exportForm.format === "gltf" || exportForm.format === "glb"
+                  }
                   onChange={(event) => {
                     const unit = event.currentTarget.value as
                       ResolvedSourceUnit | "";
@@ -1354,6 +1416,11 @@ export function ConvertFlow() {
                 <select
                   id="convert-export-axis"
                   value={exportForm.axis}
+                  disabled={
+                    exportForm.format === "gltf" ||
+                    exportForm.format === "glb" ||
+                    exportForm.format === "3mf"
+                  }
                   onChange={(event) => {
                     const axis = event.currentTarget.value as
                       ResolvedSourceAxis | "";
@@ -1370,6 +1437,9 @@ export function ConvertFlow() {
               </label>
             </div>
           </fieldset>
+          <p className="inspect-semantics-note">
+            {exportFrameNote(exportForm.format)}
+          </p>
           <div className="comparison-status" aria-live="polite">
             <span>{exportProgress ?? "Ready to export"}</span>
             <div className="actions">

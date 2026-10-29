@@ -23,7 +23,7 @@ pnpm --filter @voxelspy/web build
 
 Normal model selection and comparison are browser-local. The application does not require hosted identity, storage, telemetry, or a model API. Any future network-backed feature must expose its destination and require a deliberate action.
 
-Every tool's file input accepts the same subset `@voxelspy/importers` reads -- STL, OBJ, glTF/GLB (static mesh geometry only), and 3MF (Core mesh geometry only) -- derived from that package's own `SupportedFormat`/`importerDescriptor` in `src/formats.ts`, the single place this app's accepted-extension list and `accept` attribute are defined, so a file with an unsupported extension is refused up front with a message naming what is supported. Import plus sampled surface-distance analysis run in a dedicated browser worker.
+Every tool's file input accepts the same subset `@voxelspy/importers` reads -- STL, OBJ, glTF/GLB (static mesh geometry only), 3MF (Core mesh geometry only), and STEP (bounded tessellation through the optional isolated kernel) -- derived from that package's own `SupportedFormat`/`importerDescriptor` in `src/formats.ts`, the single place this app's accepted-extension list and `accept` attribute are defined, so a file with an unsupported extension is refused up front with a message naming what is supported. Import plus sampled surface-distance analysis run in a dedicated browser worker.
 
 STL and OBJ do not authoritatively declare a unit or an up-axis, so the interface begins with millimetres and right-handed Z-up for those two formats and exposes alternate interpretations as expert settings. glTF/GLB and 3MF are different: both declare their own frame in the file itself (glTF/GLB always metres and right-handed Y-up per specification; 3MF its own declared unit, defaulting to millimetre, and right-handed Z-up per the Core specification's coordinate-space section), so the interface never asks for a unit/axis choice it does not need for these two formats -- it resolves and shows the declared frame, with an explicit override still available and recorded distinctly (as a user override, not as if the file itself had declared it) from the file's own declaration. Every provenance panel in this app shows the detected value, the resolved value, and which of "embedded in the file", "import default", or "expert override" produced it.
 
@@ -40,3 +40,35 @@ The workbench also has an "Export report" action next to "Save session": it rend
 The build produces route-specific HTML for direct navigation and a static `404.html`, plus a `_headers` file declaring the security policy and caching rules. No provider-specific runtime, server function, or fallback rewrite is required. A production origin and provider configuration are intentionally outside this package.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for build output, host requirements, the verification list to run against a deployment target, cutover, and rollback.
+
+## Expanded local workflows
+
+Inspect, Forensics, Measure & Section and Printability provide local
+versioned evidence JSON downloads, including source provenance, limits and
+qualifications without original mesh buffers. Mesh Health deliberately runs a
+separate bounded self-intersection check, reporting source triangle locations
+and indeterminate outcomes rather than promising repair or solid validity.
+
+Comparison review supports callouts, distance markups and named camera views.
+Their references are bound to source digests, normalization and analysis
+interpretation; changing those inputs invalidates stale review state. Portable
+sessions retain review state and model geometry; HTML reports escape user text.
+
+Convert offers a bounded optional original/result preview and glTF/GLB/3MF
+exports in addition to STL/OBJ. A deliberate format choice selects and displays
+the format's required output frame. Precision, flattened hierarchy and
+simplification qualifications remain visible beside downloads.
+
+STEP uses separately replaceable same-origin JS/WASM assets. Static builds
+include license notices and hash-pinned corresponding sources. Its classic
+kernel worker needs the exact worker-specific header replacement in
+`public/_headers`; application pages retain their stricter CSP. See
+[distribution details](../../third-party/step/README.md). The worker has a
+60-second termination limit; upstream kernel memory and semantic behavior are
+not proven bounded by that deadline. STEP units are resolved from supported
+source declarations, while the up-axis is declared explicitly.
+
+Run all browser engines under shipped headers with
+`playwright.complete.config.ts`. Headless Firefox environments without WebGL
+exercise accessible renderer fallbacks; the other configured engines exercise
+real canvases. Physical-device acceptance remains separate.

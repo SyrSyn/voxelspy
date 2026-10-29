@@ -12,8 +12,7 @@
  * used by the default `pnpm test:e2e` run and ships no code into the
  * production build.
  *
- * Limits: it only implements the single "/*" rule this project's
- * `_headers` file currently declares (applied to every response), not
+ * Limits: it implements literal/splat path rules and ordered header detachment, not
  * Cloudflare Pages' full glob-matching and precedence rules. It also
  * cannot demonstrate `frame-ancestors` (that needs a second origin
  * attempting to frame this one) or off-host behavior in general -- it
@@ -42,6 +41,10 @@ function parseHeadersFile(text) {
     }
     if (!current) continue;
     const trimmed = line.trim();
+    if (trimmed.startsWith("! ")) {
+      current.headers.push([trimmed.slice(2).trim(), null]);
+      continue;
+    }
     const separator = trimmed.indexOf(":");
     if (separator === -1) continue;
     current.headers.push([
@@ -55,15 +58,34 @@ function parseHeadersFile(text) {
 const headersText = await readFile(path.join(dist, "_headers"), "utf8");
 const rules = parseHeadersFile(headersText);
 
-function headersForResponse() {
-  // Only the catch-all "/*" pattern is implemented -- see module doc.
-  return rules.find((rule) => rule.pattern === "/*")?.headers ?? [];
+function headersForResponse(pathname) {
+  const headers = new Map();
+  for (const rule of rules) {
+    const [prefix, suffix] = rule.pattern.split("*");
+    const matches =
+      suffix === undefined
+        ? pathname === prefix
+        : pathname.startsWith(prefix) && pathname.endsWith(suffix);
+    if (!matches) continue;
+    for (const [name, value] of rule.headers) {
+      const key = name.toLowerCase();
+      if (value === null) headers.delete(key);
+      else
+        headers.set(
+          key,
+          headers.has(key) ? `${headers.get(key)}, ${value}` : value,
+        );
+    }
+  }
+  return [...headers];
 }
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".mjs": "text/javascript; charset=utf-8",
+  ".wasm": "application/wasm",
+  ".gz": "application/gzip",
   ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml",
   ".json": "application/json; charset=utf-8",
@@ -91,7 +113,7 @@ const server = createServer(async (req, res) => {
   try {
     const requestUrl = new URL(req.url ?? "/", "http://localhost");
     const pathname = decodeURIComponent(requestUrl.pathname);
-    for (const [name, value] of headersForResponse()) {
+    for (const [name, value] of headersForResponse(pathname)) {
       res.setHeader(name, value);
     }
     const filePath = await resolveFile(pathname);

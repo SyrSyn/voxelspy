@@ -1,3 +1,4 @@
+import { EvidenceReportDownload } from "./EvidenceReportDownload";
 import {
   DEFAULT_OVERHANG_THRESHOLD_DEGREES_FROM_VERTICAL,
   DEFAULT_THIN_WALL_THRESHOLD_MILLIMETRES,
@@ -340,7 +341,7 @@ function ModelSourceCard({
         <small>
           {selection.file
             ? `${(selection.file.size / 1024).toFixed(1)} KiB · local file`
-            : "STL, OBJ, glTF, GLB, or 3MF, up to 32 MiB"}
+            : "STL, OBJ, glTF, GLB, 3MF, or STEP, up to 32 MiB"}
         </small>
         <input
           id="model-file"
@@ -402,7 +403,7 @@ function ModelSourceCard({
                 })
               }
             >
-              {declaresOwnFrame && (
+              {declaresOwnFrame && format !== "step" && (
                 <option value="">Use the file&rsquo;s declared value</option>
               )}
               {axes.map((axis) => (
@@ -1197,6 +1198,19 @@ function PrintabilityReport({
     assessmentRequestOptions(parameters) !== undefined && !recomputing;
   return (
     <div className="inspect-report">
+      <EvidenceReportDownload
+        disabledReason={
+          recomputing
+            ? "Wait for the assessment to finish before downloading its evidence."
+            : undefined
+        }
+        report={() => ({
+          kind: "printability",
+          source: { name: sourceMeta.name, sizeBytes: sourceMeta.size },
+          provenance: model.provenance,
+          evidence: { assessment, warnings: model.warnings },
+        })}
+      />
       <header className="inspect-report-header">
         <div>
           <h2>{sourceMeta.name}</h2>

@@ -12,8 +12,10 @@
  * discriminates on `status` still gets a safe, non-`"complete"` answer,
  * while one who cares about the distinction can read `reason.kind`.
  *
- * `"complete"` always carries the engine's own result object completely
- * unmodified -- for `useModelComparison` this includes the case where
+ * `"complete"` carries the selected adapter's result. Most hooks return
+ * the engine result unchanged; `useModelSimplification` explicitly keeps
+ * geometry in a ref and exposes only metadata in state. For
+ * `useModelComparison` this includes the case where
  * `result.outcome.state === "indeterminate"`. This status model describes
  * only the asynchronous lifecycle of *running the call*; it never
  * re-derives, flattens, or summarizes what the engine itself already

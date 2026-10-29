@@ -26,12 +26,12 @@ describe("convert source defaults", () => {
     });
     expect(
       modelSourceCapability(
-        modelSourceSelectionForFile(new File(["x"], "model.step")),
+        modelSourceSelectionForFile(new File(["x"], "model.fbx")),
       ),
     ).toEqual({
       ready: false,
       message:
-        "This release supports STL, OBJ, glTF, GLB, or 3MF mesh files (.stl, .obj, .gltf, .glb, .3mf).",
+        "This release supports STL, OBJ, glTF, GLB, 3MF, or STEP mesh files (.stl, .obj, .gltf, .glb, .3mf, .step, .stp).",
     });
     expect(
       modelSourceCapability(
@@ -246,5 +246,54 @@ describe("precisionNote", () => {
     expect(precisionNote("obj", "inch")).not.toMatch(
       /^This text format's number encoding round-trips exactly, and millimetre/u,
     );
+  });
+});
+
+describe("declared-frame export formats", () => {
+  const original = {
+    format: "obj" as const,
+    unit: "inch" as const,
+    axis: "right-handed-z-up" as const,
+    source: "original" as const,
+  };
+  it("selects the required glTF/GLB frame only after deliberate format selection", async () => {
+    const { selectExportFormat, exportFrameNote } =
+      await import("./ConvertFlow");
+    for (const format of ["gltf", "glb"] as const) {
+      const selected = selectExportFormat(original, format);
+      expect(selected).toMatchObject({
+        format,
+        unit: "metre",
+        axis: "right-handed-y-up",
+      });
+      expect(exportFormReady(selected)).toEqual({ ready: true });
+      expect(exportFrameNote(format)).toContain("required output frame");
+      expect(exportFormReady({ ...selected, unit: "inch" })).toMatchObject({
+        ready: false,
+      });
+      expect(precisionNote(format, "metre")).toMatch(/float32/u);
+      expect(exportFileName("part.step", format, "simplified")).toBe(
+        `part.simplified.${format}`,
+      );
+    }
+    expect(selectExportFormat(original, "")).toEqual({
+      ...original,
+      format: "",
+    });
+  });
+  it("preserves an explicitly selected 3MF unit while requiring Z-up", async () => {
+    const { selectExportFormat } = await import("./ConvertFlow");
+    const selected = selectExportFormat(
+      { ...original, axis: "right-handed-y-up" },
+      "3mf",
+    );
+    expect(selected).toMatchObject({ unit: "inch", axis: "right-handed-z-up" });
+    expect(exportFormReady(selected)).toEqual({ ready: true });
+    expect(
+      exportFormReady({ ...selected, axis: "right-handed-y-up" }),
+    ).toMatchObject({ ready: false });
+    expect(exportFileName("part.glb", "3mf", "original")).toBe("part.3mf");
+    expect(precisionNote("3mf", "inch")).toMatch(/floating-point/u);
+    expect(precisionNote("3mf", "millimetre")).toMatch(/Float64/u);
   });
 });

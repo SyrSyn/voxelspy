@@ -1,3 +1,4 @@
+import type { ReviewContent } from "./review";
 import type { ModelComparisonPresentationSummary } from "@voxelspy/analysis";
 import type {
   AnalysisResult,
@@ -104,6 +105,7 @@ export interface SessionComparison {
    * no worker or browser dependency of its own.
    */
   summary: ModelComparisonPresentationSummary;
+  reviewContent?: ReviewContent;
 }
 
 export interface SaveSessionInput extends SessionComparison {
@@ -131,12 +133,8 @@ export interface SavedSession {
  * (asserted by this module's tests). See `SESSION_REPORT_ID` and
  * `SESSION_TIMESTAMP` above for why each is fixed rather than derived.
  *
- * The product has no markup or saved-view authoring UI yet, so `markups`
- * and `figures` stay empty and there is always exactly one saved view (the
- * engine's overview view); reopening a session does not depend on that
- * view's framing being anything specific -- the workbench frames the
- * restored models with its usual default camera, exactly as it does for a
- * freshly completed comparison.
+ * Authored annotations and named views are retained in the same version 1
+ * report graph; equal review content produces deterministic archive bytes.
  */
 export function buildSessionReport(input: SessionComparison): Report {
   return buildComparisonReport({
@@ -146,6 +144,9 @@ export function buildSessionReport(input: SessionComparison): Report {
     candidate: input.candidate,
     analysis: input.analysis,
     summary: input.summary,
+    ...(input.reviewContent === undefined
+      ? {}
+      : { reviewContent: input.reviewContent }),
   });
 }
 

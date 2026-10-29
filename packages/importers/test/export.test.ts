@@ -645,3 +645,173 @@ describe("modelToTargetTransform: exact inverse of sourceToModelTransform", () =
     }
   });
 });
+
+describe("encoded export byte ceiling", () => {
+  const options = {
+    targetUnit: "millimetre",
+    targetAxis: "right-handed-z-up",
+  } as const;
+
+  function repeatedFacetModel(triangleCount: number): NormalizedModel {
+    const model = flatModel([
+      {
+        id: "mesh.repeated",
+        positions: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        indices: [0, 1, 2],
+      },
+    ]);
+    return {
+      ...model,
+      meshes: [
+        {
+          ...model.meshes[0]!,
+          geometry: {
+            positions: model.meshes[0]!.geometry.positions,
+            indices: new Uint32Array(triangleCount * 3),
+          },
+        },
+      ],
+    };
+  }
+
+  it("accepts the last complete ASCII STL facet below the byte cap and refuses the next", async () => {
+    const { IMPORTER_SAFETY_LIMITS } = await import("../src/index.js");
+    // Independent expected syntax: zero-area facets have a zero normal and
+    // three zero-valued vertices. No exporter formatting helper is reused.
+    const facet =
+      "facet normal 0 0 0\nouter loop\nvertex 0 0 0\nvertex 0 0 0\nvertex 0 0 0\nendloop\nendfacet\n";
+    const header = "solid model.export-test\n";
+    const footer = "endsolid model.export-test\n";
+    const count = Math.floor(
+      (IMPORTER_SAFETY_LIMITS.inputBytes - header.length - footer.length) /
+        facet.length,
+    );
+    expect(count + 1).toBeLessThan(EXPORTER_SAFETY_LIMITS.triangleCount);
+    const result = await exportModel(repeatedFacetModel(count), {
+      ...options,
+      targetFormat: "stl-ascii",
+    });
+    expect(result.bytes.byteLength).toBe(
+      header.length + count * facet.length + footer.length,
+    );
+    expect(
+      decoder.decode(result.bytes.subarray(0, header.length + facet.length)),
+    ).toBe(header + facet);
+    expect(decoder.decode(result.bytes.subarray(-footer.length))).toBe(footer);
+    await expect(
+      exportModel(repeatedFacetModel(count + 1), {
+        ...options,
+        targetFormat: "stl-ascii",
+      }),
+    ).rejects.toThrow(ExportResourceLimitError);
+  }, 30_000);
+
+  it("accepts the last complete OBJ vertex below the byte cap and refuses the next", async () => {
+    const { IMPORTER_SAFETY_LIMITS } = await import("../src/index.js");
+    const vertex =
+      "v 1.2345678901234567 2.345678901234567 3.4567890123456784\n";
+    const face = "f 1 2 3\n";
+    const count = Math.floor(
+      (IMPORTER_SAFETY_LIMITS.inputBytes - face.length) / vertex.length,
+    );
+    expect(count + 1).toBeLessThan(EXPORTER_SAFETY_LIMITS.vertexCount);
+    const model = repeatedFacetModel(1);
+    const withVertices = (vertexCount: number): NormalizedModel => {
+      const positions = new Float64Array(vertexCount * 3);
+      for (let index = 0; index < positions.length; index += 3) {
+        positions.set(
+          [1.2345678901234567, 2.345678901234567, 3.4567890123456784],
+          index,
+        );
+      }
+      return {
+        ...model,
+        meshes: [
+          {
+            ...model.meshes[0]!,
+            geometry: { positions, indices: Uint32Array.of(0, 1, 2) },
+          },
+        ],
+      };
+    };
+    const result = await exportModel(withVertices(count), {
+      ...options,
+      targetFormat: "obj",
+    });
+    expect(result.bytes.byteLength).toBe(count * vertex.length + face.length);
+    expect(decoder.decode(result.bytes.subarray(0, vertex.length))).toBe(
+      vertex,
+    );
+    expect(decoder.decode(result.bytes.subarray(-face.length))).toBe(face);
+    await expect(
+      exportModel(withVertices(count + 1), { ...options, targetFormat: "obj" }),
+    ).rejects.toThrow(ExportResourceLimitError);
+  }, 30_000);
+
+  it("keeps binary STL's geometry boundary below the encoded byte ceiling", async () => {
+    const { IMPORTER_SAFETY_LIMITS } = await import("../src/index.js");
+    const count = EXPORTER_SAFETY_LIMITS.triangleCount;
+    const result = await exportModel(repeatedFacetModel(count), {
+      ...options,
+      targetFormat: "stl-binary",
+    });
+    expect(result.bytes.byteLength).toBe(84 + 50 * count);
+    expect(result.bytes.byteLength).toBeLessThan(
+      IMPORTER_SAFETY_LIMITS.inputBytes,
+    );
+    expect(new DataView(result.bytes.buffer).getUint32(80, true)).toBe(count);
+    await expect(
+      exportModel(repeatedFacetModel(count + 1), {
+        ...options,
+        targetFormat: "stl-binary",
+      }),
+    ).rejects.toThrow(ExportResourceLimitError);
+  }, 30_000);
+});
+
+describe("binary STL finite output range", () => {
+  const options = {
+    targetFormat: "stl-binary",
+    targetUnit: "millimetre",
+    targetAxis: "right-handed-z-up",
+  } as const;
+
+  function modelWithCoordinate(value: number): NormalizedModel {
+    return flatModel([
+      {
+        id: "mesh.range",
+        positions: [0, 0, 0, value, 0, 0, 0, 1, 0],
+        indices: [0, 1, 2],
+      },
+    ]);
+  }
+
+  it.each([1e39, -1e39])(
+    "refuses finite Float64 coordinate %s when float32 would overflow",
+    async (coordinate) => {
+      expect(Number.isFinite(coordinate)).toBe(true);
+      await expect(
+        exportModel(modelWithCoordinate(coordinate), options),
+      ).rejects.toThrow(ExportInputError);
+    },
+  );
+
+  it.each([3.4028234663852886e38, -3.4028234663852886e38])(
+    "round trips the finite float32 boundary %s",
+    async (coordinate) => {
+      const result = await exportModel(
+        modelWithCoordinate(coordinate),
+        options,
+      );
+      const restored = await reimport(
+        "stl-binary",
+        result.bytes,
+        options.targetUnit,
+        options.targetAxis,
+      );
+      const positions = restored.meshes[0]!.geometry.positions;
+      expect([...positions].every(Number.isFinite)).toBe(true);
+      expect(positions[3]).toBe(coordinate);
+    },
+  );
+});

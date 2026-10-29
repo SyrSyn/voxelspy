@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
 const baseline = `solid baseline
@@ -109,6 +110,33 @@ test("saves a completed comparison as a portable session and reopens it directly
   await expect(page.locator(".findings")).toHaveText(findingsBefore!);
   await expect(page.locator(".analysis-stats")).toHaveText(statsBefore!);
   await expect(page.locator(".evidence-summary")).toHaveText(summaryBefore!);
+
+  // Reimport transfers its request buffers to a worker. The original
+  // archive resources must remain owned here so the reopened session can
+  // be saved and shared again without losing either source model.
+  const resaveDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Save session" }).click();
+  const resavedBytes = readFileSync((await (await resaveDownload).path())!);
+  expect(resavedBytes.equals(sessionBytes)).toBe(true);
+  expect(createHash("sha256").update(resavedBytes).digest("hex")).toBe(
+    createHash("sha256").update(sessionBytes).digest("hex"),
+  );
+
+  await page.reload();
+  await page.locator("#session-open-file").setInputFiles({
+    name: "resaved-session.voxelspy",
+    mimeType: "application/zip",
+    buffer: resavedBytes,
+  });
+  await expect(
+    page.getByRole("heading", { name: "Comparison workbench" }),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator(".findings")).toHaveText(findingsBefore!);
+  await expect(page.locator(".analysis-stats")).toHaveText(statsBefore!);
+  await expect(page.locator(".evidence-summary")).toHaveText(summaryBefore!);
+  await expect(
+    page.getByText("Analyzing tessellated surface distance"),
+  ).toHaveCount(0);
 });
 
 test("fails closed with a clear message when a corrupted session file is opened", async ({

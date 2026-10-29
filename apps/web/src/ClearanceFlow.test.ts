@@ -53,11 +53,11 @@ describe("clearance part source defaults", () => {
       message: "Choose a local model file.",
     });
     expect(
-      partSourceCapability(partSelectionForFile(new File(["x"], "model.step"))),
+      partSourceCapability(partSelectionForFile(new File(["x"], "model.fbx"))),
     ).toEqual({
       ready: false,
       message:
-        "This release supports STL, OBJ, glTF, GLB, or 3MF mesh files (.stl, .obj, .gltf, .glb, .3mf).",
+        "This release supports STL, OBJ, glTF, GLB, 3MF, or STEP mesh files (.stl, .obj, .gltf, .glb, .3mf, .step, .stp).",
     });
     expect(
       partSourceCapability(partSelectionForFile(new File(["x"], "model.glb"))),

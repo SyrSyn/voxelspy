@@ -2,6 +2,7 @@
 
 import {
   assessPrintability,
+  checkSelfIntersections,
   diagnoseMeshHealth,
   inspectModel,
 } from "@voxelspy/analysis";
@@ -10,7 +11,7 @@ import {
   modelIdSchema,
   type NormalizedModel,
 } from "@voxelspy/contracts";
-import { importModel } from "@voxelspy/importers";
+import { importLocalModel as importModel } from "./import-local-model";
 
 import type {
   ForensicsInstanceSummary,
@@ -53,6 +54,13 @@ async function handle(data: InspectWorkerRequest) {
     const imported = await importModel(request);
     if (!imported.ok) {
       response = { requestId, kind, ok: false, message: imported.message };
+    } else if (kind === "self-intersections") {
+      response = {
+        requestId,
+        kind,
+        ok: true,
+        outcome: checkSelfIntersections(imported.model),
+      };
     } else if (kind === "inspect") {
       const inspection = inspectModel(imported.model);
       response = {

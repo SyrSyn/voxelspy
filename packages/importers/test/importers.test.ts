@@ -248,13 +248,15 @@ endsolid second
       code: "unsupported-input",
     });
     expect(inferFormat("PART.STL")).toBe("stl");
-    expect(inferFormat("part.step")).toBeUndefined();
+    expect(inferFormat("part.step")).toBe("step");
+    expect(inferFormat("PART.STP")).toBe("step");
     expect(importerDescriptor.formats).toEqual([
       "stl",
       "obj",
       "gltf",
       "glb",
       "3mf",
+      "step",
     ]);
   });
 });

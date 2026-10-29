@@ -320,9 +320,22 @@ test("reloading mid-comparison returns to a clean, ready state", async ({
   // run is deterministically still in flight -- regardless of machine
   // speed -- at the moment the page is reloaded, rather than relying on a
   // large fixture and a timing guess.
+  let reloadStarted = false;
   await page.route("**/comparison.worker*.js", async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 3_000));
-    await route.continue();
+    try {
+      await route.continue();
+    } catch (error) {
+      // WebKit can finish handling the cancelled old-page request during
+      // reload. Only that expected cancellation is harmless; other routing
+      // errors still fail, and the pending handler is drained below.
+      if (
+        !reloadStarted ||
+        !(error instanceof Error) ||
+        !error.message.includes("Route is already handled")
+      )
+        throw error;
+    }
   });
   await page.goto("/compare/");
   await attachFixture(page, { baseline, candidate });
@@ -331,6 +344,7 @@ test("reloading mid-comparison returns to a clean, ready state", async ({
     page.getByRole("button", { name: "Comparing locally…" }),
   ).toBeVisible();
 
+  reloadStarted = true;
   await page.reload();
 
   await expect(
@@ -347,7 +361,7 @@ test("reloading mid-comparison returns to a clean, ready state", async ({
 
   // Genuinely usable again, not just visually reset: a fresh comparison
   // (worker script no longer delayed) completes normally.
-  await page.unroute("**/comparison.worker*.js");
+  await page.unrouteAll({ behavior: "wait" });
   await attachFixture(page, { baseline, candidate });
   await expect(
     page.getByRole("button", { name: "Validate and compare" }),

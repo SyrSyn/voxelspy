@@ -46,6 +46,7 @@ function renderBody(report: Report): string {
     renderAnalysis(report.analysis.result.outcome),
     renderResultWarnings(report.analysis.result.warnings),
     renderFindings(report.findings),
+    ...(report.markups.length > 0 ? [renderMarkups(report)] : []),
     renderSavedViews(report.savedViews),
     renderFigures(report),
     renderReview(report),
@@ -329,7 +330,7 @@ function renderSavedViews(views: readonly SavedView[]): string {
         <td><code>${escapeHtml(view.id)}</code></td>
         <td>${escapeHtml(view.name)}</td>
         <td>${escapeHtml(view.displayMode)}</td>
-        <td>${escapeHtml(view.camera.projection.kind)}</td>
+        <td>${escapeHtml(view.camera.projection.kind)}${view.id === "view.overview" ? "" : `<br />Camera ${escapeHtml(JSON.stringify(view.camera))}<br />Selected regions ${escapeHtml(view.selectedRegionIds.join(", "))}<br />Selected annotations ${escapeHtml(view.selectedMarkupIds.join(", "))}`}</td>
         <td>${view.visibility.map((entry) => `<code>${escapeHtml(entry.modelId)}</code>:${entry.visible ? "on" : "off"}`).join(", ")}</td>
       </tr>`,
     )
@@ -475,3 +476,8 @@ const STYLE = `
   table.transform td { text-align: right; padding: 0.15rem 0.5rem; }
   .placement-applied { border-left: 3px solid var(--accent); padding-left: 0.75rem; }
 `;
+
+function renderMarkups(report: Report): string {
+  if (report.markups.length === 0) return "";
+  return `<section aria-labelledby="annotations-heading"><h2 id="annotations-heading">Review annotations</h2>${report.markups.map((markup) => `<article><h3>${escapeHtml(markup.label)}</h3><p>${markup.visible ? "Visible" : "Hidden"}</p>${markup.kind === "callout" ? `<p>${escapeHtml(markup.text)}</p><p>Anchor: ${escapeHtml(JSON.stringify(markup.anchor))}</p>` : `<p>Distance: ${formatNumber(markup.valueMillimetres)} mm</p><p>Start: ${escapeHtml(JSON.stringify(markup.start))}</p><p>End: ${escapeHtml(JSON.stringify(markup.end))}</p>`}</article>`).join("\n")}</section>`;
+}

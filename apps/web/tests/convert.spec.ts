@@ -270,3 +270,122 @@ test("exporting after simplification defaults to the simplified model, but the o
     report.locator('[role="row"]', { hasText: "Source model" }),
   ).toContainText("Original");
 });
+
+test("optional geometry preview preserves exports and clears when the model is replaced", async ({
+  page,
+}) => {
+  const { expectViewportsRendered } = await import("./webgl");
+  await page.goto("/tools/convert/");
+  await loadModel(page, "preview-box.stl", boxStl);
+  const preview = page.locator(
+    '[aria-labelledby="conversion-preview-heading"]',
+  );
+  await expect(preview.locator("canvas")).toHaveCount(0);
+  await preview.getByRole("button", { name: "Show geometry preview" }).click();
+  await expectViewportsRendered(page, preview, 1, { timeout: 20_000 });
+  await expect(
+    preview.getByRole("heading", { name: "Original geometry" }),
+  ).toBeVisible();
+  await page.locator("#convert-export-format").selectOption("stl-ascii");
+  await page.locator("#convert-export-unit").selectOption("millimetre");
+  await page.locator("#convert-export-axis").selectOption("right-handed-z-up");
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export and download" }).click();
+  expect((await download).suggestedFilename()).toBe("preview-box.stl");
+  await page.getByRole("button", { name: "Convert another model" }).click();
+  await expect(preview).toHaveCount(0);
+});
+
+test("simplified preview shows both sources beside the measured certification", async ({
+  page,
+}) => {
+  const { expectViewportsRendered } = await import("./webgl");
+  await page.goto("/tools/convert/");
+  await loadModel(page, "reduced-box.stl", boxStl);
+  await page.locator("#convert-simplify-mode").selectOption("triangle-count");
+  await page.locator("#convert-target-triangle-count").fill("10");
+  await page.getByRole("button", { name: "Run simplification" }).click();
+  await expect(
+    page.getByText("maximum measured deviation", { exact: false }).first(),
+  ).toBeVisible({ timeout: 20_000 });
+  const preview = page.locator(
+    '[aria-labelledby="conversion-preview-heading"]',
+  );
+  await preview.getByRole("button", { name: "Show geometry preview" }).click();
+  await expectViewportsRendered(page, preview, 2, { timeout: 20_000 });
+  await expect(
+    preview.getByRole("heading", { name: "Simplified geometry" }),
+  ).toBeVisible();
+});
+
+for (const format of ["gltf", "glb", "3mf"] as const) {
+  test(`exports ${format} with its declared frame and reopens the actual downloaded model`, async ({
+    page,
+  }) => {
+    await page.goto("/tools/convert/");
+    await loadModel(page, "declared-box.stl", boxStl);
+    await expect(page.locator("#convert-export-format")).toHaveValue("");
+    await page.locator("#convert-export-format").selectOption(format);
+    if (format === "3mf") {
+      await expect(page.locator("#convert-export-axis")).toHaveValue(
+        "right-handed-z-up",
+      );
+      await expect(page.locator("#convert-export-axis")).toBeDisabled();
+      await expect(page.locator("#convert-export-unit")).toBeEnabled();
+      await page.locator("#convert-export-unit").selectOption("inch");
+    } else {
+      await expect(page.locator("#convert-export-unit")).toHaveValue("metre");
+      await expect(page.locator("#convert-export-axis")).toHaveValue(
+        "right-handed-y-up",
+      );
+      await expect(page.locator("#convert-export-unit")).toBeDisabled();
+      await expect(page.locator("#convert-export-axis")).toBeDisabled();
+      await expect(
+        page.getByText(
+          "Choosing this format selects that required output frame.",
+          { exact: false },
+        ),
+      ).toBeVisible();
+    }
+    const pending = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export and download" }).click();
+    const download = await pending;
+    expect(download.suggestedFilename()).toBe(`declared-box.${format}`);
+    const stream = await download.createReadStream();
+    if (!stream)
+      throw new Error("The exported download stream is unavailable.");
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+    const bytes = Buffer.concat(chunks);
+    if (format === "gltf")
+      expect(JSON.parse(bytes.toString("utf8")).asset.version).toBe("2.0");
+    if (format === "glb") {
+      expect(bytes.readUInt32LE(0)).toBe(0x46546c67);
+      expect(bytes.readUInt32LE(8)).toBe(bytes.length);
+    }
+    if (format === "3mf") expect(bytes.readUInt32LE(0)).toBe(0x04034b50);
+    const report = page.locator('[aria-labelledby="convert-export-title"]');
+    await expect(report).toContainText(
+      "The format declares its output unit and axis convention.",
+    );
+    await expect(report).not.toContainText(
+      "This file cannot record its own unit or axis.",
+    );
+    await expect(report).toContainText(
+      format === "3mf" ? "Float64" : "float32",
+    );
+    await page.getByRole("button", { name: "Convert another model" }).click();
+    await page.locator("#model-file").setInputFiles({
+      name: `reopened.${format}`,
+      mimeType: "application/octet-stream",
+      buffer: bytes,
+    });
+    await page.getByRole("button", { name: "Load model" }).click();
+    await expect(
+      page.getByText(`Loaded reopened.${format}`, { exact: false }),
+    ).toBeVisible({ timeout: 20_000 });
+    await expect(
+      page.getByText("12 triangles", { exact: false }),
+    ).toBeVisible();
+  });
+}

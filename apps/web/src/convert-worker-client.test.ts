@@ -232,3 +232,41 @@ describe("export -> re-import equivalence (the download this tool produces)", ()
     expect(binaryZ).toBeCloseTo(12.345, 4);
   });
 });
+
+// Preview transfers copies and must not consume geometry retained for export.
+describe("conversion preview ownership", () => {
+  it("can transfer preview buffers without detaching the retained original", async () => {
+    const { cloneConversionPreview } = await import("./convert-preview");
+    const original = await importBoxModel();
+    const preview = cloneConversionPreview(original, 12);
+    expect(preview.meshes[0]!.geometry.positions.buffer).not.toBe(
+      original.meshes[0]!.geometry.positions.buffer,
+    );
+    const buffers = preview.meshes.flatMap((mesh) => [
+      mesh.geometry.positions.buffer,
+      mesh.geometry.indices.buffer,
+    ]);
+    const displayed = structuredClone(preview, { transfer: buffers });
+    expect(displayed.provenance).toEqual(original.provenance);
+    expect(displayed.meshes[0]!.geometry.positions).toEqual(
+      original.meshes[0]!.geometry.positions,
+    );
+    expect(preview.meshes[0]!.geometry.positions.byteLength).toBe(0);
+    const output = await exportModel(original, {
+      targetFormat: "stl-ascii",
+      targetUnit: "millimetre",
+      targetAxis: "right-handed-z-up",
+    });
+    expect(output.geometry.triangleCount).toBe(12);
+    expect(output.bytes.byteLength).toBeGreaterThan(0);
+  });
+  it("refuses oversized preview allocations without refusing conversion itself", async () => {
+    const { cloneConversionPreview, MAX_CONVERT_PREVIEW_TRIANGLES } =
+      await import("./convert-preview");
+    const model = await importBoxModel();
+    expect(() =>
+      cloneConversionPreview(model, MAX_CONVERT_PREVIEW_TRIANGLES + 1),
+    ).toThrow(/preview is limited/);
+    expect(model.meshes[0]!.geometry.positions.byteLength).toBeGreaterThan(0);
+  });
+});

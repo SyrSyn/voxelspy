@@ -29,6 +29,7 @@ const ROUTES = [
   "/tools/",
   "/compare/",
   "/tools/inspect/",
+  "/tools/mesh-health/",
   "/tools/scale/",
   "/tools/volume/",
   "/tools/watertight/",

@@ -258,3 +258,12 @@ export type {
   SimplifyTarget,
   SimplifyWarning,
 } from "./simplify.js";
+export {
+  SELF_INTERSECTION_LIMITS,
+  checkSelfIntersections,
+} from "./self-intersection.js";
+export type {
+  SelfIntersectionOptions,
+  SelfIntersectionPair,
+  SelfIntersectionResult,
+} from "./self-intersection.js";

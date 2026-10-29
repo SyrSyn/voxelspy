@@ -1,3 +1,4 @@
+import { EvidenceReportDownload } from "./EvidenceReportDownload";
 import type {
   MeshHealthDiagnosis,
   ModelPresentationSummary,
@@ -34,6 +35,7 @@ import {
   type MeshHealthDiagnosisOutcome,
 } from "./inspect-worker-client";
 import type { MeshHealthSelection } from "./MeshHealthViewer";
+import { SelfIntersectionPanel } from "./SelfIntersectionPanel";
 import { ToolShell } from "./ToolShell";
 import { DEFAULT_ANALYSIS_MEMORY_MIB } from "./worker-client";
 
@@ -137,7 +139,7 @@ function ModelSourceCard({
         <small>
           {selection.file
             ? `${(selection.file.size / 1024).toFixed(1)} KiB · local file`
-            : "STL, OBJ, glTF, GLB, or 3MF, up to 32 MiB"}
+            : "STL, OBJ, glTF, GLB, 3MF, or STEP, up to 32 MiB"}
         </small>
         <input
           id="model-file"
@@ -199,7 +201,7 @@ function ModelSourceCard({
                 })
               }
             >
-              {declaresOwnFrame && (
+              {declaresOwnFrame && format !== "step" && (
                 <option value="">Use the file&rsquo;s declared value</option>
               )}
               {axes.map((axis) => (
@@ -775,6 +777,29 @@ function InspectReport({
   const watertight = watertightPresentation(inspection.watertightness);
   return (
     <div className="inspect-report">
+      <EvidenceReportDownload
+        disabledReason={
+          diagnosisState.status === "loading"
+            ? "Wait for mesh diagnosis to finish before downloading its evidence."
+            : undefined
+        }
+        report={() => ({
+          kind: "inspection",
+          source: { name: sourceMeta.name, sizeBytes: sourceMeta.size },
+          provenance: inspection.provenance,
+          evidence: {
+            inspection,
+            warnings,
+            diagnosis:
+              diagnosisState.status === "ready"
+                ? {
+                    status: "ready",
+                    diagnosis: diagnosisState.outcome.diagnosis,
+                  }
+                : diagnosisState,
+          },
+        })}
+      />
       <header className="inspect-report-header">
         <div>
           <h2>{sourceMeta.name}</h2>
@@ -1027,7 +1052,10 @@ const INITIAL_CAPABILITY: CapabilityPreflight = {
  * these are landing pages into one capable inspector, not separate
  * implementations.
  */
-export function InspectFlow({ focus }: { focus?: InspectFocusId } = {}) {
+export function InspectFlow({
+  focus,
+  meshHealth = false,
+}: { focus?: InspectFocusId; meshHealth?: boolean } = {}) {
   const focusPage = focus
     ? inspectFocusPages.find((page) => page.id === focus)
     : undefined;
@@ -1152,11 +1180,15 @@ export function InspectFlow({ focus }: { focus?: InspectFocusId } = {}) {
 
   return (
     <ToolShell
-      eyebrow={focusPage?.eyebrow ?? "Inspect"}
-      title={focusPage?.title ?? "Look inside one model"}
+      eyebrow={meshHealth ? "Mesh Health" : (focusPage?.eyebrow ?? "Inspect")}
+      title={
+        meshHealth
+          ? "Examine mesh health without changing geometry"
+          : (focusPage?.title ?? "Look inside one model")
+      }
       description={
         focusPage?.description ??
-        "Choose a single model file (STL, OBJ, glTF, GLB, or 3MF) from your device and get a full local report: dimensions, surface area, volume, watertightness, topology findings, and a per-mesh breakdown."
+        "Choose a single model file (STL, OBJ, glTF, GLB, 3MF, or STEP) from your device and get a full local report: dimensions, surface area, volume, watertightness, topology findings, and a per-mesh breakdown."
       }
     >
       {focusPage ? (
@@ -1182,17 +1214,25 @@ export function InspectFlow({ focus }: { focus?: InspectFocusId } = {}) {
         </nav>
       )}
       {outcome && sourceMeta ? (
-        <InspectReport
-          outcome={outcome}
-          sourceMeta={sourceMeta}
-          onReset={reset}
-          focus={focus}
-          diagnosisState={diagnosisState}
-          onLoadDiagnosis={() => void loadDiagnosis()}
-          onRetryDiagnosis={() => void loadDiagnosis()}
-          diagnosisSelection={diagnosisSelection}
-          onSelectDiagnostic={setDiagnosisSelection}
-        />
+        <>
+          <InspectReport
+            outcome={outcome}
+            sourceMeta={sourceMeta}
+            onReset={reset}
+            focus={focus}
+            diagnosisState={diagnosisState}
+            onLoadDiagnosis={() => void loadDiagnosis()}
+            onRetryDiagnosis={() => void loadDiagnosis()}
+            diagnosisSelection={diagnosisSelection}
+            onSelectDiagnostic={setDiagnosisSelection}
+          />
+          {meshHealth && (
+            <SelfIntersectionPanel
+              source={selection as InspectSource}
+              provenance={outcome.inspection.provenance}
+            />
+          )}
+        </>
       ) : (
         <section
           className="comparison-card"

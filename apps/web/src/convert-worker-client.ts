@@ -34,10 +34,8 @@ export interface PlacedGeometryCounts {
   readonly instanceCount: number;
 }
 
-/** What one successful `"load"` call hands back: no geometry crosses the
- *  worker boundary at all (this tool draws no 3D view -- see ConvertFlow.tsx's
- *  module doc comment), only the small, serializable facts a textual report
- *  needs. The imported model itself stays inside the worker for a
+/** What one successful `"load"` call hands back: geometry is requested separately through the explicit preview operation; this
+ *  response contains only the serializable facts a textual report needs. The imported model itself stays inside the worker for a
  *  subsequent `"simplify"`/`"export"` call against this same session. */
 export interface ConvertLoadOutcome {
   readonly modelId: NormalizedModel["id"];
@@ -48,8 +46,8 @@ export interface ConvertLoadOutcome {
 }
 
 /** `SimplificationResult` minus its `model` field: the simplified geometry
- *  never leaves the worker (nothing in this tool's report needs it -- the
- *  certification numbers below are the point), it just becomes the input a
+ *  stays in the worker until an explicit preview requests a cloned copy; it
+ *  becomes the input a
  *  later `"export"` call against this same session can select. */
 export type ConvertSimplifyOutcome = Omit<SimplificationResult, "model">;
 
@@ -77,6 +75,10 @@ interface ConvertWorkerRequestBase {
 
 export type ConvertWorkerRequest =
   | (ConvertWorkerRequestBase & {
+      readonly kind: "preview";
+      readonly source: "original" | "simplified";
+    })
+  | (ConvertWorkerRequestBase & {
       readonly kind: "load";
       readonly format: SupportedFormat;
       readonly sourceName: string;
@@ -99,6 +101,18 @@ export type ConvertWorkerRequest =
     });
 
 export type ConvertWorkerResponse =
+  | {
+      readonly requestId: number;
+      readonly kind: "preview";
+      readonly ok: true;
+      readonly model: NormalizedModel;
+    }
+  | {
+      readonly requestId: number;
+      readonly kind: "preview";
+      readonly ok: false;
+      readonly message: string;
+    }
   | {
       readonly requestId: number;
       readonly kind: "load";
@@ -161,6 +175,8 @@ export class ConvertSessionError extends Error {
  *  the `AbortSignal` passed to `openConvertSession`) tears the worker down. */
 export interface ConvertSession {
   readonly load: ConvertLoadOutcome;
+  /** Explicit cloned preview; retained worker geometry is never detached. */
+  preview(source: "original" | "simplified"): Promise<NormalizedModel>;
   simplify(options: SimplifyOptions): Promise<ConvertSimplifyOutcome>;
   export(
     source: "original" | "simplified",
@@ -281,6 +297,15 @@ export async function openConvertSession(
 
   return {
     load: loadResponse.outcome,
+    async preview(source) {
+      const response = await call<"preview">((requestId) => ({
+        kind: "preview",
+        requestId,
+        source,
+      }));
+      if (!response.ok) throw new Error(response.message);
+      return response.model;
+    },
     async simplify(options) {
       const response = await call<"simplify">((requestId) => ({
         kind: "simplify",

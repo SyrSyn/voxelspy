@@ -1,5 +1,7 @@
 /// <reference lib="webworker" />
 
+import { cloneConversionPreview } from "./convert-preview";
+
 import { simplifyModel } from "@voxelspy/analysis";
 import {
   importRequestSchema,
@@ -8,7 +10,8 @@ import {
   type MeshId,
   type NormalizedModel,
 } from "@voxelspy/contracts";
-import { exportModel, importModel } from "@voxelspy/importers";
+import { exportModel } from "@voxelspy/importers";
+import { importLocalModel as importModel } from "./import-local-model";
 
 import type {
   ConvertWorkerRequest,
@@ -23,8 +26,8 @@ const scope = self as DedicatedWorkerGlobalScope;
  * module doc comment for why this is a small persistent session rather than
  * `inspect.worker.ts`'s spin-up-per-call shape. `originalModel` is set once
  * by `"load"`; `simplifiedModel` is set (and replaced) by each successful
- * `"simplify"` call. Neither ever leaves this worker -- only the small
- * report objects `convert-worker-client.ts` defines, plus (for `"export"`)
+ * `"simplify"` call. Retained geometry never leaves this worker; explicit previews transfer
+ * cloned buffers. The report objects `convert-worker-client.ts` defines, plus (for `"export"`)
  * the produced file bytes, cross back to the main thread.
  */
 let originalModel: NormalizedModel | undefined;
@@ -104,6 +107,30 @@ async function handle(data: ConvertWorkerRequest) {
             warnings: imported.model.warnings,
           },
         };
+      }
+    } else if (kind === "preview") {
+      const target =
+        data.source === "original" ? originalModel : simplifiedModel;
+      if (!target) {
+        response = {
+          requestId,
+          kind,
+          ok: false,
+          message:
+            "The requested conversion preview is not available. Load or simplify a model first.",
+        };
+      } else {
+        // Clone only geometry buffers: transfer ownership of the copies while
+        // preserving the worker's originals for subsequent exports/simplification.
+        const model = cloneConversionPreview(
+          target,
+          placedGeometryCounts(target).triangleCount,
+        );
+        transfer = model.meshes.flatMap((mesh) => [
+          mesh.geometry.positions.buffer,
+          mesh.geometry.indices.buffer,
+        ]);
+        response = { requestId, kind, ok: true, model };
       }
     } else if (kind === "simplify") {
       if (!originalModel) {

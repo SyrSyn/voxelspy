@@ -26,17 +26,26 @@ import {
   type ResolvedSourceUnit,
 } from "./normalize.js";
 import { BINARY_FACET_BYTES, BINARY_HEADER_BYTES } from "./stl.js";
+import {
+  writeGltfContainer,
+  writeThreeMfContainer,
+  type ContainerGeometry,
+} from "./export-containers.js";
 
 // ---------------------------------------------------------------------------
 // Public option/result shapes
 // ---------------------------------------------------------------------------
 
-export type ExportFormat = "stl-binary" | "stl-ascii" | "obj";
+export type ExportFormat =
+  "stl-binary" | "stl-ascii" | "obj" | "gltf" | "glb" | "3mf";
 
 const EXPORT_FORMATS: readonly ExportFormat[] = [
   "stl-binary",
   "stl-ascii",
   "obj",
+  "gltf",
+  "glb",
+  "3mf",
 ];
 
 export interface ExportOptions {
@@ -44,9 +53,10 @@ export interface ExportOptions {
   /**
    * The unit `exportModel` converts canonical-frame (millimetre)
    * coordinates into before writing them. Required, never defaulted:
-   * neither STL nor OBJ can declare a unit inside the file (see
-   * `ExportResult.warnings`'s `export.unit-not-declared` entry, always
-   * present), so silently picking one on the caller's behalf would let a
+   * glTF/GLB require metre and Y-up; 3MF requires Z-up and declares this
+   * chosen length unit. Neither STL nor OBJ can declare a unit (see
+   * `ExportResult.warnings`'s `export.unit-not-declared` entry for those
+   * legacy formats), so silently picking one on the caller's behalf would let a
    * consumer of the file believe a unit that was never actually chosen.
    */
   readonly targetUnit: ResolvedSourceUnit;
@@ -83,6 +93,9 @@ export interface ExportResult {
   readonly notes: readonly string[];
 }
 
+// Mirrors IMPORTER_SAFETY_LIMITS.inputBytes without importing the barrel.
+const MAX_EXPORT_BYTES = 32 * 1024 * 1024;
+
 /**
  * Safety ceiling on the FLATTENED (post-instancing) geometry `exportModel`
  * will write, checked by cheap arithmetic over each mesh's already-known
@@ -106,7 +119,9 @@ export const EXPORTER_SAFETY_LIMITS = Object.freeze({
 /**
  * Serializes `model` (a `NormalizedModel` in the canonical millimetre,
  * right-handed-Z-up frame) to bytes for `options.targetFormat`, one of
- * `"stl-binary"`, `"stl-ascii"`, or `"obj"` -- the exact subset
+ * `"stl-binary"`, `"stl-ascii"`, `"obj"`, `"gltf"`, `"glb"` or `"3mf"`.
+ * glTF/GLB require metre/Y-up and write float32 positions; 3MF declares
+ * the requested length unit and requires Z-up. All write the exact subset
  * `src/stl.ts`/`src/obj.ts` read back, so a round trip through this
  * package (`exportModel` then `importModel`) is closed: nothing is ever
  * written that this package's own importer would refuse.
@@ -120,7 +135,7 @@ export const EXPORTER_SAFETY_LIMITS = Object.freeze({
  * `appliedModelToTarget`. Because neither STL nor OBJ has any field for
  * unit or axis metadata, that choice does not survive inside the file
  * bytes themselves -- `ExportResult.warnings` always includes an
- * `export.unit-not-declared` entry saying so, and a caller re-importing the
+ * `export.unit-not-declared` entry for STL/OBJ saying so; a caller re-importing those
  * file must supply the same `targetUnit`/`targetAxis` again (as
  * `userUnit`/`userAxis`) to recover the original geometry.
  *
@@ -138,6 +153,8 @@ export const EXPORTER_SAFETY_LIMITS = Object.freeze({
  * consistent with this package's "never silently dedupe geometry"
  * convention). Whenever `model` has more than one mesh or more than one
  * instance, `export.instances-flattened` is added, naming the counts.
+ * glTF/GLB and 3MF deliberately flatten the same placed geometry to one
+ * mesh, disclosing discarded source hierarchy and identity.
  *
  * **Determinism.** Every coordinate is formatted by `formatNumber`
  * (`toString()`'s ECMA-262-specified shortest round-trip decimal --
@@ -183,7 +200,11 @@ export const EXPORTER_SAFETY_LIMITS = Object.freeze({
  * vertex counts are checked against `EXPORTER_SAFETY_LIMITS` by cheap
  * arithmetic over existing typed-array lengths -- before any output buffer
  * is allocated -- and `ExportResourceLimitError` is thrown if either is
- * exceeded. An unrecognized `targetFormat` throws
+ * exceeded. Encoded output also cannot exceed the importer's 32 MiB input
+ * ceiling: binary output is checked before allocation; text is charged
+ * line by line before joining or encoding the output. Binary STL rejects
+ * finite coordinates that would overflow its float32 representation.
+ * An unrecognized `targetFormat` throws
  * `ExportUnsupportedTargetError`; an invalid `targetUnit`/`targetAxis`, or
  * geometry that flattens to zero triangles, throws `ExportInputError`.
  */
@@ -207,6 +228,19 @@ export async function exportModel(
   }
   const targetUnit = unitResult.data;
   const targetAxis = axisResult.data;
+  if (
+    (format === "gltf" || format === "glb") &&
+    (targetUnit !== "metre" || targetAxis !== "right-handed-y-up")
+  ) {
+    throw new ExportInputError(
+      "glTF/GLB export requires targetUnit=metre and targetAxis=right-handed-y-up, matching the format's declared frame.",
+    );
+  }
+  if (format === "3mf" && targetAxis !== "right-handed-z-up") {
+    throw new ExportInputError(
+      "3MF export requires targetAxis=right-handed-z-up; its requested length unit is declared inside the model.",
+    );
+  }
 
   const meshById = new Map<MeshId, MeshBuffer>(
     validated.meshes.map((mesh) => [mesh.id, mesh.geometry] as const),
@@ -237,14 +271,15 @@ export async function exportModel(
   const warnings: ContractWarning[] = [];
   const notes: string[] = [];
 
-  warnings.push(
-    warning({
-      code: "export.unit-not-declared",
-      severity: "info",
-      message: `${formatLabel(format)} cannot declare a unit or axis convention inside the file. This export was written in ${targetUnit}, ${targetAxis}; that choice exists only in this ExportResult, not in the emitted bytes. Re-importing this file requires supplying the same unit and axis again.`,
-      details: { targetUnit, targetAxis },
-    }),
-  );
+  if (format === "stl-binary" || format === "stl-ascii" || format === "obj")
+    warnings.push(
+      warning({
+        code: "export.unit-not-declared",
+        severity: "info",
+        message: `${formatLabel(format)} cannot declare a unit or axis convention inside the file. This export was written in ${targetUnit}, ${targetAxis}; that choice exists only in this ExportResult, not in the emitted bytes. Re-importing this file requires supplying the same unit and axis again.`,
+        details: { targetUnit, targetAxis },
+      }),
+    );
 
   const meshCount = validated.meshes.length;
   const instanceCount = validated.placement.instances.length;
@@ -253,7 +288,10 @@ export async function exportModel(
       warning({
         code: "export.instances-flattened",
         severity: "info",
-        message: `${meshCount} mesh(es) across ${instanceCount} instance(s) were flattened into a single triangle soup; ${formatLabel(format)} has no representation for multiple meshes or mesh instancing.`,
+        message:
+          format === "stl-binary" || format === "stl-ascii" || format === "obj"
+            ? `${meshCount} mesh(es) across ${instanceCount} instance(s) were flattened into a single triangle soup; ${formatLabel(format)} has no representation for multiple meshes or mesh instancing.`
+            : `${meshCount} mesh(es) across ${instanceCount} instance(s) were deliberately flattened into one placed mesh; source hierarchy, mesh identities and instancing were not preserved.`,
         details: { meshCount, instanceCount },
       }),
     );
@@ -295,12 +333,31 @@ export async function exportModel(
     notes.push(
       "Facet normals are computed geometrically from each triangle's vertex winding order (right-hand rule); the normalized model retains no original per-facet normal data to write instead.",
     );
-  } else {
+  } else if (format === "obj") {
     const built = buildObj(instances, meshById);
     bytes = new TextEncoder().encode(built.text);
     vertexCount = built.vertexCount;
     notes.push(
       'No material library is referenced or emitted; the file contains only vertex positions ("v") and triangular faces ("f").',
+    );
+  } else {
+    const geometry = containerGeometry(instances, meshById, counts);
+    bytes =
+      format === "3mf"
+        ? writeThreeMfContainer(geometry, targetUnit, MAX_EXPORT_BYTES)
+        : writeGltfContainer(geometry, format === "glb", MAX_EXPORT_BYTES);
+    vertexCount = counts.vertexCount;
+    if (format !== "3mf")
+      warnings.push(
+        warning({
+          code: "export.float32-coordinates",
+          severity: "warning",
+          message:
+            "glTF position coordinates are rounded to float32. Precision and tiny features may be lost; non-finite float32 overflow is refused.",
+        }),
+      );
+    notes.push(
+      "Only placed triangle geometry and its declared frame are exported; original engineering provenance, materials, source identities and non-geometric data are not embedded.",
     );
   }
 
@@ -319,12 +376,48 @@ export async function exportModel(
   };
 }
 
+function containerGeometry(
+  instances: readonly ResolvedInstance[],
+  meshById: ReadonlyMap<MeshId, MeshBuffer>,
+  counts: ExportGeometryCounts,
+): ContainerGeometry {
+  return {
+    ...counts,
+    forEachVertex(visit) {
+      for (const instance of instances) {
+        const mesh = meshById.get(instance.meshId)!;
+        for (let index = 0; index < mesh.positions.length / 3; index++)
+          visit(...transformedVertex(instance, mesh.positions, index));
+      }
+    },
+    forEachTriangle(visit) {
+      let vertexOffset = 0;
+      for (const instance of instances) {
+        const mesh = meshById.get(instance.meshId)!;
+        for (let index = 0; index < mesh.indices.length; index += 3)
+          visit(
+            mesh.indices[index]! + vertexOffset,
+            mesh.indices[index + 1]! + vertexOffset,
+            mesh.indices[index + 2]! + vertexOffset,
+          );
+        vertexOffset += mesh.positions.length / 3;
+      }
+    },
+  };
+}
+
 function formatLabel(format: ExportFormat): string {
   return format === "stl-binary"
     ? "Binary STL"
     : format === "stl-ascii"
       ? "ASCII STL"
-      : "OBJ";
+      : format === "obj"
+        ? "OBJ"
+        : format === "gltf"
+          ? "glTF"
+          : format === "glb"
+            ? "GLB"
+            : "3MF";
 }
 
 function resolveFormat(format: unknown): ExportFormat {
@@ -522,9 +615,9 @@ function buildBinaryStl(
     triangleCount += meshById.get(instance.meshId)!.indices.length / 3;
   }
 
-  const bytes = new Uint8Array(
-    BINARY_HEADER_BYTES + triangleCount * BINARY_FACET_BYTES,
-  );
+  const byteLength = BINARY_HEADER_BYTES + triangleCount * BINARY_FACET_BYTES;
+  checkOutputByteLength(byteLength);
+  const bytes = new Uint8Array(byteLength);
   const headerBytes = new TextEncoder().encode(BINARY_STL_HEADER_TEXT);
   bytes.set(headerBytes.subarray(0, 80), 0);
   const view = new DataView(bytes.buffer);
@@ -589,6 +682,11 @@ function writeFinite(view: DataView, offset: number, value: number): void {
       "Export produced a non-finite coordinate after applying the target unit/axis conversion.",
     );
   }
+  if (!Number.isFinite(Math.fround(value))) {
+    throw new ExportInputError(
+      "Export produced a coordinate outside the finite float32 range supported by binary STL.",
+    );
+  }
   view.setFloat32(offset, value, true);
 }
 
@@ -607,7 +705,8 @@ function buildAsciiStl(
   meshById: ReadonlyMap<MeshId, MeshBuffer>,
   solidName: string,
 ): AsciiStlBuild {
-  const lines: string[] = [`solid ${solidName}`];
+  const lines = new BoundedAsciiLines();
+  lines.push(`solid ${solidName}`);
   let triangleCount = 0;
   let degenerateNormalCount = 0;
 
@@ -660,7 +759,7 @@ function buildAsciiStl(
 
   lines.push(`endsolid ${solidName}`);
   return {
-    text: `${lines.join("\n")}\n`,
+    text: lines.finish(),
     triangleCount,
     degenerateNormalCount,
   };
@@ -680,7 +779,7 @@ function buildObj(
   instances: readonly ResolvedInstance[],
   meshById: ReadonlyMap<MeshId, MeshBuffer>,
 ): ObjBuild {
-  const lines: string[] = [];
+  const lines = new BoundedAsciiLines();
   let vertexOffset = 0;
   let triangleCount = 0;
   let vertexCount = 0;
@@ -704,12 +803,40 @@ function buildObj(
     vertexCount += localVertexCount;
   }
 
-  return { text: `${lines.join("\n")}\n`, triangleCount, vertexCount };
+  return { text: lines.finish(), triangleCount, vertexCount };
 }
 
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+/** Every emitted token is ASCII: number formatting, fixed syntax, and the
+ * contract-validated model ID. Count each trailing newline before retaining
+ * its line, so an oversized text export never joins or encodes the payload.
+ */
+class BoundedAsciiLines {
+  private readonly lines: string[] = [];
+  private byteLength = 0;
+
+  public push(line: string): void {
+    const nextByteLength = this.byteLength + line.length + 1;
+    checkOutputByteLength(nextByteLength);
+    this.lines.push(line);
+    this.byteLength = nextByteLength;
+  }
+
+  public finish(): string {
+    return `${this.lines.join("\n")}\n`;
+  }
+}
+
+function checkOutputByteLength(byteLength: number): void {
+  if (byteLength > MAX_EXPORT_BYTES) {
+    throw new ExportResourceLimitError(
+      `Encoded export exceeds the ${MAX_EXPORT_BYTES}-byte safety limit (matching this package's own importer input ceiling).`,
+    );
+  }
+}
 
 function warning(value: {
   code: string;

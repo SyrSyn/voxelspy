@@ -31,6 +31,8 @@ jobs:
           restore-keys: pnpm-store-${{ runner.os }}-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Audit production and development dependencies
+        run: pnpm audit
       - name: Format, lint, typecheck, test, build
         run: pnpm check
 
@@ -62,7 +64,5 @@ jobs:
       # checkout, which is what a developer machine's warm build outputs hide.
       - name: Build the web application
         run: pnpm exec turbo run build --filter=@voxelspy/web
-      - name: Run browser tests on every engine
-        run: pnpm --filter @voxelspy/web exec playwright test --config=playwright.cross-browser.config.ts
-      - name: Run browser tests under the shipped security headers
-        run: pnpm --filter @voxelspy/web exec playwright test --config=playwright.csp.config.ts
+      - name: Run every browser engine under the shipped security headers
+        run: pnpm --filter @voxelspy/web exec playwright test --config=playwright.complete.config.ts

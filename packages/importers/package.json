@@ -13,6 +13,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./step": {
+      "types": "./dist/step.d.ts",
+      "import": "./dist/step.js"
+    },
+    "./step-runtime-node": {
+      "types": "./dist/step-runtime-node.d.ts",
+      "import": "./dist/step-runtime-node.js"
     }
   },
   "scripts": {
@@ -23,10 +31,12 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@voxelspy/contracts": "workspace:*"
+    "@voxelspy/contracts": "workspace:*",
+    "occt-import-js": "0.0.23"
   },
   "devDependencies": {
-    "vitest": "3.2.7"
+    "@types/node": "26.1.2",
+    "vitest": "4.1.12"
   },
   "engines": {
     "node": ">=24"

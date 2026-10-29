@@ -118,7 +118,8 @@ export const docs: DocPage[] = [
         title: "Choose a baseline and candidate",
         paragraphs: [
           "The baseline is the model you trust. The candidate is the revision you want to inspect. Choose both from your device; normal comparison keeps their geometry in your browser.",
-          "This release accepts STL, OBJ, glTF, GLB, and 3MF. STL and OBJ import starts with common millimetre and right-handed Z-up settings, since neither format declares a source frame; glTF/GLB and 3MF resolve their frame from the file itself instead. If a source needs a different interpretation than what it starts from or declares, change its Expert settings before comparison; the selected interpretation remains attached to the result.",
+          "This release accepts STL, OBJ, glTF, GLB, 3MF, and STEP. STL and OBJ import starts with common millimetre and right-handed Z-up settings, since neither format declares a source frame; glTF/GLB and 3MF resolve their frame from the file itself instead. If a source needs a different interpretation than what it starts from or declares, change its Expert settings before comparison; the selected interpretation remains attached to the result.",
+          "STEP requires a secure context (HTTPS or localhost), a supported source length unit, and an explicit axis interpretation before import. Its CAD surfaces are tessellated; measurements and differences describe that triangle approximation, not exact source CAD.",
         ],
       },
       {
@@ -132,7 +133,7 @@ export const docs: DocPage[] = [
         id: "inspect-results",
         title: "Inspect before sharing",
         paragraphs: [
-          "Move from the overview to ranked regions and sections. Exporting a report or saving a session are both separate, explicit actions; selecting local files does not upload them.",
+          "Move from the overview to ranked regions and sections. Add review annotations and save camera views to retain context in a report or session. Single-model tools offer evidence lists and optional 3D previews; Convert can preview the original and simplified surfaces. Exporting or saving is an explicit local action; selecting files does not upload them.",
         ],
       },
     ],
@@ -162,8 +163,9 @@ export const docs: DocPage[] = [
         id: "portable-artifacts",
         title: "Portable artifacts are explicit",
         paragraphs: [
-          "A saved session is a self-contained .voxelspy file: it embeds both original models, the analysis result, and the comparison configuration, so saving or sharing one is itself a model-data transfer, not just a result summary. Saving and reopening a session are both explicit, local actions with no network step.",
-          "Exporting a report renders the comparison to one standalone, self-contained .html document (findings, an overview view, and a geometry-summary narrative) and downloads it directly, with no network step. Unlike a saved session, an exported report does not embed either model's raw geometry.",
+          "A saved session is a self-contained .voxelspy file: it embeds both original models, the analysis result, the comparison configuration, and retained review annotations and saved views, so saving or sharing one is itself a model-data transfer, not just a result summary. Saving and reopening a session are both explicit, local actions with no network step.",
+          "Exporting a report renders the comparison to one standalone, self-contained .html document (findings, review annotations, saved views, an overview view, and a geometry-summary narrative) and downloads it directly, with no network step. Unlike a saved session, an exported report does not embed either model's raw geometry.",
+          "Inspect, Printability, Measure & Section, and File Forensics can download version 1 evidence JSON. It includes source names and digests, interpretation, findings, measured positions, limits and warnings, without original model files or mesh buffers. It is evidence rather than a reopenable model session; sharing it still shares source information and measurements.",
         ],
       },
     ],
@@ -234,8 +236,8 @@ export const docs: DocPage[] = [
         id: "convert",
         title: "Simplifying and exporting a model",
         paragraphs: [
-          "Convert (/tools/convert/) composes two steps against one loaded model: an optional simplification (`simplifyModel`, @voxelspy/analysis) to a triangle-count or reduction-ratio target, and an export (`exportModel`, @voxelspy/importers) to binary STL, ASCII STL, or OBJ. Simplification's own point is not the decimation -- a commodity -- but the certified, measured deviation it reports: the maximum and mean sampled distance between the original and simplified surfaces, in both directions, always shown next to its disclaimer rather than as a bare number, with `targetReached: false` reported plainly rather than hidden when the requested target could not be fully reached.",
-          "Export never guesses a unit or axis: format, output unit, and output up-axis are all explicit choices with no default, because neither STL nor OBJ can declare a unit or axis inside the file itself -- every export states that plainly, alongside the exact interpretation a later re-import must declare to recover equivalent geometry. Binary STL's coordinates are IEEE-754 float32, so its round trip is bounded by float32 precision regardless of unit; the text formats (ASCII STL, OBJ) round-trip exactly at millimetre and to ordinary floating-point tolerance at any other unit.",
+          "Convert (/tools/convert/) optionally simplifies a model toward a triangle-count or reduction-ratio target, then exports the original or simplified surface to binary STL, ASCII STL, OBJ, glTF, GLB, or 3MF. Its deviation assessment reports maximum and mean sampled distances in both directions, with sampling limits and a disclaimer. A target that could not be reached is reported plainly. An optional 3D preview helps inspect the surfaces alongside that evidence.",
+          "Choose the format and output frame deliberately. glTF and GLB require metres and right-handed Y-up; 3MF declares the selected unit and requires right-handed Z-up. STL and OBJ cannot declare that frame, so retain the stated unit and axis for re-import. Binary STL, glTF and GLB use float32 coordinates and refuse overflow; their round trips remain limited by that precision. ASCII STL, OBJ and 3MF retain text coordinates with ordinary floating-point conversion limits. Export flattens placed triangles and does not preserve CAD surfaces, materials or assembly hierarchy. Output is bounded to 32 MiB, 500,000 triangles and 1,500,000 vertices.",
         ],
       },
       {
@@ -258,8 +260,9 @@ export const docs: DocPage[] = [
         id: "supported-input",
         title: "Supported input",
         paragraphs: [
-          "This release imports binary and text STL, a documented OBJ subset of vertices and faces, static mesh geometry from glTF 2.0 and GLB, and mesh geometry from the 3MF Core specification. Each source file is accepted up to 32 MiB and 500,000 triangles (1,500,000 vertices for OBJ). Content outside those documented subsets -- materials, curves, free-form surfaces, animations, skins, morph targets, and 3MF's Beam Lattice, Slice, Materials/Colours, and Production extensions -- is refused with a stated reason, or ignored with a named warning, rather than partially or silently reinterpreted.",
+          "This release imports binary and text STL, a documented OBJ subset of vertices and faces, static mesh geometry from glTF 2.0 and GLB, mesh geometry from the 3MF Core specification, and tessellated STEP CAD geometry. Each source file is accepted up to 32 MiB and 500,000 triangles (1,500,000 vertices for OBJ). STEP curves and surfaces become triangles; mesh imports do not reconstruct CAD surfaces. Other content outside the documented subsets -- materials, animations, skins, morph targets, and 3MF's Beam Lattice, Slice, Materials/Colours, and Production extensions -- is refused with a stated reason or ignored with a named warning rather than silently reinterpreted.",
           "Neither STL nor OBJ authoritatively declares a unit or an up-axis, so importing either begins with millimetres and right-handed Z-up and exposes other interpretations as expert settings. glTF/GLB and 3MF are different: both declare their own frame in the file itself (glTF/GLB always metres and right-handed Y-up; 3MF its own unit, defaulting to millimetre, and right-handed Z-up per specification), so importing either resolves that declaration rather than defaulting -- an expert override is still available and is recorded distinctly from the file's own declaration. Whichever way a source's frame was resolved, the interpretation stays attached to the result.",
+          "STEP accepts one homogeneous supported length unit from its representation contexts; missing, mixed or unsupported units and external references are refused. STEP defines no assumed up-axis here: explicitly declare or choose its source axis. Import records tessellation settings and warnings, preserving placed geometry without deliberate repair. Native transfer may apply changes the importer cannot fully audit. Browser STEP import requires HTTPS or localhost with Web Crypto, and stops if its isolated importer exceeds its time allowance; the native mesher is not governed by the comparison memory estimate.",
           "3MF's container is a ZIP archive, so its decompression carries its own bounded limits (entry count, per-entry and total decompressed bytes, and compression-ratio ceilings) independent of the triangle/vertex ceilings every format shares -- a maliciously crafted archive fails closed well before its declared content could be fully expanded.",
         ],
       },
@@ -284,9 +287,8 @@ export const docs: DocPage[] = [
 ];
 
 /** The VoxelSpy toolbox: tools for understanding, validating, measuring, and
- *  comparing 3D geometry. `Compare`, `Inspect`, `File Forensics`, and
- *  `Clearance & Fit` are built today -- every other entry is `planned` and
- *  says so plainly; the catalog page renders planned tools as non-link cards
+ *  comparing 3D geometry. Each entry declares its implementation status;
+ *  the catalog page renders planned tools as non-link cards
  *  rather than dead links. Keep this honest: add a tool here only once it is
  *  real, and flip `status` to `"available"` (and add its `path` to `routes`
  *  below) only once the route actually exists. */
@@ -344,8 +346,8 @@ export const tools: Tool[] = [
     name: "Mesh Health",
     description: "Find non-manifold edges, holes, and other mesh defects.",
     summary:
-      "Scan a mesh for the structural problems that break downstream tools. Most of this already works today inside Inspect, which locates boundary loops, non-manifold edges, inconsistently wound faces, and degenerate triangles, and can draw them. A separate Mesh Health tool is not built yet; it would add self-intersection detection and a workflow built around repairing nothing but seeing everything.",
-    status: "planned",
+      "Scan a mesh for the structural problems that break downstream tools. Inspect locates boundary loops, non-manifold edges, inconsistently wound faces, and degenerate triangles, and can draw them. The Mesh Health workflow adds an explicit bounded self-intersection check with exact predicates within a declared numeric domain. It reports contacts, overlaps, limits and indeterminate outcomes, and never repairs geometry.",
+    status: "available",
     question:
       "Is this mesh actually sound, or does it just look fine rendered?",
   },
@@ -365,7 +367,7 @@ export const tools: Tool[] = [
     name: "File Forensics",
     description: "Understand what a model file actually encodes, byte by byte.",
     summary:
-      "Open a single model file (STL, OBJ, glTF, GLB, or 3MF) from your device and see what this importer actually saw: the detected format, byte size against its declared ceilings, content digest, mesh and instance structure, the declared-vs-resolved unit and axis with the exact applied transform, and every warning, note, and refused input. Runs entirely in your browser.",
+      "Open a single model file (STL, OBJ, glTF, GLB, 3MF, or STEP) from your device and see what this importer actually saw: the detected format, byte size against its declared ceilings, content digest, mesh and instance structure, the declared-vs-resolved unit and axis with the exact applied transform, and every warning, note, and refused input. Runs entirely in your browser.",
     status: "available",
     question: "What is this file actually telling me, and can I trust it?",
   },
@@ -373,9 +375,9 @@ export const tools: Tool[] = [
     id: "convert",
     path: "/tools/convert/",
     name: "Convert",
-    description: "Simplify a model with a certified deviation, then export it.",
+    description: "Simplify a model with measured deviation, then export it.",
     summary:
-      "Load a single local model, optionally simplify it toward a triangle-count or reduction-ratio target with a measured, disclaimed certification of how far the result deviates from the original, then export the result (or the untouched original) to binary STL, ASCII STL, or OBJ in a unit and axis you choose explicitly. Runs entirely in your browser.",
+      "Load one local model, optionally simplify it with a sampled deviation assessment, and preview the original and simplified surfaces. Export to binary STL, ASCII STL, OBJ, glTF, GLB, or 3MF with an explicit output frame: glTF/GLB require metres and Y-up; 3MF declares its unit and requires Z-up. Read the precision and topology limitations alongside each download. Runs entirely in your browser.",
     status: "available",
     question:
       "How do I simplify or convert this model, and how far off is the result?",
@@ -387,6 +389,7 @@ export const routes = [
   "/tools/",
   "/compare/",
   "/tools/inspect/",
+  "/tools/mesh-health/",
   ...inspectFocusPages.map((page) => page.path),
   "/tools/file-forensics/",
   "/tools/clearance-fit/",

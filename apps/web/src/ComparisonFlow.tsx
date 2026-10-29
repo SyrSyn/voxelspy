@@ -1,3 +1,4 @@
+import { reviewFromReport, validateReview, type ReviewContent } from "./review";
 import {
   estimateAlignment,
   AlignmentInputError,
@@ -172,7 +173,7 @@ function SourceCard({
         <small>
           {selection.file
             ? `${(selection.file.size / 1024).toFixed(1)} KiB · local file`
-            : "STL, OBJ, glTF, GLB, or 3MF, up to 32 MiB"}
+            : "STL, OBJ, glTF, GLB, 3MF, or STEP, up to 32 MiB"}
         </small>
         <input
           id={`${id}-file`}
@@ -230,7 +231,7 @@ function SourceCard({
                 })
               }
             >
-              {declaresOwnFrame && (
+              {declaresOwnFrame && format !== "step" && (
                 <option value="">Use the file&rsquo;s declared value</option>
               )}
               {axes.map((axis) => (
@@ -539,6 +540,7 @@ export function ComparisonFlow() {
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [result, setResult] = useState<CompletedComparison>();
+  const [restoredReview, setRestoredReview] = useState<ReviewContent>();
   const [sourceModels, setSourceModels] = useState<SessionSourceModels>();
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "error">(
     "idle",
@@ -861,11 +863,17 @@ export function ComparisonFlow() {
         );
       const { baseline: baselineModelResult, candidate: candidateModelResult } =
         await reimportSessionModels(
-          sessionImportSpecFor(baselineModel, baselineBytes),
-          sessionImportSpecFor(candidateModel, candidateBytes),
+          sessionImportSpecFor(baselineModel, baselineBytes.slice()),
+          sessionImportSpecFor(candidateModel, candidateBytes.slice()),
           setOpenProgress,
           controller.signal,
         );
+      const restored = validateReview(
+        reviewFromReport(report),
+        report.analysis.result,
+        [baselineModelResult, candidateModelResult],
+      );
+      setRestoredReview(restored);
       setSourceModels({ baseline: baselineBytes, candidate: candidateBytes });
       setSaveStatus("idle");
       setSaveError(undefined);
@@ -903,7 +911,10 @@ export function ComparisonFlow() {
     }
   };
 
-  const handleSaveSession = (summary: ModelComparisonPresentationSummary) => {
+  const handleSaveSession = (
+    summary: ModelComparisonPresentationSummary,
+    reviewContent?: ReviewContent,
+  ) => {
     if (!result || !sourceModels || saveInFlightRef.current) return;
     saveInFlightRef.current = true;
     setSaveStatus("saving");
@@ -916,6 +927,7 @@ export function ComparisonFlow() {
           analysis: result.analysis,
           summary,
           sourceModels,
+          ...(reviewContent === undefined ? {} : { reviewContent }),
         });
         downloadSessionArchive(saved);
         setSaveStatus("idle");
@@ -941,7 +953,10 @@ export function ComparisonFlow() {
   // and "when this document was produced" is honest, useful metadata for an
   // exported artifact (unlike a session archive, which must stay
   // byte-identical across resaves; see `session.ts`).
-  const handleExportReport = (summary: ModelComparisonPresentationSummary) => {
+  const handleExportReport = (
+    summary: ModelComparisonPresentationSummary,
+    reviewContent?: ReviewContent,
+  ) => {
     if (!result || exportInFlightRef.current) return;
     exportInFlightRef.current = true;
     setExportStatus("exporting");
@@ -956,6 +971,7 @@ export function ComparisonFlow() {
         candidate: result.candidate,
         analysis: result.analysis,
         summary,
+        ...(reviewContent === undefined ? {} : { reviewContent }),
       });
       downloadReportHtml(report, renderReportHtml(report));
       setExportStatus("idle");
@@ -1019,6 +1035,7 @@ export function ComparisonFlow() {
           baseline={result.baseline}
           candidate={result.candidate}
           analysis={result.analysis}
+          initialReview={restoredReview}
           sessionPanel={{
             onSave: handleSaveSession,
             status: saveStatus,
@@ -1031,6 +1048,7 @@ export function ComparisonFlow() {
           }}
           onReset={() => {
             setResult(undefined);
+            setRestoredReview(undefined);
             setError(undefined);
             setNotice(undefined);
             setOpenError(undefined);
@@ -1193,6 +1211,7 @@ export function ComparisonFlow() {
             <label className="alignment-toggle">
               <input
                 type="checkbox"
+                autoComplete="off"
                 checked={alignmentEnabled}
                 onChange={(event) => {
                   const checked = event.currentTarget.checked;

@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
 import {
   analysisExchangeSchema,

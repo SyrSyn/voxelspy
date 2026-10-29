@@ -17,8 +17,11 @@ import {
   type DocPage,
 } from "./content";
 import { ToolShell } from "./ToolShell";
-
-type ThemePreference = "system" | "light" | "dark";
+import {
+  applyThemePreference,
+  watchSystemTheme,
+  type ThemePreference,
+} from "./theme";
 
 const baseMetadata = {
   "/": {
@@ -35,6 +38,11 @@ const baseMetadata = {
     title: "Compare models — VoxelSpy",
     description:
       "Choose a baseline and candidate for private, browser-local comparison.",
+  },
+  "/tools/mesh-health/": {
+    title: "Mesh Health — VoxelSpy",
+    description:
+      "Inspect mesh defects and run a bounded self-intersection check with exact predicates within a declared numeric domain, without repairing geometry.",
   },
   "/tools/inspect/": {
     title: "Inspect a model — VoxelSpy",
@@ -64,7 +72,7 @@ const baseMetadata = {
   "/tools/convert/": {
     title: "Convert a model — VoxelSpy",
     description:
-      "Simplify one local model toward a triangle-count or reduction-ratio target with a certified, measured deviation, then export it to binary STL, ASCII STL, or OBJ in a unit and axis you choose explicitly.",
+      "Preview and optionally simplify a local model with sampled deviation evidence, then export STL, OBJ, glTF, GLB, or 3MF with explicit output frames and precision limits.",
   },
   "/docs/": {
     title: "Documentation — VoxelSpy",
@@ -100,25 +108,13 @@ export function routeMetadata(path: string) {
   return resolveMetadata(path);
 }
 
-function applyTheme(preference: ThemePreference) {
-  const resolved =
-    preference === "system"
-      ? window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light"
-      : preference;
-  document.documentElement.dataset.themePreference = preference;
-  document.documentElement.dataset.theme = resolved;
-  if (preference === "system") localStorage.removeItem("voxelspy-theme");
-  else localStorage.setItem("voxelspy-theme", preference);
-}
-
 function ThemeButton() {
   const [preference, setPreference] = useState<ThemePreference>("system");
   useEffect(() => {
     const initial = document.documentElement.dataset.themePreference;
     if (initial === "system" || initial === "light" || initial === "dark")
       setPreference(initial);
+    return watchSystemTheme();
   }, []);
   const next: Record<ThemePreference, ThemePreference> = {
     system: "light",
@@ -151,7 +147,7 @@ function ThemeButton() {
       onClick={() => {
         const value = next[preference];
         setPreference(value);
-        applyTheme(value);
+        applyThemePreference(value);
       }}
       aria-label={`Theme: ${preference}. Change to ${next[preference]}.`}
       title={`Theme: ${preference}`}
@@ -572,6 +568,10 @@ export function App() {
           <Route path="/tools/" element={<ToolsIndex />} />
           <Route path="/compare/" element={<ComparisonFlow />} />
           <Route path="/tools/inspect/" element={<InspectFlow />} />
+          <Route
+            path="/tools/mesh-health/"
+            element={<InspectFlow meshHealth />}
+          />
           {inspectFocusPages.map((page) => (
             <Route
               key={page.path}

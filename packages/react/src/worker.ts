@@ -22,3 +22,11 @@ export type {
   InspectWorkerRequest,
   InspectWorkerSuccess,
 } from "./protocol.js";
+
+export type {
+  EngineOperationInputs,
+  EngineOperationResults,
+  EngineOperationKind,
+  OperationWorkerRequest,
+  OperationWorkerResponse,
+} from "./operations.js";

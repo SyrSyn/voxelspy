@@ -121,6 +121,36 @@ describe("buildComparisonReport", () => {
     expect(report.analysis.result).toEqual(analysis);
   });
 
+  it("retains canonical portable source paths and media types for every supported imported format", async () => {
+    const inputs = await buildRealComparison();
+    for (const [format, mediaType] of [
+      ["gltf", "model/gltf+json"],
+      ["glb", "model/gltf-binary"],
+      ["3mf", "model/3mf"],
+      ["step", "model/step"],
+    ]) {
+      const baseline = normalizedModelSchema.parse({
+        ...inputs.baseline,
+        provenance: {
+          ...inputs.baseline.provenance,
+          formatId: format,
+          sourceName: `original.${format}`,
+        },
+      });
+      const report = buildComparisonReport({
+        id: REPORT_ID,
+        createdAt: CREATED_AT,
+        ...inputs,
+        baseline,
+      });
+      expect(report.models[0]).toMatchObject({
+        sourcePath: `models/baseline.${format}`,
+        sourceMediaType: mediaType,
+      });
+      expect(() => reportSchema.parse(report)).not.toThrow();
+    }
+  });
+
   it("is deterministic: identical inputs produce a deep-equal document", async () => {
     const { baseline, candidate, analysis, summary } =
       await buildRealComparison();

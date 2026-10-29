@@ -48,12 +48,12 @@ describe("inspect source defaults", () => {
     });
     expect(
       modelSourceCapability(
-        modelSourceSelectionForFile(new File(["x"], "model.step")),
+        modelSourceSelectionForFile(new File(["x"], "model.fbx")),
       ),
     ).toEqual({
       ready: false,
       message:
-        "This release supports STL, OBJ, glTF, GLB, or 3MF mesh files (.stl, .obj, .gltf, .glb, .3mf).",
+        "This release supports STL, OBJ, glTF, GLB, 3MF, or STEP mesh files (.stl, .obj, .gltf, .glb, .3mf, .step, .stp).",
     });
     expect(
       modelSourceCapability(

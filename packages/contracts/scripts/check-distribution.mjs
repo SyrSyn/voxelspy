@@ -165,7 +165,7 @@ try {
   if (!pnpmCli) throw new Error("pnpm CLI path is unavailable");
   // Installing the packed archive needs this package's own dependencies
   // resolved. Prefer the local mirror so the check stays hermetic and quick,
-  // but fall back to a normal resolve when that mirror has no metadata for
+  // but fall back to a normal resolve when that mirror lacks metadata or tarballs for
   // them: a continuous-integration runner caches the content store while a
   // lockfile-frozen install never populates the metadata mirror, so offline
   // resolution fails there for reasons that say nothing about the archive
@@ -181,9 +181,10 @@ try {
     });
   } catch (offlineFailure) {
     const detail = String(offlineFailure?.stdout ?? offlineFailure);
-    if (!detail.includes("ERR_PNPM_NO_OFFLINE_META")) throw offlineFailure;
+    if (!/ERR_PNPM_NO_OFFLINE_(?:META|TARBALL)/u.test(detail))
+      throw offlineFailure;
     process.stdout.write(
-      "Local mirror lacks metadata for this package's dependencies; resolving them normally.\n",
+      "Local mirror lacks cached dependencies; resolving them normally.\n",
     );
     run(process.execPath, [pnpmCli, ...installArguments], {
       cwd: temporaryRoot,

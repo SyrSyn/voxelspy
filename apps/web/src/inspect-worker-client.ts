@@ -1,5 +1,6 @@
 import type {
   InspectionResult,
+  SelfIntersectionResult,
   MeshHealthDiagnosis,
   PrintabilityAssessment,
 } from "@voxelspy/analysis";
@@ -103,6 +104,7 @@ export interface PrintabilityAssessmentRequestOptions {
 }
 
 export type InspectWorkerRequest =
+  | (InspectWorkerRequestBase & { readonly kind: "self-intersections" })
   | (InspectWorkerRequestBase & { readonly kind: "inspect" })
   | (InspectWorkerRequestBase & { readonly kind: "diagnose" })
   | (InspectWorkerRequestBase & { readonly kind: "forensics" })
@@ -206,6 +208,18 @@ export interface PrintabilityOutcome {
 }
 
 export type InspectWorkerResponse =
+  | {
+      readonly requestId: number;
+      readonly kind: "self-intersections";
+      readonly ok: true;
+      readonly outcome: SelfIntersectionResult;
+    }
+  | {
+      readonly requestId: number;
+      readonly kind: "self-intersections";
+      readonly ok: false;
+      readonly message: string;
+    }
   | {
       readonly requestId: number;
       readonly kind: "inspect";
@@ -499,6 +513,16 @@ export async function assessPrintabilitySourceAsync(
     assessmentOptions,
     signal,
   );
+  if (!response.ok) throw new Error(response.message);
+  return response.outcome;
+}
+
+/** Deliberate bounded self-intersection check; cancel terminates its worker. */
+export async function selfIntersectionsSourceAsync(
+  source: InspectSource,
+  signal?: AbortSignal,
+): Promise<SelfIntersectionResult> {
+  const response = await runInspectWorker(source, "self-intersections", signal);
   if (!response.ok) throw new Error(response.message);
   return response.outcome;
 }

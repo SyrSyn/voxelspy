@@ -13,7 +13,7 @@ import {
   rigidTransformSchema,
   type NormalizedModel,
 } from "@voxelspy/contracts";
-import { importModel } from "@voxelspy/importers";
+import { importLocalModel as importModel } from "./import-local-model";
 
 import type {
   AlignmentIcpWorkerRequest,
