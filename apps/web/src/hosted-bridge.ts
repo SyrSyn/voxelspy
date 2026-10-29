@@ -4,6 +4,7 @@ import {
   type HostedTool,
 } from "@voxelspy/contracts/hosted";
 import { inferFormat } from "./formats";
+import { hostedProvenanceMatches } from "./hosted-provenance";
 import { openSession } from "./session";
 export function isHostedParentMessage(
   event: Pick<MessageEvent, "source" | "origin">,
@@ -50,8 +51,10 @@ export async function validateHostedLoad(
         !model ||
         model.sourceDigest.value !== source.digest ||
         model.sourceName !== source.name ||
-        JSON.stringify(model.normalizationProvenance) !==
-          JSON.stringify(source.provenance)
+        !hostedProvenanceMatches(
+          model.normalizationProvenance,
+          source.provenance,
+        )
       )
         throw new Error("The session is bound to different revision sources.");
     }

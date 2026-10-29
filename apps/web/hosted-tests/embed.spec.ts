@@ -340,7 +340,7 @@ test("refuses invalid bridge input without accepting forged source windows or di
 test("STEP runtime resolves beneath the embedded prefix and preserves kernel provenance", async ({
   page,
 }) => {
-  test.setTimeout(90000);
+  test.setTimeout(150000);
   const require = createRequire(
     new URL("../../../packages/importers/package.json", import.meta.url),
   );
@@ -372,10 +372,29 @@ test("STEP runtime resolves beneath the embedded prefix and preserves kernel pro
       revisionId: "revision.step",
       name: "offset.step",
       digest: imported.model.provenance.sourceDigest!.value,
-      provenance: imported.model.provenance,
+      // PostgreSQL JSONB stores object keys by length, then lexical order.
+      // The host source binding must preserve values despite that round trip.
+      provenance: JSON.parse(
+        JSON.stringify(imported.model.provenance, (_key, value) =>
+          value && typeof value === "object" && !Array.isArray(value)
+            ? Object.fromEntries(
+                Object.entries(value).sort(
+                  ([a], [b]) =>
+                    a.length - b.length || (a < b ? -1 : a > b ? 1 : 0),
+                ),
+              )
+            : value,
+        ),
+      ),
       bytes: bytes.buffer,
     },
   ];
+  expect(sources[0]!.provenance).toEqual(imported.model.provenance);
+  expect(
+    JSON.stringify(sources[0]!.provenance.tessellation.parameters),
+  ).not.toBe(
+    JSON.stringify(imported.model.provenance.tessellation!.parameters),
+  );
   const requests: string[] = [];
   page.on("request", (request) =>
     requests.push(new URL(request.url()).pathname),
@@ -401,6 +420,107 @@ test("STEP runtime resolves beneath the embedded prefix and preserves kernel pro
   await expect
     .poll(() => page.evaluate(() => (window as any).artifacts.length))
     .toBe(1);
+  // Reopen a real STEP comparison archive against the same JSONB-reordered
+  // revision metadata. Both artifact staging and session source validation bind
+  // every value semantically rather than binding JSON object insertion order.
+  const candidateBytes = new TextEncoder().encode(
+    cuboidStep({ origin: [6, 7, 11] }),
+  );
+  const candidate = await importModel(
+    {
+      contractVersion: 1,
+      targetModelId: "model.candidate",
+      format: "step",
+      sourceName: "candidate.step",
+      bytes: candidateBytes,
+      options: {
+        declaredAxis: "right-handed-z-up",
+        limits: { inputBytes: 100000, triangleCount: 1000 },
+      },
+    },
+    { stepRuntime: runtime },
+  );
+  if (!candidate.ok) throw Error(candidate.message);
+  const comparison = await host(page, "compare", [
+    sources[0]!,
+    {
+      revisionId: "revision.candidate",
+      name: "candidate.step",
+      digest: candidate.model.provenance.sourceDigest!.value,
+      provenance: JSON.parse(
+        JSON.stringify(candidate.model.provenance, (_key, value) =>
+          value && typeof value === "object" && !Array.isArray(value)
+            ? Object.fromEntries(
+                Object.entries(value).sort(
+                  ([a], [b]) =>
+                    a.length - b.length || (a < b ? -1 : a > b ? 1 : 0),
+                ),
+              )
+            : value,
+        ),
+      ),
+      bytes: candidateBytes.buffer,
+    },
+  ]);
+  await comparison
+    .getByRole("button", { name: "Validate and compare", exact: true })
+    .click();
+  await expect(
+    comparison.getByRole("heading", {
+      name: "Comparison workbench",
+      exact: true,
+    }),
+  ).toBeVisible({ timeout: 60000 });
+  const sessionDownload = page.waitForEvent("download");
+  await comparison
+    .getByRole("button", { name: "Save session", exact: true })
+    .click();
+  const session = await readFile((await (await sessionDownload).path())!);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).artifacts.length))
+    .toBe(1);
+  expect(await page.evaluate(() => (window as any).artifacts[0].kind)).toBe(
+    "comparison-session",
+  );
+  await page.evaluate(
+    ({ session }) => {
+      const w = window as any;
+      w.frame.contentWindow.postMessage(
+        {
+          ...w.load,
+          requestId: "request.step-reopen",
+          session: new Uint8Array(session).buffer,
+        },
+        location.origin,
+      );
+    },
+    { session: Array.from(session) },
+  );
+  await expect(
+    comparison.getByRole("heading", {
+      name: "Comparison workbench",
+      exact: true,
+    }),
+  ).toBeVisible({ timeout: 60000 });
+  await expect(
+    comparison.getByText(
+      "Artifact staged in the host. Choose Save there to retain it.",
+      { exact: true },
+    ),
+  ).toHaveCount(0);
+  const resave = page.waitForEvent("download");
+  await comparison
+    .getByRole("button", { name: "Save session", exact: true })
+    .click();
+  expect((await readFile((await (await resave).path())!)).equals(session)).toBe(
+    true,
+  );
+  await expect
+    .poll(() => page.evaluate(() => (window as any).artifacts.length))
+    .toBe(2);
+  expect(
+    await page.evaluate(() => (window as any).artifacts[1].requestId),
+  ).toBe("request.step-reopen");
   expect((await page.request.get("/step/occt.worker.js")).status()).toBe(404);
   expect(
     (await page.request.get("/workbench/step/occt.worker.js")).status(),

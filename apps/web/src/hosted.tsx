@@ -7,6 +7,7 @@ import {
 } from "@voxelspy/contracts/hosted";
 import type { GeometryProvenance } from "@voxelspy/contracts";
 import { recordHostedSource } from "./hosted-source";
+import { hostedProvenanceMatches } from "./hosted-provenance";
 export interface HostedWorkspace {
   request: HostedLoad;
   files: File[];
@@ -75,7 +76,7 @@ export function useHostedArtifact() {
       input.provenances.some(
         (p, index) =>
           p.sourceDigest?.value !== sources[index]?.digest ||
-          JSON.stringify(p) !== JSON.stringify(sources[index]?.provenance),
+          !hostedProvenanceMatches(p, sources[index]?.provenance),
       )
     ) {
       host.notify?.(

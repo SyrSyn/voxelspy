@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { importModel } from "@voxelspy/importers";
 import { validateHostedLoad, isHostedParentMessage } from "./hosted-bridge";
 import { createHostedWorkspace } from "./hosted";
+import { hostedProvenanceMatches } from "./hosted-provenance";
 import { resolveFrameOptions } from "./formats";
 const bytes = new TextEncoder().encode("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
 async function load() {
@@ -88,6 +89,58 @@ describe("optional hosted source boundary", () => {
         parent,
         "https://example.test",
       ),
+    ).toBe(false);
+  });
+});
+
+describe("hosted provenance semantic bindings", () => {
+  it("accepts JSONB-reordered nested metadata but binds every value and array position", async () => {
+    const request = await load();
+    const original = {
+      ...request.sources[0]!.provenance,
+      tessellation: {
+        adapterId: "step.occt",
+        adapterVersion: "1",
+        parameters: { zeta: 3, alpha: { zeta: 2, alpha: 1 }, ordered: [1, 2] },
+      },
+    };
+    // Match PostgreSQL JSONB ordering without changing any recorded value.
+    const reordered = JSON.parse(
+      JSON.stringify(original, (_key, value) =>
+        value && typeof value === "object" && !Array.isArray(value)
+          ? Object.fromEntries(
+              Object.entries(value).sort(
+                ([a], [b]) =>
+                  a.length - b.length || (a < b ? -1 : a > b ? 1 : 0),
+              ),
+            )
+          : value,
+      ),
+    );
+    expect(JSON.stringify(original)).not.toBe(JSON.stringify(reordered));
+    expect(hostedProvenanceMatches(original, reordered)).toBe(true);
+    const changed = structuredClone(reordered);
+    changed.tessellation.parameters.alpha.zeta = 99;
+    expect(hostedProvenanceMatches(original, changed)).toBe(false);
+    const swapped = structuredClone(reordered);
+    swapped.tessellation.parameters.ordered.reverse();
+    expect(hostedProvenanceMatches(original, swapped)).toBe(false);
+    expect(
+      hostedProvenanceMatches(original, {
+        ...reordered,
+        sourceUnit: "millimetre",
+      }),
+    ).toBe(false);
+    expect(
+      hostedProvenanceMatches(original, {
+        ...reordered,
+        appliedSourceToModel: [...reordered.appliedSourceToModel].reverse(),
+      }),
+    ).toBe(false);
+    changed.tessellation.parameters.alpha.zeta = Infinity;
+    expect(hostedProvenanceMatches(original, changed)).toBe(false);
+    expect(
+      hostedProvenanceMatches(original, { ...reordered, unexpected: true }),
     ).toBe(false);
   });
 });
