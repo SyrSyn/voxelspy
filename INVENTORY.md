@@ -135,9 +135,20 @@ product. The authorized integration now requires:
 - Independent free-site behavior: no required identity, PDM API, persistence or
   model uploads.
 
-Implementation, integration and acceptance remain in progress until these
-workflows have been exercised together. The previous toolkit CI passed both
-repository and cross-engine browser jobs at `967b2b4`.
+Implementation and final integrated acceptance remain in progress until these
+workflows have been exercised together. The shared workbench and source-bound
+artifact APIs are built and committed. The free toolkit passed `pnpm check`
+(all 28 tasks; 862 unit tests), then its complete browser run passed 617 cases
+with three intentional desktop touch-only skips. All 67 shipped files retained
+their recorded hashes. The optional embedded workbench passed 50 browser cases
+across all five browser configurations. Toolkit CI passed both jobs at
+`5a82ffe`.
+
+The PDM integration and pinned-source packaging are pushed in `c612b99`; its
+GitHub check passes, including a fresh shared-workbench build, 47 unit tests,
+type checking, lint, clean dependency audit and production build. Final
+integrated desktop/phone journeys and retained-data upgrade/restore checks
+remain active. These checkpoints do not establish integrated acceptance yet.
 
 ### Earlier standalone checkpoint
 
