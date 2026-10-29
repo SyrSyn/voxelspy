@@ -2,6 +2,10 @@
 
 This file is the canonical repository guidance for maintainers, contributors, and automated development tools.
 
+See [INVENTORY.md](INVENTORY.md) for the implementation map and proposed next
+work. [RELEASE-EVIDENCE.md](RELEASE-EVIDENCE.md) preserves historical milestone
+observations; its original feature and test counts are not a current inventory.
+
 ## Working principles
 
 - Keep changes focused, reviewable, and within the accepted issue or task scope.

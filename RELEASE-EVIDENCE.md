@@ -1,5 +1,11 @@
 # Tier 1 release evidence
 
+This is a historical record of the first comparison milestone, not a current
+feature inventory or a fresh release qualification. Its format and test counts
+predate subsequent toolkit work. See [INVENTORY.md](INVENTORY.md) for the current
+implementation map and the scope of the latest local verification. Historical
+observations below are retained rather than presented as newly repeated checks.
+
 This record summarises the verification behind the first browser-local
 comparison release, and states plainly what has not been observed. It exists
 so the release decision rests on evidence rather than recollection.
