@@ -7,16 +7,14 @@ This package contains the static public site, browser-local comparison entry poi
 From the repository root:
 
 ```sh
+pnpm exec turbo run build --filter=@voxelspy/web
 pnpm --filter @voxelspy/web dev
 ```
 
 The production build prerenders every declared route and emits static files in `apps/web/dist`. Run the package checks with:
 
 ```sh
-pnpm --filter @voxelspy/web lint
-pnpm --filter @voxelspy/web typecheck
-pnpm --filter @voxelspy/web test
-pnpm --filter @voxelspy/web build
+pnpm exec turbo run lint typecheck test build --filter=@voxelspy/web
 ```
 
 ## Privacy boundary

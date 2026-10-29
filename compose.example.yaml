@@ -1,0 +1,17 @@
+name: voxelspy-tools
+
+services:
+  app:
+    container_name: voxelspy-tools
+    image: voxelspy-tools:local
+    build:
+      context: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${VOXELSPY_PORT:-8080}:8080"
+    networks:
+      - tools
+
+networks:
+  tools:
+    name: voxelspy-tools

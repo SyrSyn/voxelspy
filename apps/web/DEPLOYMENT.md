@@ -13,7 +13,7 @@ domain at it are maintainer decisions and are not performed automatically.
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm --filter @voxelspy/web build
+pnpm exec turbo run build --filter=@voxelspy/web
 ```
 
 The build emits `apps/web/dist`:
@@ -34,7 +34,7 @@ caching rules are missing.
 
 | Setting          | Value                                               |
 | ---------------- | --------------------------------------------------- |
-| Build command    | `pnpm --filter @voxelspy/web build`                 |
+| Build command    | `pnpm exec turbo run build --filter=@voxelspy/web`  |
 | Output directory | `apps/web/dist`                                     |
 | Node version     | 24 or newer                                         |
 | Install command  | `corepack enable && pnpm install --frozen-lockfile` |
@@ -58,7 +58,7 @@ Requirements the host must satisfy:
 
 Run against the deployment target, not only a local build:
 
-1. `pnpm --filter @voxelspy/web build` completes, including static
+1. `pnpm exec turbo run build --filter=@voxelspy/web` completes, including static
    verification.
 2. From `apps/web`, `pnpm exec playwright test` passes, and
    `pnpm exec playwright test --config=playwright.csp.config.ts` passes with
@@ -92,3 +92,16 @@ Because route documents are served with `no-cache`, a rollback is visible on
 the next request rather than after a cache lifetime. Hashed assets from the
 previous build remain valid, so a rollback does not strand a client that has
 already loaded one.
+
+## Local Compose example
+
+The repository-root [Compose example](../../compose.example.yaml) builds the
+free tools into an Nginx static image. It binds HTTP to loopback on port 8080,
+serves prerendered route documents and a real 404 page, and applies the page
+CSP plus the separate STEP worker policy. It contains no PDM service or model
+storage. See the [usage guide](../../docs/USAGE.md) for commands.
+
+The security policies in `deploy/static/` mirror `public/_headers`; keep
+both synchronized when changing policies. Route responses revalidate, including
+hashed assets in this simple example. Public HTTPS routing and production
+operational qualification are separate deployment work.

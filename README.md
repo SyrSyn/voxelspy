@@ -4,7 +4,57 @@ VoxelSpy is a free, open-source toolkit for understanding, validating, measuring
 
 The browser application is a set of tools rather than a single one. Compare two revisions and see what changed; inspect one model's dimensions, volume, topology, and provenance; measure distances and cut sections; check whether two positioned parts fit; read what a file actually contains and what the importer refused; gather printability evidence; and convert or simplify with the deviation measured rather than asserted. A headless command line runs the same engines for automation, and the analysis and framework packages expose them to other applications.
 
-The project is in a pre-release implementation stage. Accuracy claims, performance tiers, and release readiness rest on the evidence recorded in [RELEASE-EVIDENCE.md](RELEASE-EVIDENCE.md), which also states plainly what has not been observed.
+![VoxelSpy compares two synthetic mounting-sleeve revisions in synchronized 3D views](docs/images/compare.png)
+
+**Start here:** [usage guide](docs/USAGE.md) · [CLI guide](apps/cli/README.md) ·
+[format support](packages/importers/README.md) · [self-hosted suite](https://github.com/SyrSyn/voxelspy-pdm)
+
+## Try it locally
+
+With Docker and Compose installed, clone this repository and run:
+
+```sh
+git clone https://github.com/SyrSyn/voxelspy.git
+cd voxelspy
+docker compose -f compose.example.yaml up --build -d
+```
+
+Open <http://localhost:8080>, choose **Tools**, and load a model. The first build
+downloads dependencies; subsequent use processes geometry in your browser.
+This loopback-only example serves the independent free tools with the shipped
+security policies. It needs no account, database or PDM installation.
+[Source setup and first workflows](docs/USAGE.md) cover development, reports,
+sessions, CLI use and stopping the container.
+
+## What can I do with it?
+
+| Start with a question                        | Use                                                                                           |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| What changed between these revisions?        | **Compare**: synchronized views, ranked changes, callouts, saved views and portable sessions. |
+| What are its dimensions and mesh properties? | **Inspect**: bounds, qualified volume, topology and import provenance.                        |
+| Are there crossing triangles?                | **Mesh Health**: located self-intersection evidence.                                          |
+| What is this distance or section?            | **Measure & Section**: interactive measurements and section evidence.                         |
+| How close are these positioned parts?        | **Clearance & Fit**: sampled distance and separate intersection findings.                     |
+| What should I check before printing?         | **Printability**: build-volume and orientation evidence.                                      |
+| What did the importer accept or reject?      | **File Forensics**: format declarations, warnings and limits.                                 |
+| Can I convert or simplify this mesh?         | **Convert**: explicit output frame, preview and measured deviation.                           |
+
+![Inspect shows a synthetic mounting sleeve with dimensions and topology evidence](docs/images/inspect.png)
+
+[Download the example models](docs/examples/README.md) to reproduce these views.
+
+Inputs include bounded STL, OBJ, glTF/GLB, 3MF and STEP subsets. Export evidence
+locally and choose what you share. The separate self-hosted PDM suite adds
+private projects, immutable revisions, review history, comments and saved
+artifacts around these same tools; repository access depends on its visibility.
+
+**Status: pre-release, for evaluation.** Integrated local workflows and
+same-version restore have been exercised; facility-wide production acceptance,
+physical-device qualification and off-host disaster recovery remain open.
+STEP becomes tessellated geometry, and sampled comparisons do not certify fit,
+manufacturing equivalence or tolerance compliance. See [current inventory](INVENTORY.md),
+[method limits](packages/analysis/README.md) and historical
+[release evidence](RELEASE-EVIDENCE.md).
 
 ## Direction
 
@@ -14,7 +64,7 @@ VoxelSpy is being designed around three layers:
 - Reusable TypeScript packages and headless tooling for application and CI integrations.
 - A self-hosted private project workspace that integrates the same eight tools, with local qualification.
 
-The browser tool will normalize input into an explicit engineering coordinate system, keep source and user transforms auditable, run heavy analysis outside the UI thread, and distinguish exact, approximate, and indeterminate results. The initial workflow centers on synchronized old, new, and diff views with ranked change regions, compact measurements, saved views, markups, reports, and portable sessions.
+The browser tool normalizes input into an explicit engineering coordinate system, keeps source and user transforms auditable, runs heavy analysis outside the UI thread, and distinguishes exact, approximate, and indeterminate results. The initial workflow centers on synchronized old, new, and diff views with ranked change regions, compact measurements, saved views, markups, reports, and portable sessions.
 
 ## Repository status
 
@@ -28,12 +78,11 @@ A completed comparison can be exported as one self-contained report document, or
 
 Implementation ceilings are fail-closed safety bounds, not general model-size or production-readiness claims. See the web, importer, and analysis package READMEs for the exact supported subsets and method limits.
 
-The intended workspace layout is:
+The workspace layout is:
 
 ```text
 apps/       User-facing applications
 packages/   Reusable runtime and UI packages
-fixtures/   Licensed, attributable geometry fixtures
 spikes/     Time-bounded technical evidence
 ```
 
@@ -46,13 +95,14 @@ Requirements:
 
 ```sh
 corepack enable
-pnpm install
+pnpm install --frozen-lockfile
 pnpm check
 ```
 
 Run the web application locally with:
 
 ```sh
+pnpm exec turbo run build --filter=@voxelspy/web
 pnpm --filter @voxelspy/web dev
 ```
 

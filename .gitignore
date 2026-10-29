@@ -34,3 +34,7 @@ temp/
 test-results-complete/
 dist-embed/
 test-results-embed/
+
+# Optional local Compose overrides and state
+compose.override.yaml
+data/
