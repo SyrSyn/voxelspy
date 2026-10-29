@@ -116,6 +116,31 @@ local implementation.
 
 ## Stopping checkpoint
 
+### Integrated self-hosted suite: in progress
+
+The earlier checkpoint below describes the standalone toolkit and bounded PDM
+prototype. It does **not** establish completion of the integrated self-hosted
+product. The authorized integration now requires:
+
+- One pinned toolkit source revision and engine build for all eight tools in
+  the self-hosted workspace, including STEP; no independently forked tool UI.
+- Deliberate, currently authorized project-revision loading with verified source
+  digests and recorded frame interpretation.
+- Explicit saving of source-bound tool evidence, comparison sessions with
+  annotations/views, reports and derived conversion outputs as immutable
+  project artifacts, with retained comments and reopening.
+- Current permission checks, resource bounds, tamper/stale-message refusal,
+  archive/history retention, migration/restore checks and integrated browser
+  acceptance.
+- Independent free-site behavior: no required identity, PDM API, persistence or
+  model uploads.
+
+Implementation, integration and acceptance remain in progress until these
+workflows have been exercised together. The previous toolkit CI passed both
+repository and cross-engine browser jobs at `967b2b4`.
+
+### Earlier standalone checkpoint
+
 All original inventory implementation slices and the approved local PDM scope
 are present. The qualified toolkit implementation is committed in `8198640` and
 pushed to the existing repository with maintainer authorization. GitHub CI is
